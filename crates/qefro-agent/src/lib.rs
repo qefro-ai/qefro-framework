@@ -407,11 +407,14 @@ fn input_schema(entity: &EntityDef, partial: bool) -> Value {
     let mut properties = Map::new();
     let mut required = Vec::new();
     for field in entity.business_fields() {
-        if !field.stores_column() {
+        if field.computed {
+            continue;
+        }
+        if !field.stores_column() && !field.is_child_table() {
             continue;
         }
         properties.insert(field.name.clone(), json_schema_for_field(field));
-        if field.required && !partial {
+        if field.required && !partial && !field.computed {
             required.push(Value::String(field.name.clone()));
         }
     }
@@ -448,6 +451,11 @@ fn json_schema_for_field(field: &qefro_core::FieldDef) -> Value {
             "description": field.label
         }),
         FieldType::Json => json!({ "description": field.label }),
+        FieldType::ChildTable => json!({
+            "type": "array",
+            "items": { "type": "object" },
+            "description": field.label
+        }),
     };
     if let Value::Object(map) = &mut schema {
         map.insert("x-widget".into(), json!(field.ui.widget));

@@ -3,6 +3,9 @@ name = "qefro-restaurant"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Restaurant management example built on Qefro Framework"
 
 [[bin]]

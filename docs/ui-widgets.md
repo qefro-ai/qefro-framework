@@ -3,12 +3,13 @@
 Field **data types** and **widgets** are independent. A decimal can render as currency. A string can render as a color picker.
 
 ```rust
-FieldDef::decimal("price").currency()
+FieldDef::currency("price")
 FieldDef::string("brand_color").ui(UiConfig::color())
 FieldDef::date("reservation_date").ui(UiConfig::date())
 FieldDef::time("reservation_time").ui(UiConfig::time())
 FieldDef::datetime("created_at").ui(UiConfig::datetime().tenant_timezone())
 FieldDef::relation("customer", "Customer").required()
+.child_table(ChildTableDef::new("items", "OrderItem"))
 ```
 
 YAML:
@@ -31,7 +32,7 @@ YAML:
 
 The React app resolves `field.ui.widget` through `registerWidget`. Built-in names:
 
-`text`, `textarea`, `number`, `currency`, `percentage`, `date`, `time`, `datetime`, `color`, `select`, `multiselect`, `relation`, `checkbox`, `switch`, `radio`, `tags`, `phone`, `url`, `email`, `rich_text`, `file`, `image`, `json`
+`text`, `textarea`, `number`, `currency`, `percentage`, `date`, `time`, `datetime`, `color`, `select`, `multiselect`, `relation`, `checkbox`, `switch`, `radio`, `tags`, `phone`, `url`, `email`, `rich_text`, `file`, `image`, `json`, `child_table`
 
 An application can register a custom widget without changing framework core:
 

@@ -1,5 +1,6 @@
+use crate::document::{ChildOf, DocumentConfig, NamingConfig, PrintFormat};
 use crate::error::{QefroError, QefroResult};
-use crate::field::{FieldDef, FieldType};
+use crate::field::{ChildTableDef, FieldDef, FieldType, RelationKind};
 use crate::ident::to_plural_slug;
 use crate::ui::{UiEntityMeta, UiFieldView, UI_SCHEMA_VERSION};
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,20 @@ pub struct EntityDef {
     /// Field used as the human label in relation pickers. Defaults to `name`.
     #[serde(default)]
     pub display_field: String,
+    /// When set, this entity is a nested child of another document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_of: Option<ChildOf>,
+    /// Independent top-level document. Child entities default to false.
+    #[serde(default = "default_true")]
+    pub standalone: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document: Option<DocumentConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub naming: Option<NamingConfig>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub print_formats: Vec<PrintFormat>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub child_tables: Vec<ChildTableDef>,
 }
 
 fn default_true() -> bool {
@@ -65,6 +80,12 @@ impl EntityDef {
             description: None,
             module: None,
             display_field: String::new(),
+            child_of: None,
+            standalone: true,
+            document: None,
+            naming: None,
+            print_formats: Vec::new(),
+            child_tables: Vec::new(),
         }
     }
 
@@ -90,6 +111,43 @@ impl EntityDef {
 
     pub fn field(mut self, field: FieldDef) -> Self {
         self.fields.push(field);
+        self
+    }
+
+    pub fn child_table(mut self, def: ChildTableDef) -> Self {
+        if !self.fields.iter().any(|f| f.name == def.name) {
+            self.fields.push(FieldDef::child_table_field(&def));
+        }
+        self.child_tables.push(def);
+        self
+    }
+
+    pub fn child_of(mut self, parent: impl Into<String>, field: impl Into<String>) -> Self {
+        self.child_of = Some(ChildOf {
+            parent_entity: parent.into(),
+            parent_field: field.into(),
+        });
+        self.standalone = false;
+        self
+    }
+
+    pub fn standalone(mut self) -> Self {
+        self.standalone = true;
+        self
+    }
+
+    pub fn document(mut self, config: DocumentConfig) -> Self {
+        self.document = Some(config);
+        self
+    }
+
+    pub fn naming(mut self, config: NamingConfig) -> Self {
+        self.naming = Some(config);
+        self
+    }
+
+    pub fn print_format(mut self, format: PrintFormat) -> Self {
+        self.print_formats.push(format);
         self
     }
 
@@ -168,9 +226,52 @@ impl EntityDef {
                 "title".into()
             } else if self.fields.iter().any(|f| f.name == "code") {
                 "code".into()
+            } else if self.fields.iter().any(|f| f.name == "doc_no") {
+                "doc_no".into()
             } else {
                 "id".into()
             };
+        }
+        if let Some(child_of) = &self.child_of {
+            let parent = child_of.parent_entity.clone();
+            let has_parent_fk = self.fields.iter().any(|f| {
+                f.relation
+                    .as_ref()
+                    .map(|r| r.kind == RelationKind::ManyToOne && r.target_entity == parent)
+                    .unwrap_or(false)
+            });
+            if !has_parent_fk {
+                self.fields.insert(
+                    0,
+                    FieldDef::many_to_one("parent_id", parent).required().hidden(),
+                );
+            }
+            if !self.fields.iter().any(|f| f.name == "sort_order") {
+                self.fields.push(
+                    FieldDef::integer("sort_order")
+                        .nullable()
+                        .hidden()
+                        .default_value(serde_json::json!(0))
+                        .label("Sort"),
+                );
+            }
+        }
+        if let Some(naming) = &self.naming {
+            if !self.fields.iter().any(|f| f.name == naming.field) {
+                self.fields.insert(
+                    0,
+                    FieldDef::string(&naming.field)
+                        .unique()
+                        .nullable()
+                        .readonly()
+                        .label("Number"),
+                );
+            }
+        }
+        for table in &self.child_tables {
+            if !self.fields.iter().any(|f| f.name == table.name) {
+                self.fields.push(FieldDef::child_table_field(table));
+            }
         }
         for (i, field) in self.fields.iter_mut().enumerate() {
             if field.label.is_empty() {
@@ -330,12 +431,22 @@ impl EntityDef {
                         crate::field::RelationKind::ManyToOne => "many_to_one".into(),
                         crate::field::RelationKind::OneToMany => "one_to_many".into(),
                         crate::field::RelationKind::ManyToMany => "many_to_many".into(),
+                        crate::field::RelationKind::ChildTable => "child_table".into(),
                     }),
                     inverse_field: f.relation.as_ref().and_then(|r| r.inverse_field.clone()),
-                    readonly: f.ui.readonly,
+                    readonly: f.ui.readonly || f.computed,
                     visible_when: f.ui.visible_when.clone(),
                     readonly_when: f.ui.readonly_when.clone(),
                     default_from: f.default_from.clone(),
+                    computed: f.computed,
+                    formula: f.formula.clone(),
+                    child_entity: f.relation.as_ref().and_then(|r| {
+                        if f.is_child_table() {
+                            Some(r.target_entity.clone())
+                        } else {
+                            None
+                        }
+                    }),
                 }
             })
             .collect();
@@ -369,7 +480,28 @@ impl EntityDef {
             fields,
             tabs,
             sections,
+            standalone: self.standalone,
+            child_of: self.child_of.as_ref().map(|c| c.parent_entity.clone()),
+            document: self.document.clone(),
+            naming: self.naming.clone(),
         }
+    }
+
+    pub fn is_child(&self) -> bool {
+        self.child_of.is_some() && !self.standalone
+    }
+
+    pub fn child_table_named(&self, name: &str) -> Option<&ChildTableDef> {
+        self.child_tables.iter().find(|t| t.name == name)
+    }
+
+    pub fn parent_fk(&self, parent: &str) -> Option<&FieldDef> {
+        self.fields.iter().find(|f| {
+            f.relation
+                .as_ref()
+                .map(|r| r.kind == RelationKind::ManyToOne && r.target_entity == parent)
+                .unwrap_or(false)
+        })
     }
 
     pub fn from_yaml(text: &str) -> QefroResult<Self> {
@@ -473,5 +605,22 @@ fields:
         let orders = ui.fields.iter().find(|f| f.name == "orders").unwrap();
         assert_eq!(orders.relation_kind.as_deref(), Some("one_to_many"));
         assert!(!orders.form_visible);
+    }
+
+    #[test]
+    fn child_table_and_computed_ui() {
+        use crate::field::ChildTableDef;
+        let def = EntityDef::new("Order")
+            .child_table(ChildTableDef::new("items", "OrderItem"))
+            .field(FieldDef::currency("subtotal").computed("SUM(items.amount)"))
+            .build();
+        let ui = def.to_ui_meta();
+        let items = ui.fields.iter().find(|f| f.name == "items").unwrap();
+        assert_eq!(items.field_type, "child_table");
+        assert_eq!(items.widget, "child_table");
+        assert_eq!(items.relation_kind.as_deref(), Some("child_table"));
+        let subtotal = ui.fields.iter().find(|f| f.name == "subtotal").unwrap();
+        assert!(subtotal.computed);
+        assert!(subtotal.readonly);
     }
 }

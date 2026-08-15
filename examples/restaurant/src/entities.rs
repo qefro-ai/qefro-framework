@@ -1,4 +1,6 @@
-use qefro_core::{EntityDef, FieldDef, UiConfig};
+use qefro_core::{
+    ChildTableDef, DocumentConfig, EntityDef, FieldDef, NamingConfig, PrintFormat, UiConfig,
+};
 use serde_json::json;
 
 pub fn customer() -> EntityDef {
@@ -141,7 +143,7 @@ pub fn menu_item() -> EntityDef {
                 .required()
                 .label("Category"),
         )
-        .field(FieldDef::decimal("price").required().min(0.0).currency())
+        .field(FieldDef::decimal("price").required().min(0.0).with_currency())
         .field(
             FieldDef::string("image")
                 .nullable()
@@ -232,6 +234,25 @@ pub fn order() -> EntityDef {
         .label_plural("Orders")
         .table_name("orders")
         .workflow("order")
+        .document(
+            DocumentConfig::new()
+                .submit()
+                .cancel()
+                .duplicate()
+                .lock_states(&["Confirmed", "Preparing", "Ready", "Completed", "Cancelled"])
+                .number_on("submit"),
+        )
+        .naming(
+            NamingConfig::new("ORD-{YYYY}-{#####}")
+                .field("doc_no")
+                .assign_on("submit"),
+        )
+        .print_format(
+            PrintFormat::new("Order Standard", "Order")
+                .title("Order")
+                .item_table("items")
+                .total_fields(&["subtotal", "tax", "discount", "grand_total"]),
+        )
         .field(
             FieldDef::many_to_one("customer_id", "Customer")
                 .nullable()
@@ -246,6 +267,14 @@ pub fn order() -> EntityDef {
             FieldDef::many_to_one("reservation_id", "Reservation")
                 .nullable()
                 .label("Reservation"),
+        )
+        .field(
+            FieldDef::date("order_date")
+                .required()
+                .default_from("current_date")
+                .filterable()
+                .sortable()
+                .ui(UiConfig::date()),
         )
         .field(
             FieldDef::enum_values(
@@ -263,15 +292,33 @@ pub fn order() -> EntityDef {
             .default_value(json!("Draft"))
             .filterable(),
         )
+        .child_table(ChildTableDef::new("items", "OrderItem").parent_field("order_id"))
         .field(
-            FieldDef::decimal("total")
+            FieldDef::currency("subtotal")
+                .computed("SUM(items.amount)")
+                .label("Subtotal"),
+        )
+        .field(
+            FieldDef::decimal("tax_rate")
                 .nullable()
                 .min(0.0)
+                .max(100.0)
+                .percentage()
                 .default_value(json!(0))
-                .currency(),
+                .label("Tax %"),
         )
+        .field(FieldDef::currency("tax").computed("ROUND(subtotal * tax_rate / 100, 2)"))
+        .field(
+            FieldDef::currency("discount")
+                .nullable()
+                .min(0.0)
+                .default_value(json!(0)),
+        )
+        .field(
+            FieldDef::currency("grand_total").computed("subtotal + tax - discount"),
+        )
+        .field(FieldDef::currency("total").computed("grand_total"))
         .field(FieldDef::text("notes").nullable().list(false))
-        .field(FieldDef::one_to_many("items", "OrderItem", "order_id"))
         .field(FieldDef::one_to_many("payments", "Payment", "order_id"))
         .build()
 }
@@ -281,15 +328,17 @@ pub fn order_item() -> EntityDef {
         .label("Order Item")
         .label_plural("Order Items")
         .table_name("order_items")
+        .child_of("Order", "items")
         .field(
             FieldDef::many_to_one("order_id", "Order")
                 .required()
-                .label("Order"),
+                .label("Order")
+                .hidden(),
         )
         .field(
             FieldDef::many_to_one("menu_item_id", "MenuItem")
                 .required()
-                .label("Menu Item"),
+                .label("Product"),
         )
         .field(
             FieldDef::integer("quantity")
@@ -297,7 +346,13 @@ pub fn order_item() -> EntityDef {
                 .min(1.0)
                 .default_value(json!(1)),
         )
-        .field(FieldDef::decimal("unit_price").required().min(0.0).currency())
+        .field(
+            FieldDef::currency("unit_price")
+                .required()
+                .min(0.0)
+                .label("Rate"),
+        )
+        .field(FieldDef::currency("amount").computed("quantity * unit_price"))
         .field(FieldDef::text("notes").nullable().list(false))
         .build()
 }
@@ -312,7 +367,7 @@ pub fn payment() -> EntityDef {
                 .required()
                 .label("Order"),
         )
-        .field(FieldDef::decimal("amount").required().min(0.0).currency())
+        .field(FieldDef::decimal("amount").required().min(0.0).with_currency())
         .field(
             FieldDef::enum_values("method", vec!["cash", "card", "other"])
                 .required()
@@ -335,7 +390,14 @@ pub fn ui_showcase() -> EntityDef {
         .label_plural("UI Showcases")
         .table_name("ui_showcases")
         .slug_name("ui-showcases")
-        .description("Reference entity covering the V0.5 widget set")
+        .description("Reference entity covering the V0.6 document and widget set")
+        .document(
+            DocumentConfig::new()
+                .duplicate()
+                .lock_states(&["Cancelled"]),
+        )
+        .naming(NamingConfig::new("UI-{YYYY}-{####}").assign_on("create"))
+        .print_format(PrintFormat::new("Showcase Standard", "UiShowcase").title("UI Showcase"))
         .field(
             FieldDef::string("name")
                 .required()
@@ -362,7 +424,7 @@ pub fn ui_showcase() -> EntityDef {
             FieldDef::decimal("price")
                 .nullable()
                 .min(0.0)
-                .currency()
+                .with_currency()
                 .section("Money")
                 .tab("Details"),
         )
@@ -501,5 +563,35 @@ pub fn ui_showcase() -> EntityDef {
                 .section("Files")
                 .tab("Media"),
         )
+        .child_table(ChildTableDef::new("lines", "ShowcaseLine").parent_field("showcase_id"))
+        .field(
+            FieldDef::currency("line_total")
+                .computed("SUM(lines.amount)")
+                .section("Document")
+                .tab("Details"),
+        )
+        .build()
+}
+
+pub fn showcase_line() -> EntityDef {
+    EntityDef::new("ShowcaseLine")
+        .label("Showcase Line")
+        .label_plural("Showcase Lines")
+        .table_name("showcase_lines")
+        .child_of("UiShowcase", "lines")
+        .field(
+            FieldDef::many_to_one("showcase_id", "UiShowcase")
+                .required()
+                .hidden(),
+        )
+        .field(FieldDef::string("description").required())
+        .field(
+            FieldDef::integer("quantity")
+                .required()
+                .min(1.0)
+                .default_value(json!(1)),
+        )
+        .field(FieldDef::currency("rate").required().min(0.0))
+        .field(FieldDef::currency("amount").computed("quantity * rate"))
         .build()
 }

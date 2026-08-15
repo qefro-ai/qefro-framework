@@ -32,6 +32,7 @@ fields:
 | --- | --- | --- |
 | many-to-one | UUID column | relation picker |
 | one-to-many | none (inverse filter) | related list on detail |
+| child table | child table + parent FK | nested editable table on the parent form |
 | many-to-many | junction `{table}_{field}` | relation widget |
 
 List/get expand many-to-one in `_expanded` with a batched `IN` query.
@@ -40,14 +41,15 @@ List/get expand many-to-one in `_expanded` with a batched `IN` query.
 
 `label`, `description`, `placeholder`, `help` / `help_text`, `hidden`, `disabled`, `readonly`, `required`, `list_visible` / `list`, `form_visible` / `form`, `detail_visible` / `detail`, `searchable`, `sortable`, `filterable`, `width`, `widget`, `widget_options`, `section`, `tab`, `order`, `visible_when`, `readonly_when`.
 
-Data types: `string`, `text`, `integer`, `decimal`, `boolean`, `date`, `time`, `datetime`, `uuid`, `enum`, `json`, `relation`. Convenience builders `email()`, `phone()`, `url()`, `color()`, `currency()`, `percentage()` keep the storage type and set validation + widget.
+Data types: `string`, `text`, `integer`, `decimal`, `boolean`, `date`, `time`, `datetime`, `uuid`, `enum`, `json`, `relation`, `child_table`. Convenience builders `email()`, `phone()`, `url()`, `color()`, `FieldDef::currency("amount")`, `percentage()` keep the storage type and set validation + widget. `.computed("quantity * rate")` marks a server-calculated field.
 
 ```rust
 FieldDef::date("reservation_date").required().ui(UiConfig::date())
 FieldDef::datetime("appointment_at").ui(UiConfig::datetime().tenant_timezone())
-FieldDef::decimal("price").currency()
+FieldDef::currency("price")
 FieldDef::string("brand_color").color()
 FieldDef::relation("customer", "Customer").required()
+.child_table(ChildTableDef::new("items", "OrderItem"))
 ```
 
 ## Inspect

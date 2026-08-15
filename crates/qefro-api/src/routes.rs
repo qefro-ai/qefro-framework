@@ -34,6 +34,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/meta/workflows", get(meta_workflows))
         .route("/api/v1/meta/modules", get(meta_modules))
         .route("/api/v1/meta/dashboards", get(meta_dashboards))
+        .route("/api/v1/meta/reports", get(meta_reports))
         .route("/api/openapi.json", get(openapi))
         .route("/docs", get(docs))
         .route("/api/v1/audit", get(list_audit))
@@ -52,6 +53,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/saved-filters", get(list_saved_filters).post(create_saved_filter))
         .route("/api/v1/saved-filters/{id}", axum::routing::delete(delete_saved_filter))
         .route("/api/v1/dashboards/{name}", get(get_dashboard))
+        .route("/api/v1/reports", get(meta_reports))
+        .route("/api/v1/reports/{name}", get(get_report))
+        .route("/api/v1/reports/{name}/run", post(run_report))
+        .route("/api/v1/{slug}/{id}/print", get(print_document))
+        .route("/api/v1/{slug}/{id}/print.pdf", get(print_document_pdf))
+        .route("/api/v1/{slug}/{id}/preview", get(print_document))
         .route("/api/v1/{slug}/{id}/workflow", get(get_workflow_state))
         .route("/api/v1/{slug}/{id}/transition", post(transition_entity))
         .route("/api/v1/{slug}/{id}/actions/{name}", post(execute_action))
@@ -268,9 +275,19 @@ async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<
         "currency": config.business.currency,
         "date_format": config.business.date_format,
         "number_format": config.business.number_format,
-        "navigation": config.ui_config.navigation,
+        "navigation": if config.ui_config.navigation.is_empty() {
+            state.default_navigation.clone()
+        } else {
+            config.ui_config.navigation.clone()
+        },
         "terminology": config.ui_config.terminology,
         "default_dashboard": config.ui_config.default_dashboard,
+        "reports": state
+            .reports
+            .iter()
+            .filter(|r| ctx.allows_app(r.module.as_deref()))
+            .cloned()
+            .collect::<Vec<_>>(),
     })))
 }
 
@@ -385,7 +402,7 @@ fn reject_reserved(slug: &str) -> Result<(), ApiError> {
     const RESERVED: &[&str] = &[
         "auth", "meta", "tenants", "tenant", "agent", "audit", "health", "ready", "events", "docs",
         "tools", "dashboards", "settings", "users", "operations", "jobs",
-        "files", "saved-filters",
+        "files", "saved-filters", "reports", "print",
     ];
     if RESERVED.contains(&slug) {
         Err(QefroError::not_found(format!("entity '{slug}' not found")).into())
@@ -557,6 +574,97 @@ async fn get_dashboard(
         "module": dash.module,
         "cards": cards,
     })))
+}
+
+async fn meta_reports(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
+    let reports: Vec<_> = state
+        .reports
+        .iter()
+        .filter(|r| ctx.allows_app(r.module.as_deref()))
+        .cloned()
+        .collect();
+    Json(json!({ "reports": reports }))
+}
+
+async fn get_report(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let report = state
+        .reports
+        .iter()
+        .find(|r| r.name == name)
+        .ok_or_else(|| QefroError::not_found(format!("report '{name}' not found")))?;
+    if !ctx.allows_app(report.module.as_deref()) {
+        return Err(QefroError::not_found(format!("report '{name}' not found")).into());
+    }
+    Ok(Json(serde_json::to_value(report).unwrap_or(json!({}))))
+}
+
+async fn run_report(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let report = state
+        .reports
+        .iter()
+        .find(|r| r.name == name)
+        .cloned()
+        .ok_or_else(|| QefroError::not_found(format!("report '{name}' not found")))?;
+    if !ctx.allows_app(report.module.as_deref()) {
+        return Err(QefroError::not_found(format!("report '{name}' not found")).into());
+    }
+    let filters = body.get("filters").cloned().unwrap_or(json!([]));
+    Ok(Json(state.entities.run_report(&ctx, &report, filters).await?))
+}
+
+async fn print_document(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path((slug, id)): Path<(String, Uuid)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<axum::response::Html<String>, ApiError> {
+    reject_reserved(&slug)?;
+    let format_name = params.get("format").map(|s| s.as_str());
+    let (format, record, items) = state
+        .entities
+        .print_document(&ctx, &slug, id, format_name)
+        .await?;
+    let entity = state.entities.registry().get(&slug)?;
+    let config = state.tenants.get_config(ctx.tenant_id).await?;
+    let html = qefro_db::print::render_html(&entity, &format, &record, &items, &config);
+    Ok(axum::response::Html(html))
+}
+
+async fn print_document_pdf(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path((slug, id)): Path<(String, Uuid)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, ApiError> {
+    reject_reserved(&slug)?;
+    let format_name = params.get("format").map(|s| s.as_str());
+    let (_format, record, items) = state
+        .entities
+        .print_document(&ctx, &slug, id, format_name)
+        .await?;
+    let entity = state.entities.registry().get(&slug)?;
+    let lines = qefro_db::print::pdf_lines(&entity, &record, &items);
+    let bytes = qefro_db::print::render_pdf(&entity.label, &lines);
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/pdf"),
+            (
+                header::CONTENT_DISPOSITION,
+                "inline; filename=\"document.pdf\"",
+            ),
+        ],
+        bytes,
+    ))
 }
 
 async fn get_tenant_config(

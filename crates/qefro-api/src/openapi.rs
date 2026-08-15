@@ -375,6 +375,7 @@ fn field_schema(field: &qefro_core::FieldDef) -> Value {
         FieldType::Date => json!({ "type": "string", "format": "date" }),
         FieldType::Time => json!({ "type": "string", "format": "time" }),
         FieldType::DateTime => json!({ "type": "string", "format": "date-time" }),
+        FieldType::ChildTable => json!({ "type": "array", "items": { "type": "object" } }),
         _ => json!({ "type": "string" }),
     }
 }

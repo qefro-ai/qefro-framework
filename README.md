@@ -4,11 +4,33 @@ Rust-native, metadata-driven framework for multi-tenant business applications.
 
 Define entities, workflows, permissions, and **business operations**. The runtime generates PostgreSQL schema, REST APIs, validation, audit logs, a generic UI, agent tools, events, and a Postgres job queue. Authorization always runs on the server. Agents never get a database connection.
 
+## Install
+
+Install the `qefro` binary onto your PATH (`~/.cargo/bin`):
+
+```bash
+cargo install qefro-cli
+qefro --help
+```
+
+From this repo without crates.io:
+
+```bash
+cargo install --path crates/qefro-cli --locked --force
+# or: make install
+```
+
+From a git checkout you can also run without installing:
+
+```bash
+cargo qefro --help
+```
+
 ## Quick start
 
 ```bash
 export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro
-cargo run -p qefro-cli -- dev --app restaurant
+qefro dev --app restaurant
 ```
 
 Register a tenant:
@@ -27,13 +49,19 @@ cd frontend && npm install && npm run dev
 
 The UI reads `/api/v1/meta/ui`. Branding, navigation, terminology, widgets, form layouts, filters, and dashboards come from the authenticated tenant. There is no per-entity React page and no per-tenant frontend build. Define the entity once; Qefro generates schema, REST, validation, and the business UI.
 
+## Build a fullstack app
+
+One Axum process, PostgreSQL, and the generic UI in `frontend/`. Define entities (YAML or Rust); Qefro generates schema, REST, and screens. You do not write a React page per entity.
+
+Step-by-step (customers, products, orders with line items): **[Build a fullstack application](docs/fullstack.md)**.
+
 ## Create an application
 
 ```bash
 qefro app new myshop
 cd apps/myshop
-qefro entity create Customer
-qefro entity create Reservation
+qefro app validate myshop
+qefro app package myshop
 qefro app install myshop
 qefro migrate --app myshop
 qefro dev --app myshop
@@ -69,6 +97,8 @@ qefro dev --app restaurant
 7. Invoke `confirm_reservation` through `POST /api/v1/agent/tools/confirm_reservation/invoke`. Same `EntityService` path as REST.
 
 ## CLI
+
+After `cargo install --path crates/qefro-cli --locked --force` (or `make install`), these commands run from any directory:
 
 ```bash
 qefro new my-app
@@ -130,7 +160,21 @@ EntityDef::new("Reservation")
     .build();
 ```
 
-That definition produces PostgreSQL, REST, validation, generic list/form/detail UI, date/time/relation widgets, filters, and workflow actions — without a custom React page.
+A business document adds child tables, formulas, numbering, and workflow on the same `EntityDef`:
+
+```rust
+EntityDef::new("Order")
+    .field(FieldDef::relation("customer_id", "Customer").required())
+    .field(FieldDef::date("order_date").required())
+    .child_table(ChildTableDef::new("items", "OrderItem").parent_field("order_id"))
+    .field(FieldDef::currency("subtotal").computed("SUM(items.amount)"))
+    .field(FieldDef::currency("discount"))
+    .field(FieldDef::currency("grand_total").computed("subtotal - discount"))
+    .workflow("order")
+    .build();
+```
+
+That definition produces PostgreSQL, REST, validation, nested child tables, computed fields, generic list/form/detail UI, print, reports, and workflow actions — without a custom React page.
 
 YAML is supported via `EntityDef::from_yaml` / `EntityRegistry::load_dir`.
 
@@ -156,8 +200,13 @@ Integration tests that need PostgreSQL skip when `DATABASE_URL` is unset. Fronte
 
 ## Docs
 
-- [Architecture](docs/architecture.md)
+- [Build a fullstack application](docs/fullstack.md)
 - [Applications](docs/apps.md)
+- [App packaging](docs/app-packaging.md)
+- [App lifecycle](docs/app-lifecycle.md)
+- [App dependencies](docs/app-dependencies.md)
+- [App development](docs/app-development.md)
+- [Architecture](docs/architecture.md)
 - [Entities](docs/entities.md)
 - [Operations](docs/operations.md)
 - [Workflows](docs/workflows.md)
@@ -168,6 +217,12 @@ Integration tests that need PostgreSQL skip when `DATABASE_URL` is unset. Fronte
 - [Forms](docs/forms.md)
 - [Layouts](docs/layouts.md)
 - [Dashboards](docs/dashboards.md)
+- [Child tables](docs/child-tables.md)
+- [Formulas](docs/formulas.md)
+- [Documents](docs/documents.md)
+- [Numbering](docs/numbering.md)
+- [Print formats](docs/print-formats.md)
+- [Reports](docs/reports.md)
 - [Agents](docs/agents.md)
 - [Multi-tenancy](docs/multitenancy.md)
 - [Tenants](docs/tenants.md)

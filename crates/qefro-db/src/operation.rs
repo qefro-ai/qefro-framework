@@ -211,6 +211,10 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
         let page = self.repo.list_tx(self.tx, &def, &self.auth, &query).await?;
         Ok(page.items)
     }
+
+    pub fn entity_def(&self, name: &str) -> QefroResult<std::sync::Arc<qefro_core::EntityDef>> {
+        self.registry.get(name)
+    }
 }
 
 pub fn crud_operation_defs(entity: &qefro_core::EntityDef) -> Vec<OperationDef> {
@@ -474,6 +478,36 @@ async fn execute_in_transaction(
     let patch = dirty_patch(entity, &current, &record);
     if patch.as_object().map(|o| !o.is_empty()).unwrap_or(false) {
         record = repo.update_tx(tx, entity, ctx, id, patch).await?;
+    }
+
+    if let Some(naming) = &entity.naming {
+        if naming.assign_on == "submit" && binding.def.name != "cancel" {
+            let empty = record
+                .get(&naming.field)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .is_empty();
+            let initial = workflows
+                .for_entity(&entity.name)
+                .map(|wf| wf.initial.as_str())
+                .unwrap_or("Draft");
+            let status = record
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or(initial);
+            if empty && status != initial {
+                let number = crate::numbering::allocate(
+                    tx,
+                    ctx.tenant_id,
+                    &entity.name,
+                    naming,
+                    chrono::Utc::now(),
+                )
+                .await?;
+                let patch = json!({ naming.field.clone(): number });
+                record = repo.update_tx(tx, entity, ctx, id, patch).await?;
+            }
+        }
     }
 
     if binding.def.audit || entity.audit {

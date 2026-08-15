@@ -3,6 +3,9 @@ name = "qefro-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "Core metadata, entity, and validation types for Qefro Framework"
 
 [dependencies]
@@ -17,3 +20,8 @@ async-trait.workspace = true
 regex.workspace = true
 tracing.workspace = true
 ammonia = "4"
+toml.workspace = true
+semver.workspace = true
+zip.workspace = true
+sha2.workspace = true
+hex.workspace = true

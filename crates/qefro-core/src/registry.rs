@@ -107,6 +107,62 @@ impl EntityRegistry {
                     entity.name, rel.target_entity
                 )));
             }
+            if let Some(child_of) = &entity.child_of {
+                if self.try_get(&child_of.parent_entity).is_none() {
+                    return Err(QefroError::bad_request(format!(
+                        "Entity '{}' is child_of unknown parent '{}'",
+                        entity.name, child_of.parent_entity
+                    )));
+                }
+            }
+            crate::formula::detect_cycles(&entity.fields)?;
+            self.validate_formulas(&entity)?;
+        }
+        Ok(())
+    }
+
+    fn validate_formulas(&self, entity: &EntityDef) -> QefroResult<()> {
+        for field in &entity.fields {
+            if !field.computed {
+                continue;
+            }
+            let Some(formula) = &field.formula else {
+                return Err(QefroError::bad_request(format!(
+                    "computed field '{}.{}' is missing a formula",
+                    entity.name, field.name
+                )));
+            };
+            let expr = crate::formula::parse_formula(formula)?;
+            for dep in crate::formula::formula_dependencies(&expr) {
+                if let Some((table, child_field)) = dep.split_once('.') {
+                    let child_table = entity.fields.iter().find(|f| f.name == table);
+                    let Some(child_table) = child_table.filter(|f| f.is_child_table()) else {
+                        return Err(QefroError::bad_request(format!(
+                            "formula on '{}.{}' references unknown child table '{table}'",
+                            entity.name, field.name
+                        )));
+                    };
+                    let target = child_table
+                        .relation
+                        .as_ref()
+                        .map(|r| r.target_entity.as_str())
+                        .unwrap_or("");
+                    let child = self.get(target)?;
+                    if child.get_field(child_field).is_none() {
+                        return Err(QefroError::bad_request(format!(
+                            "formula on '{}.{}' references unknown field '{dep}'",
+                            entity.name, field.name
+                        )));
+                    }
+                } else if entity.get_field(&dep).is_none()
+                    && !entity.fields.iter().any(|f| f.is_child_table() && f.name == dep)
+                {
+                    return Err(QefroError::bad_request(format!(
+                        "formula on '{}.{}' references unknown field '{dep}'",
+                        entity.name, field.name
+                    )));
+                }
+            }
         }
         Ok(())
     }

@@ -17,24 +17,30 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.7.0"
 edition = "2021"
 license = "MIT"
 authors = ["Qefro"]
 description = "Rust-native, metadata-driven framework for multi-tenant business applications"
-repository = "https://github.com/qefro/qefro-framework"
+repository = "https://github.com/qefro-ai/qefro-framework"
+homepage = "https://github.com/qefro-ai/qefro-framework"
 
 [workspace.dependencies]
-qefro-core = { path = "crates/qefro-core" }
-qefro-db = { path = "crates/qefro-db" }
-qefro-api = { path = "crates/qefro-api" }
-qefro-auth = { path = "crates/qefro-auth" }
-qefro-permissions = { path = "crates/qefro-permissions" }
-qefro-workflow = { path = "crates/qefro-workflow" }
-qefro-tenant = { path = "crates/qefro-tenant" }
-qefro-events = { path = "crates/qefro-events" }
-qefro-search = { path = "crates/qefro-search" }
-qefro-agent = { path = "crates/qefro-agent" }
+qefro-core = { version = "0.7.0", path = "crates/qefro-core" }
+qefro-db = { version = "0.7.0", path = "crates/qefro-db" }
+qefro-api = { version = "0.7.0", path = "crates/qefro-api" }
+qefro-auth = { version = "0.7.0", path = "crates/qefro-auth" }
+qefro-permissions = { version = "0.7.0", path = "crates/qefro-permissions" }
+qefro-workflow = { version = "0.7.0", path = "crates/qefro-workflow" }
+qefro-tenant = { version = "0.7.0", path = "crates/qefro-tenant" }
+qefro-events = { version = "0.7.0", path = "crates/qefro-events" }
+qefro-search = { version = "0.7.0", path = "crates/qefro-search" }
+qefro-agent = { version = "0.7.0", path = "crates/qefro-agent" }
+qefro-restaurant = { version = "0.7.0", path = "examples/restaurant" }
+qefro-crm = { version = "0.7.0", path = "examples/basic-crm" }
+toml = "0.8"
+semver = "1"
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["macros", "json", "multipart"] }

@@ -105,6 +105,14 @@ CREATE TABLE IF NOT EXISTS saved_filters (
 );
 CREATE INDEX IF NOT EXISTS saved_filters_scope_idx ON saved_filters (tenant_id, user_id, entity);
 
+CREATE TABLE IF NOT EXISTS document_sequences (
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    entity TEXT NOT NULL,
+    period TEXT NOT NULL,
+    last_value BIGINT NOT NULL,
+    PRIMARY KEY (tenant_id, entity, period)
+);
+
 CREATE TABLE IF NOT EXISTS blobs (
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     key TEXT NOT NULL,
@@ -114,6 +122,60 @@ CREATE TABLE IF NOT EXISTS blobs (
     created_by UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS qefro_apps (
+    name TEXT PRIMARY KEY,
+    version TEXT NOT NULL,
+    label TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'catalog',
+    status TEXT NOT NULL DEFAULT 'installed',
+    framework_version TEXT,
+    api_version TEXT NOT NULL DEFAULT '1',
+    dependencies JSONB NOT NULL DEFAULT '{}'::jsonb,
+    package_sha256 TEXT,
+    installed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS qefro_app_versions (
+    name TEXT NOT NULL,
+    version TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'catalog',
+    package_sha256 TEXT,
+    installed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (name, version)
+);
+
+CREATE TABLE IF NOT EXISTS qefro_app_migrations (
+    app TEXT NOT NULL,
+    version TEXT NOT NULL,
+    name TEXT NOT NULL,
+    destructive BOOLEAN NOT NULL DEFAULT false,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (app, version, name)
+);
+
+CREATE TABLE IF NOT EXISTS qefro_app_events (
+    id UUID PRIMARY KEY,
+    tenant_id UUID REFERENCES tenants(id) ON DELETE SET NULL,
+    user_id UUID,
+    app TEXT NOT NULL,
+    version TEXT,
+    event TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS qefro_app_events_app_idx ON qefro_app_events (app, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS qefro_app_seeds (
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    app TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, app, kind)
 );
 "#;
 
@@ -135,7 +197,7 @@ pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
     for field in entity.stored_fields() {
         let col = quote_ident(&field.column_name())?;
         let mut sql_ty = field.field_type.sql_type().to_string();
-        if !field.nullable {
+        if !field.nullable && !field.computed {
             sql_ty.push_str(" NOT NULL");
         }
         if let FieldType::Enum { values } = &field.field_type {
@@ -159,6 +221,16 @@ pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
             "\nCREATE INDEX IF NOT EXISTS {}_tenant_idx ON {table} (\"tenant_id\");",
             entity.table
         ));
+    }
+    if let Some(child_of) = &entity.child_of {
+        if let Some(fk) = entity.parent_fk(&child_of.parent_entity) {
+            let fk_col = quote_ident(&fk.column_name())?;
+            ddl.push_str(&format!(
+                "\nCREATE INDEX IF NOT EXISTS {}_{}_parent_idx ON {table} (\"tenant_id\", {fk_col});",
+                entity.table,
+                fk.column_name(),
+            ));
+        }
     }
     if entity.soft_delete {
         ddl.push_str(&format!(
@@ -225,6 +297,7 @@ pub async fn apply_schema(pool: &PgPool, registry: &EntityRegistry) -> QefroResu
         }
     }
     apply_missing_columns(pool, registry).await?;
+    apply_column_nullability(pool, registry).await?;
     for entity in registry.list() {
         let ddl = entity_ddl(&entity)?;
         for stmt in split_sql(&ddl).into_iter().skip(1) {
@@ -254,6 +327,66 @@ async fn apply_missing_columns(pool: &PgPool, registry: &EntityRegistry) -> Qefr
                 .execute(pool)
                 .await
                 .map_err(|e| QefroError::database(format!("add column {}.{}: {e}", entity.name, field.name)))?;
+        }
+    }
+    Ok(())
+}
+
+const SYSTEM_COLUMNS: &[&str] = &[
+    "id",
+    "tenant_id",
+    "created_at",
+    "updated_at",
+    "created_by",
+    "updated_by",
+    "deleted_at",
+];
+
+/// `CREATE TABLE IF NOT EXISTS` never drops leftover columns. A previous
+/// metadata version may have left `parent_id NOT NULL` after the child FK was
+/// renamed to `invoice_id` / `order_id`. Relax unmanaged and computed columns
+/// so inserts are not blocked by schema that the entity no longer owns.
+async fn apply_column_nullability(pool: &PgPool, registry: &EntityRegistry) -> QefroResult<()> {
+    use std::collections::HashSet;
+    for entity in registry.list() {
+        ident_check(&entity.table)?;
+        let table = quote_ident(&entity.table)?;
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            r#"
+            SELECT column_name::text, is_nullable::text
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = $1
+            "#,
+        )
+        .bind(&entity.table)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+        let managed: HashSet<String> = entity
+            .stored_fields()
+            .iter()
+            .map(|f| f.column_name())
+            .chain(SYSTEM_COLUMNS.iter().map(|s| (*s).to_string()))
+            .collect();
+        for (name, nullable) in rows {
+            if nullable != "NO" {
+                continue;
+            }
+            ident_check(&name)?;
+            let unmanaged = !managed.contains(&name);
+            let computed = entity
+                .stored_fields()
+                .iter()
+                .any(|f| f.column_name() == name && f.computed);
+            if !unmanaged && !computed {
+                continue;
+            }
+            let col = quote_ident(&name)?;
+            let sql = format!("ALTER TABLE {table} ALTER COLUMN {col} DROP NOT NULL");
+            sqlx::query(&sql)
+                .execute(pool)
+                .await
+                .map_err(|e| QefroError::database(format!("relax {}.{}: {e}", entity.table, name)))?;
         }
     }
     Ok(())
@@ -340,8 +473,18 @@ async fn apply_foreign_keys(pool: &PgPool, registry: &EntityRegistry) -> QefroRe
             );
             // DROP + ADD in one round-trip can fail on first run; do separately.
             let drop = format!("ALTER TABLE {table} DROP CONSTRAINT IF EXISTS \"{constraint}\"");
+            let on_delete = if entity
+                .child_of
+                .as_ref()
+                .map(|c| c.parent_entity.as_str())
+                == Some(rel.target_entity.as_str())
+            {
+                " ON DELETE CASCADE"
+            } else {
+                ""
+            };
             let add = format!(
-                "ALTER TABLE {table} ADD CONSTRAINT \"{constraint}\" FOREIGN KEY ({col}) REFERENCES {target_table} (\"id\")"
+                "ALTER TABLE {table} ADD CONSTRAINT \"{constraint}\" FOREIGN KEY ({col}) REFERENCES {target_table} (\"id\"){on_delete}"
             );
             sqlx::query(&drop)
                 .execute(pool)
@@ -417,5 +560,15 @@ mod tests {
         assert!(ddl.contains("\"tenant_id\""));
         assert!(ddl.contains("\"email\""));
         assert!(!ddl.contains("DROP TABLE tenants"));
+    }
+
+    #[test]
+    fn computed_columns_are_nullable() {
+        let def = EntityDef::new("Invoice")
+            .field(FieldDef::currency("subtotal").computed("SUM(items.amount)"))
+            .build();
+        let ddl = entity_ddl(&def).unwrap();
+        assert!(ddl.contains("\"subtotal\" NUMERIC(18,6)"));
+        assert!(!ddl.contains("\"subtotal\" NUMERIC(18,6) NOT NULL"));
     }
 }

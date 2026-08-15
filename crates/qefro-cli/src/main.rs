@@ -2,14 +2,12 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use qefro_api::{Config, InstalledApp, QefroRuntime};
 use qefro_core::{
-    discover_apps, install_app, load_installed, load_yaml_entities, parse_app_toml, remove_app,
-    suggest_similar, AppManifest, AppModule,
+    discover_apps, load_installed, suggest_similar, AppManifest,
 };
-use qefro_permissions::PermissionGrant;
-use qefro_workflow::WorkflowDef;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+mod app_cmd;
 
 #[derive(Parser)]
 #[command(name = "qefro", version, about = "Qefro Framework CLI")]
@@ -91,8 +89,13 @@ enum Commands {
     },
     /// Poll and run worker-safe background jobs
     Worker,
-    /// Check local development prerequisites
+    /// Check local development prerequisites and installed apps
     Doctor,
+    /// Tenant helpers
+    Tenant {
+        #[command(subcommand)]
+        command: TenantCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -101,12 +104,55 @@ enum AppCommands {
     New { name: String },
     /// List discovered applications
     List,
-    /// Mark an application as installed for `qefro dev`
+    /// Validate an application package or catalog directory
+    Validate { name: String },
+    /// Mark an application as installed, or install a .qefro package
     Install { name: String },
-    /// Remove an application from the installed set
+    /// Reload catalog metadata or install a newer .qefro package
+    Update {
+        name: String,
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Write a .qefro package
+    Package {
+        name: String,
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+    },
+    /// Globally disable an installed application (data kept)
+    Disable { name: String },
+    /// Globally re-enable a disabled application
+    Enable { name: String },
+    /// Remove application registration (data kept)
+    Uninstall { name: String },
+    /// Remove an application from the installed set (alias of uninstall)
     Remove { name: String },
     /// Show application metadata
     Info { name: String },
+    /// Apply seed data for a tenant
+    Seed {
+        name: String,
+        #[arg(long)]
+        tenant: String,
+        #[arg(long)]
+        kind: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum TenantCommands {
+    /// Enable or disable an application for one tenant
+    App {
+        #[command(subcommand)]
+        command: TenantAppCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum TenantAppCommands {
+    Enable { tenant: String, app: String },
+    Disable { tenant: String, app: String },
 }
 
 #[derive(Subcommand)]
@@ -127,9 +173,7 @@ enum EntityCommands {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let env = std::env::var("QEFRO_ENV").unwrap_or_else(|_| "development".into());
+fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         let level = std::env::var("QEFRO_LOG_LEVEL").unwrap_or_else(|_| "info".into());
         tracing_subscriber::EnvFilter::new(format!("{level},sqlx=warn,tower_http=info"))
@@ -138,17 +182,50 @@ async fn main() -> Result<()> {
         .with_env_filter(filter)
         .with_target(false)
         .init();
-    tracing::info!(env, "qefro starting");
+}
 
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
+    match &cli.command {
+        Commands::Dev { .. } | Commands::Serve { .. } | Commands::Worker | Commands::Migrate { .. } => {
+            init_tracing();
+            let env = std::env::var("QEFRO_ENV").unwrap_or_else(|_| "development".into());
+            tracing::info!(env, "qefro starting");
+        }
+        _ => {}
+    }
+
     match cli.command {
         Commands::New { name, path } => cmd_new(&name, path.as_deref())?,
         Commands::App { command } => match command {
-            AppCommands::New { name } => cmd_app_new(&name)?,
-            AppCommands::List => cmd_app_list(),
-            AppCommands::Install { name } => cmd_app_install(&name)?,
-            AppCommands::Remove { name } => cmd_app_remove(&name)?,
-            AppCommands::Info { name } => cmd_app_info(&name)?,
+            AppCommands::New { name } => app_cmd::cmd_app_new(&name)?,
+            AppCommands::List => app_cmd::cmd_app_list()?,
+            AppCommands::Validate { name } => app_cmd::cmd_app_validate(&name)?,
+            AppCommands::Install { name } => app_cmd::cmd_app_install(&name).await?,
+            AppCommands::Update { name, yes } => app_cmd::cmd_app_update(&name, yes).await?,
+            AppCommands::Package { name, output } => {
+                app_cmd::cmd_app_package(&name, output.as_deref())?
+            }
+            AppCommands::Disable { name } => app_cmd::cmd_app_disable(&name)?,
+            AppCommands::Enable { name } => app_cmd::cmd_app_enable(&name)?,
+            AppCommands::Uninstall { name } | AppCommands::Remove { name } => {
+                app_cmd::cmd_app_uninstall(&name).await?
+            }
+            AppCommands::Info { name } => app_cmd::cmd_app_info(&name).await?,
+            AppCommands::Seed { name, tenant, kind } => {
+                app_cmd::cmd_app_seed(&name, &tenant, kind.as_deref()).await?
+            }
+        },
+        Commands::Tenant { command } => match command {
+            TenantCommands::App { command } => match command {
+                TenantAppCommands::Enable { tenant, app } => {
+                    app_cmd::cmd_tenant_app(true, &tenant, &app).await?
+                }
+                TenantAppCommands::Disable { tenant, app } => {
+                    app_cmd::cmd_tenant_app(false, &tenant, &app).await?
+                }
+            },
         },
         Commands::Entity { command } => match command {
             EntityCommands::List { app } => {
@@ -232,12 +309,12 @@ async fn main() -> Result<()> {
             token,
         } => cmd_action(&entity, &id, &name, input.as_deref(), &url, token.as_deref()).await?,
         Commands::Worker => runtime_for("all")?.run_worker().await?,
-        Commands::Doctor => cmd_doctor().await?,
+        Commands::Doctor => app_cmd::cmd_doctor().await?,
     }
     Ok(())
 }
 
-fn runtime_for(app: &str) -> Result<QefroRuntime> {
+pub(crate) fn runtime_for(app: &str) -> Result<QefroRuntime> {
     let mut runtime = QefroRuntime::new(Config::from_env()?);
     for name in resolve_apps(app)? {
         install_named(&mut runtime, &name)?;
@@ -274,93 +351,12 @@ fn install_named(runtime: &mut QefroRuntime, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn app_root_candidates(name: &str) -> Vec<PathBuf> {
-    vec![PathBuf::from("apps").join(name), PathBuf::from(name)]
-}
-
-fn find_app_root(name: &str) -> Option<PathBuf> {
-    app_root_candidates(name)
-        .into_iter()
-        .find(|p| p.join("app.toml").exists())
-}
-
 fn load_fs_app(name: &str) -> Result<InstalledApp> {
-    let root = find_app_root(name).ok_or_else(|| {
-        let known = known_app_names();
-        let hint = suggest_similar(name, known.iter().map(|s| s.as_str()))
-            .map(|s| format!(" Did you mean '{s}'?"))
-            .unwrap_or_default();
-        anyhow::anyhow!("unknown app '{name}'.{hint} Use `qefro app list`.")
-    })?;
-    let manifest = parse_app_toml(
-        &fs::read_to_string(root.join("app.toml")).with_context(|| root.join("app.toml").display().to_string())?,
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let mut builder = AppModule::new(&manifest.name)
-        .version(&manifest.version)
-        .label(&manifest.label)
-        .description(&manifest.description);
-    for entity in load_yaml_entities(&root).map_err(|e| anyhow::anyhow!("{e}"))? {
-        builder = builder.entity(entity);
-    }
-    let mut app = InstalledApp::new(builder.build());
-    for wf in load_yaml_dir::<WorkflowDef>(&root.join("workflows"))? {
-        app = app.workflow(wf);
-    }
-    for grant in load_permission_grants(&root.join("permissions"))? {
-        app = app.permission(grant);
-    }
-    Ok(app)
+    let bundle = app_cmd::load_named_bundle(name)?;
+    app_cmd::installed_from_bundle(bundle)
 }
 
-fn load_yaml_dir<T: serde::de::DeserializeOwned>(dir: &Path) -> Result<Vec<T>> {
-    let mut out = Vec::new();
-    if !dir.exists() {
-        return Ok(out);
-    }
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-        if !matches!(ext, "yaml" | "yml" | "json") {
-            continue;
-        }
-        let text = fs::read_to_string(&path)?;
-        if ext == "json" {
-            out.push(serde_json::from_str(&text).with_context(|| path.display().to_string())?);
-        } else {
-            out.push(serde_yaml::from_str(&text).with_context(|| path.display().to_string())?);
-        }
-    }
-    Ok(out)
-}
-
-fn load_permission_grants(dir: &Path) -> Result<Vec<PermissionGrant>> {
-    let mut grants = Vec::new();
-    if !dir.exists() {
-        return Ok(grants);
-    }
-    for entry in fs::read_dir(dir)? {
-        let path = entry?.path();
-        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-        if !matches!(ext, "yaml" | "yml" | "json") {
-            continue;
-        }
-        let text = fs::read_to_string(&path)?;
-        let value: serde_json::Value = if ext == "json" {
-            serde_json::from_str(&text)?
-        } else {
-            serde_yaml::from_str(&text)?
-        };
-        if value.is_array() {
-            grants.extend(serde_json::from_value::<Vec<PermissionGrant>>(value)?);
-        } else {
-            grants.push(serde_json::from_value(value)?);
-        }
-    }
-    Ok(grants)
-}
-
-fn known_app_names() -> Vec<String> {
+pub(crate) fn known_app_names() -> Vec<String> {
     let mut names: Vec<String> = discover_apps(&builtin_manifests())
         .into_iter()
         .map(|a| a.manifest.name)
@@ -371,7 +367,7 @@ fn known_app_names() -> Vec<String> {
     names
 }
 
-fn builtin_manifests() -> Vec<AppManifest> {
+pub(crate) fn builtin_manifests() -> Vec<AppManifest> {
     vec![
         manifest_of(&qefro_restaurant::installed()),
         manifest_of(&qefro_crm::installed()),
@@ -379,13 +375,7 @@ fn builtin_manifests() -> Vec<AppManifest> {
 }
 
 fn manifest_of(app: &InstalledApp) -> AppManifest {
-    AppManifest {
-        name: app.module.name.clone(),
-        version: app.module.version.clone(),
-        label: app.module.label.clone(),
-        description: app.module.description.clone(),
-        depends_on: vec!["qefro-framework".into()],
-    }
+    AppManifest::from_module(&app.module)
 }
 
 fn cmd_new(name: &str, path: Option<&Path>) -> Result<()> {
@@ -404,7 +394,7 @@ fn cmd_new(name: &str, path: Option<&Path>) -> Result<()> {
     fs::write(
         root.join("app.toml"),
         format!(
-            "name = \"{name}\"\nversion = \"0.1.0\"\nlabel = \"{name}\"\ndescription = \"\"\ndepends_on = [\"qefro-framework\"]\n"
+            "name = \"{name}\"\nversion = \"0.1.0\"\nlabel = \"{name}\"\ndescription = \"\"\napi_version = \"1\"\nframework_version = \">=0.7\"\n"
         ),
     )?;
     fs::write(
@@ -465,58 +455,20 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn is_framework_root() -> bool {
+pub(crate) fn is_framework_root() -> bool {
     Path::new("Cargo.toml").exists() && Path::new("crates").is_dir()
 }
 
-fn cmd_app_new(name: &str) -> Result<()> {
-    if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        bail!("invalid app name '{name}' (use letters, numbers, '-' or '_')");
-    }
-    if matches!(name, "restaurant" | "crm") && is_framework_root() {
-        let catalog = PathBuf::from("apps").join(name);
-        if !catalog.exists() {
-            write_catalog_stub(&catalog, name)?;
-        }
-        println!(
-            "'{name}' is a built-in application. Catalog: {}\nInstall it with: qefro app install {name}\nRun it with:     qefro dev --app {name}",
-            catalog.display()
-        );
-        return Ok(());
-    }
-    let root = if is_framework_root() {
-        PathBuf::from("apps").join(name)
-    } else {
-        PathBuf::from(name)
-    };
-    if root.exists() {
-        bail!("app '{name}' already exists at {}", root.display());
-    }
-    write_app_skeleton(&root, name)?;
-    println!("created {}", root.display());
-    println!("next:");
-    println!("  cd {}", root.display());
-    println!("  qefro entity create Customer");
-    println!("  qefro app install {name}");
-    println!("  qefro migrate --app {name}");
-    println!("  qefro dev --app {name}");
-    Ok(())
-}
-
-fn write_catalog_stub(root: &Path, name: &str) -> Result<()> {
+pub(crate) fn write_catalog_stub(root: &Path, name: &str) -> Result<()> {
     fs::create_dir_all(root)?;
     let (version, label, description) = match name {
         "restaurant" => (
-            "0.2.0",
-            "Restaurant",
+            "1.0.0",
+            "Restaurant Management",
             "Tables, reservations, menus, orders, and payments",
         ),
         "crm" => (
-            "0.2.0",
+            "1.0.0",
             "CRM",
             "Leads, contacts, opportunities, and activities",
         ),
@@ -525,7 +477,7 @@ fn write_catalog_stub(root: &Path, name: &str) -> Result<()> {
     fs::write(
         root.join("app.toml"),
         format!(
-            "name = \"{name}\"\nversion = \"{version}\"\nlabel = \"{label}\"\ndescription = \"{description}\"\ndepends_on = [\"qefro-framework\"]\n"
+            "name = \"{name}\"\nversion = \"{version}\"\nlabel = \"{label}\"\ndescription = \"{description}\"\napi_version = \"1\"\nframework_version = \">=0.7\"\nsource = \"builtin\"\n"
         ),
     )?;
     fs::write(
@@ -534,94 +486,6 @@ fn write_catalog_stub(root: &Path, name: &str) -> Result<()> {
             "# {label}\n\nBuilt-in Qefro application. Runtime source: `examples/{name}`.\nEntities, workflows, and permissions are registered from Rust — they are not hardcoded in framework core.\n"
         ),
     )?;
-    Ok(())
-}
-
-fn write_app_skeleton(root: &Path, name: &str) -> Result<()> {
-    for dir in ["entities", "workflows", "permissions", "hooks", "tools", "seeds"] {
-        fs::create_dir_all(root.join(dir))?;
-    }
-    fs::write(
-        root.join("app.toml"),
-        format!(
-            "name = \"{name}\"\nversion = \"0.1.0\"\nlabel = \"{name}\"\ndescription = \"\"\ndepends_on = [\"qefro-framework\"]\n"
-        ),
-    )?;
-    fs::write(
-        root.join("README.md"),
-        format!(
-            "# {name}\n\nGenerated by `qefro app new`.\n\n```bash\nqefro entity create Customer\nqefro app install {name}\nqefro migrate --app {name}\nqefro dev --app {name}\n```\n"
-        ),
-    )?;
-    fs::write(
-        root.join("entities/.gitkeep"),
-        "",
-    )?;
-    Ok(())
-}
-
-fn cmd_app_list() {
-    let installed = load_installed();
-    let apps = discover_apps(&builtin_manifests());
-    if apps.is_empty() {
-        println!("(no applications discovered)");
-        return;
-    }
-    for app in apps {
-        let status = if installed.installed.iter().any(|n| n == &app.manifest.name) {
-            "installed"
-        } else {
-            "available"
-        };
-        let kind = if app.builtin { "builtin" } else { "fs" };
-        println!(
-            "{:<16} {:<8} {:<8} {:<10} {}",
-            app.manifest.name, app.manifest.version, kind, status, app.manifest.description
-        );
-    }
-}
-
-fn cmd_app_install(name: &str) -> Result<()> {
-    if !known_app_names().iter().any(|n| n == name) && find_app_root(name).is_none() {
-        let hint = suggest_similar(name, known_app_names().iter().map(|s| s.as_str()))
-            .map(|s| format!(" Did you mean '{s}'?"))
-            .unwrap_or_default();
-        bail!("unknown app '{name}'.{hint}");
-    }
-    let set = install_app(name).map_err(|e| anyhow::anyhow!("{e}"))?;
-    println!("installed: {}", set.installed.join(", "));
-    Ok(())
-}
-
-fn cmd_app_remove(name: &str) -> Result<()> {
-    let set = remove_app(name).map_err(|e| anyhow::anyhow!("{e}"))?;
-    if set.installed.is_empty() {
-        println!("installed: (none — `qefro dev` will load restaurant + crm)");
-    } else {
-        println!("installed: {}", set.installed.join(", "));
-    }
-    Ok(())
-}
-
-fn cmd_app_info(name: &str) -> Result<()> {
-    let runtime = runtime_for(name)?;
-    let apps = runtime.installed_apps();
-    if apps.is_empty() {
-        bail!("app '{name}' has no registered module");
-    }
-    println!("name:        {name}");
-    println!("module(s):   {}", apps.join(", "));
-    println!("entities:    {}", runtime.entity_names().join(", "));
-    let wfs: Vec<_> = runtime.workflows().into_iter().map(|w| w.name).collect();
-    println!(
-        "workflows:   {}",
-        if wfs.is_empty() {
-            "(none)".into()
-        } else {
-            wfs.join(", ")
-        }
-    );
-    println!("tools:       {}", runtime.tool_names().len());
     Ok(())
 }
 
@@ -658,6 +522,7 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
                 qefro_core::RelationKind::ManyToOne => "many-to-one",
                 qefro_core::RelationKind::OneToMany => "one-to-many",
                 qefro_core::RelationKind::ManyToMany => "many-to-many",
+                qefro_core::RelationKind::ChildTable => "child-table",
             });
         }
         println!(
@@ -693,7 +558,7 @@ fn cmd_entity_create(name: &str, app: Option<&str>) -> Result<()> {
 
 fn entity_write_dir(app: Option<&str>) -> Result<PathBuf> {
     if let Some(app) = app {
-        let root = find_app_root(app).unwrap_or_else(|| PathBuf::from("apps").join(app));
+        let root = qefro_core::find_app_root(app).unwrap_or_else(|| PathBuf::from("apps").join(app));
         return Ok(root.join("entities"));
     }
     if Path::new("app.toml").exists() {
@@ -737,48 +602,6 @@ async fn cmd_action(
     Ok(())
 }
 
-async fn cmd_doctor() -> Result<()> {
-    println!("qefro doctor");
-    match Command::new("rustc").arg("--version").output() {
-        Ok(out) => println!("rustc: {}", String::from_utf8_lossy(&out.stdout).trim()),
-        Err(_) => println!("rustc: missing"),
-    }
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://qefro:qefro@127.0.0.1:5432/qefro".into());
-    println!("DATABASE_URL: {url}");
-    match qefro_db::connect(&url).await {
-        Ok(pool) => {
-            qefro_db::pool::ping(&pool)
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
-            println!("postgres: ok");
-        }
-        Err(e) => println!("postgres: {e}"),
-    }
-    if Path::new("app.toml").exists() {
-        println!("app.toml: present");
-    } else {
-        println!("app.toml: not in cwd (ok if running framework examples)");
-    }
-    if Path::new("apps").is_dir() {
-        let apps = discover_apps(&builtin_manifests());
-        println!(
-            "apps/: {} discovered ({})",
-            apps.len(),
-            apps.iter()
-                .map(|a| a.manifest.name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
-    let installed = load_installed();
-    if installed.installed.is_empty() {
-        println!("installed: (default restaurant, crm)");
-    } else {
-        println!("installed: {}", installed.installed.join(", "));
-    }
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {

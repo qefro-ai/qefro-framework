@@ -24,6 +24,8 @@ pub enum FieldType {
     Enum { values: Vec<String> },
     Json,
     Relation,
+    /// Nested child collection. Does not store a column on the parent.
+    ChildTable,
 }
 
 impl FieldType {
@@ -41,6 +43,7 @@ impl FieldType {
             Self::Enum { .. } => "enum",
             Self::Json => "json",
             Self::Relation => "relation",
+            Self::ChildTable => "child_table",
         }
     }
 
@@ -54,7 +57,7 @@ impl FieldType {
             Self::Date => "DATE",
             Self::Time => "TIME",
             Self::Uuid | Self::Relation => "UUID",
-            Self::Json => "JSONB",
+            Self::Json | Self::ChildTable => "JSONB",
         }
     }
 
@@ -71,7 +74,12 @@ impl FieldType {
             Self::Enum { .. } => UiWidget::Select,
             Self::Json => UiWidget::Json,
             Self::Relation => UiWidget::Relation,
+            Self::ChildTable => UiWidget::ChildTable,
         }
+    }
+
+    pub fn is_numeric(&self) -> bool {
+        matches!(self, Self::Integer | Self::Decimal)
     }
 }
 
@@ -81,6 +89,7 @@ pub enum RelationKind {
     ManyToOne,
     OneToMany,
     ManyToMany,
+    ChildTable,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -124,6 +133,73 @@ pub struct FieldDef {
     /// System fields (id, tenant_id, timestamps) are not accepted from clients.
     #[serde(default)]
     pub system: bool,
+    /// Server-calculated. Client writes are discarded.
+    #[serde(default)]
+    pub computed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChildTableUi {
+    #[serde(default = "default_true")]
+    pub editable: bool,
+    #[serde(default = "default_true")]
+    pub addable: bool,
+    #[serde(default = "default_true")]
+    pub deletable: bool,
+    #[serde(default = "default_true")]
+    pub reorderable: bool,
+}
+
+impl Default for ChildTableUi {
+    fn default() -> Self {
+        Self {
+            editable: true,
+            addable: true,
+            deletable: true,
+            reorderable: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChildTableDef {
+    pub name: String,
+    pub child_entity: String,
+    /// Foreign key on the child pointing at the parent. Defaults to `parent_id`.
+    #[serde(default = "default_parent_id")]
+    pub parent_field: String,
+    #[serde(default = "default_true")]
+    pub cascade_delete: bool,
+    #[serde(default)]
+    pub ui: ChildTableUi,
+}
+
+fn default_parent_id() -> String {
+    "parent_id".into()
+}
+
+impl ChildTableDef {
+    pub fn new(name: impl Into<String>, child_entity: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            child_entity: child_entity.into(),
+            parent_field: default_parent_id(),
+            cascade_delete: true,
+            ui: ChildTableUi::default(),
+        }
+    }
+
+    pub fn parent_field(mut self, name: impl Into<String>) -> Self {
+        self.parent_field = name.into();
+        self
+    }
+
+    pub fn cascade_delete(mut self, cascade: bool) -> Self {
+        self.cascade_delete = cascade;
+        self
+    }
 }
 
 fn default_true() -> bool {
@@ -154,6 +230,8 @@ impl FieldDef {
                 ..UiFieldMeta::default()
             },
             system: false,
+            computed: false,
+            formula: None,
         }
     }
 
@@ -171,6 +249,19 @@ impl FieldDef {
 
     pub fn decimal(name: impl Into<String>) -> Self {
         Self::new(name, FieldType::Decimal)
+    }
+
+    /// Decimal stored as currency. `FieldDef::currency("subtotal").computed("...")`.
+    pub fn currency(name: impl Into<String>) -> Self {
+        Self::decimal(name).with_currency()
+    }
+
+    pub fn with_currency(mut self) -> Self {
+        self.ui.widget = UiWidget::Currency.as_str().into();
+        if self.ui.widget_options.precision.is_none() {
+            self.ui.widget_options.precision = Some(2);
+        }
+        self
     }
 
     pub fn boolean(name: impl Into<String>) -> Self {
@@ -253,6 +344,25 @@ impl FieldDef {
         field.ui.form = true;
         field.ui.list = false;
         field.ui.widget = UiWidget::Relation.as_str().into();
+        field
+    }
+
+    pub fn child_table_field(def: &ChildTableDef) -> Self {
+        let mut field = Self::new(&def.name, FieldType::ChildTable).with_relation(RelationDef {
+            target_entity: def.child_entity.clone(),
+            kind: RelationKind::ChildTable,
+            inverse_field: Some(def.parent_field.clone()),
+        });
+        field.field_type = FieldType::ChildTable;
+        field.ui.widget = UiWidget::ChildTable.as_str().into();
+        field.ui.form = true;
+        field.ui.list = false;
+        field.ui.detail = true;
+        field.ui.widget_options.entity = Some(def.child_entity.clone());
+        field.ui.widget_options.editable = Some(def.ui.editable);
+        field.ui.widget_options.addable = Some(def.ui.addable);
+        field.ui.widget_options.deletable = Some(def.ui.deletable);
+        field.ui.widget_options.reorderable = Some(def.ui.reorderable);
         field
     }
 
@@ -347,14 +457,6 @@ impl FieldDef {
         self
     }
 
-    pub fn currency(mut self) -> Self {
-        self.ui.widget = UiWidget::Currency.as_str().into();
-        if self.ui.widget_options.precision.is_none() {
-            self.ui.widget_options.precision = Some(2);
-        }
-        self
-    }
-
     pub fn percentage(mut self) -> Self {
         self.ui.widget = UiWidget::Percentage.as_str().into();
         if self.validation.min.is_none() {
@@ -363,6 +465,15 @@ impl FieldDef {
         if self.validation.max.is_none() {
             self.validation.max = Some(100.0);
         }
+        self
+    }
+
+    pub fn computed(mut self, formula: impl Into<String>) -> Self {
+        self.computed = true;
+        self.formula = Some(formula.into());
+        self.ui.readonly = true;
+        self.required = false;
+        self.nullable = true;
         self
     }
 
@@ -394,8 +505,11 @@ impl FieldDef {
     }
 
     pub fn with_relation(mut self, relation: RelationDef) -> Self {
-        self.relation = Some(relation);
-        self.field_type = FieldType::Relation;
+        self.relation = Some(relation.clone());
+        if !matches!(self.field_type, FieldType::ChildTable) {
+            self.field_type = FieldType::Relation;
+        }
+        let _ = relation;
         self
     }
 
@@ -503,12 +617,28 @@ impl FieldDef {
         if self.system {
             return true;
         }
+        if matches!(self.field_type, FieldType::ChildTable) {
+            return false;
+        }
         match &self.relation {
-            Some(rel) if matches!(rel.kind, RelationKind::OneToMany | RelationKind::ManyToMany) => {
+            Some(rel)
+                if matches!(
+                    rel.kind,
+                    RelationKind::OneToMany | RelationKind::ManyToMany | RelationKind::ChildTable
+                ) =>
+            {
                 false
             }
             _ => true,
         }
+    }
+
+    pub fn is_child_table(&self) -> bool {
+        matches!(self.field_type, FieldType::ChildTable)
+            || matches!(
+                self.relation.as_ref().map(|r| r.kind),
+                Some(RelationKind::ChildTable)
+            )
     }
 
     pub fn column_name(&self) -> String {
@@ -542,6 +672,7 @@ impl FieldDef {
                 value.is_string() || (self.ui.widget == "multiselect" && value.is_array())
             }
             FieldType::Json => true,
+            FieldType::ChildTable => value.is_array(),
         };
         if ok {
             None
@@ -592,7 +723,7 @@ mod tests {
 
     #[test]
     fn data_type_is_independent_of_widget() {
-        let price = FieldDef::decimal("price").currency();
+        let price = FieldDef::currency("price");
         assert_eq!(price.field_type, FieldType::Decimal);
         assert_eq!(price.ui.widget, "currency");
         let color = FieldDef::string("brand_color").ui(UiConfig::color());
@@ -611,6 +742,16 @@ mod tests {
             field.relation.as_ref().map(|r| r.target_entity.as_str()),
             Some("Customer")
         );
+    }
+
+    #[test]
+    fn computed_fields_are_nullable_and_readonly() {
+        let field = FieldDef::currency("amount").computed("quantity * rate");
+        assert!(field.computed);
+        assert!(field.nullable);
+        assert!(!field.required);
+        assert!(field.ui.readonly);
+        assert_eq!(field.formula.as_deref(), Some("quantity * rate"));
     }
 
     #[test]

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { api } from "../../api";
 import { useTenantTheme } from "../../metadata/context";
-import { registerWidget, type WidgetProps } from "../../metadata/registry";
+import { registerWidget, renderWidget, type WidgetProps } from "../../metadata/registry";
 import { localToUtcIso, utcToLocalParts, formatMoney } from "../../metadata/timezone";
+import { previewFormula } from "../../metadata/formula";
 
 function opt(field: WidgetProps["field"]) {
   return field.widget_options ?? {};
@@ -738,6 +739,104 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id 
   );
 }
 
+export function ChildTable({ field, value, onChange, entities, disabled }: WidgetProps) {
+  const childName = field.child_entity || field.widget_options?.entity || field.relation;
+  const child = entities.find((e) => e.entity === childName);
+  const opts = opt(field);
+  const rows = Array.isArray(value) ? (value as Record<string, unknown>[]) : [];
+  const cols = (child?.fields ?? []).filter((f) => {
+    if (f.hidden || f.form === false) return false;
+    if (["id", "tenant_id"].includes(f.name)) return false;
+    if (f.relation_kind === "one_to_many" || f.relation_kind === "child_table") return false;
+    return true;
+  });
+  const addable = opts.addable !== false && !disabled;
+  const deletable = opts.deletable !== false && !disabled;
+  const reorderable = opts.reorderable !== false && !disabled;
+
+  function setRow(i: number, name: string, v: unknown) {
+    const next = rows.map((row, idx) => (idx === i ? { ...row, [name]: v } : row));
+    const formulas = cols.filter((c) => c.computed && c.formula);
+    for (const computed of formulas) {
+      const preview = previewFormula(computed.formula || "", next[i] ?? {}, {});
+      if (preview != null) next[i] = { ...next[i], [computed.name]: preview };
+    }
+    onChange(next);
+  }
+
+  return (
+    <div className="child-table">
+      <table>
+        <thead>
+          <tr>
+            {cols.map((c) => (
+              <th key={c.name}>{c.label}</th>
+            ))}
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={String(row.id ?? i)}>
+              {cols.map((col) => (
+                <td key={col.name}>
+                  {renderWidget({
+                    field: { ...col, readonly: Boolean(col.computed || col.readonly || disabled) },
+                    value: row[col.name],
+                    entities,
+                    disabled: Boolean(disabled || col.computed || col.readonly),
+                    onChange: (v) => setRow(i, col.name, v),
+                  })}
+                </td>
+              ))}
+              <td className="child-row-ops">
+                {reorderable && (
+                  <>
+                    <button type="button" className="ghost" onClick={() => onChange(move(rows, i, -1))} disabled={i === 0}>
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => onChange(move(rows, i, 1))}
+                      disabled={i === rows.length - 1}
+                    >
+                      ↓
+                    </button>
+                  </>
+                )}
+                {addable && (
+                  <button type="button" className="ghost" onClick={() => onChange([...rows.slice(0, i + 1), { ...row, id: undefined }, ...rows.slice(i + 1)])}>
+                    Duplicate
+                  </button>
+                )}
+                {deletable && (
+                  <button type="button" className="ghost" onClick={() => onChange(rows.filter((_, idx) => idx !== i))}>
+                    Delete
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {addable && (
+        <button type="button" className="ghost" onClick={() => onChange([...rows, {}])}>
+          + Add {child?.label || "row"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function move(rows: Record<string, unknown>[], i: number, dir: number) {
+  const j = i + dir;
+  if (j < 0 || j >= rows.length) return rows;
+  const next = rows.slice();
+  [next[i], next[j]] = [next[j], next[i]];
+  return next;
+}
+
 export function registerBuiltinWidgets() {
   registerWidget("text", TextInput);
   registerWidget("textarea", Textarea);
@@ -766,6 +865,7 @@ export function registerBuiltinWidgets() {
   registerWidget("rich_text", RichText);
   registerWidget("file", FileUpload);
   registerWidget("image", ImageUpload);
+  registerWidget("child_table", ChildTable);
   registerWidget("string", TextInput);
 }
 

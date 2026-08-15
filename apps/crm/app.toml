@@ -1,5 +1,11 @@
 name = "crm"
-version = "0.2.0"
+version = "1.0.0"
 label = "CRM"
 description = "Leads, contacts, opportunities, and activities"
-depends_on = ["qefro-framework"]
+author = "Qefro"
+license = "MIT"
+api_version = "1"
+framework_version = ">=0.7"
+source = "builtin"
+
+[dependencies]

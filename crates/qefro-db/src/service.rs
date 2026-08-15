@@ -195,6 +195,9 @@ impl EntityService {
         self.permissions.check(ctx, &entity.name, Action::List)?;
         let query = query.sanitize(&entity)?;
         let mut page = self.repo.list(&entity, ctx, &query).await?;
+        for item in &mut page.items {
+            coerce_numeric_json(&entity, item);
+        }
         self.expand_many_to_one_batch(ctx, &entity, &mut page.items)
             .await?;
         for item in &mut page.items {
@@ -223,6 +226,8 @@ impl EntityService {
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Create)?;
         reject_client_tenant(&data)?;
+        let children = extract_children(&entity, &mut data);
+        strip_computed(&entity, &mut data);
         prepare_record(&entity, &mut data, ctx);
         if let Some(wf) = self.workflows.for_entity(&entity.name) {
             if data.get(&wf.field).and_then(|v| v.as_str()).is_none() {
@@ -232,12 +237,65 @@ impl EntityService {
             }
         }
         validate_record(entity.business_fields(), &data, false)?;
+        self.validate_child_payloads(ctx, &entity, &children, false)
+            .await?;
         self.check_uniques(ctx, &entity, &data, None).await?;
         self.hooks
             .before_create(ctx, &entity.name, &mut data)
             .await?;
-        let created = self.repo.insert(&entity, ctx, data).await?;
+
+        let mut tx = self
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        if let Some(naming) = &entity.naming {
+            if naming.assign_on != "submit" {
+                let number = crate::numbering::allocate(
+                    &mut tx,
+                    ctx.tenant_id,
+                    &entity.name,
+                    naming,
+                    Utc::now(),
+                )
+                .await?;
+                if let Some(obj) = data.as_object_mut() {
+                    obj.insert(naming.field.clone(), json!(number));
+                }
+            }
+        }
+        let created = match self.repo.insert_tx(&mut tx, &entity, ctx, data).await {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
+        };
         let id = record_id(&created)?;
+        let stored_children = match self
+            .write_children(&mut tx, ctx, &entity, id, children, true)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
+        };
+        let created = match self
+            .recalculate_computed(&mut tx, ctx, &entity, created, &stored_children)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
+        };
+        tx.commit()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+
         if entity.audit {
             self.audit
                 .record(ctx, &entity.name, Some(id), "create", None, Some(&created))
@@ -271,9 +329,22 @@ impl EntityService {
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Update)?;
         reject_client_tenant(&patch)?;
+        let children = extract_children(&entity, &mut patch);
+        strip_computed(&entity, &mut patch);
         canonicalize_values(&entity, &mut patch, ctx);
         sanitize_values(&entity, &mut patch);
         let current = self.repo.get(&entity, ctx, id).await?;
+        if let Some(doc) = &entity.document {
+            let status = current
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if doc.is_locked(status) {
+                return Err(QefroError::forbidden(
+                    "submitted documents cannot be edited; use an operation",
+                ));
+            }
+        }
         if let Some(wf) = self.workflows.for_entity(&entity.name) {
             if let Some(obj) = patch.as_object_mut() {
                 if obj.contains_key(&wf.field) {
@@ -285,11 +356,49 @@ impl EntityService {
             }
         }
         validate_record(entity.business_fields(), &patch, true)?;
+        self.validate_child_payloads(ctx, &entity, &children, true)
+            .await?;
         self.check_uniques(ctx, &entity, &patch, Some(id)).await?;
         self.hooks
             .before_update(ctx, &entity.name, &current, &mut patch)
             .await?;
-        let updated = self.repo.update(&entity, ctx, id, patch).await?;
+
+        let mut tx = self
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        let updated = match self.repo.update_tx(&mut tx, &entity, ctx, id, patch).await {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
+        };
+        let stored_children = match self
+            .write_children(&mut tx, ctx, &entity, id, children, false)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
+        };
+        let updated = match self
+            .recalculate_computed(&mut tx, ctx, &entity, updated, &stored_children)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
+        };
+        tx.commit()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+
         if entity.audit {
             self.audit
                 .record(
@@ -328,6 +437,9 @@ impl EntityService {
             .before_delete(ctx, &entity.name, &current)
             .await?;
         let deleted = self.repo.delete(&entity, ctx, id).await?;
+        if entity.soft_delete {
+            let _ = self.soft_delete_children(ctx, &entity, id).await;
+        }
         if entity.audit {
             self.audit
                 .record(ctx, &entity.name, Some(id), "delete", Some(&current), None)
@@ -410,8 +522,10 @@ impl EntityService {
         entity: &qefro_core::EntityDef,
         mut record: Value,
     ) -> QefroResult<Value> {
+        coerce_numeric_json(entity, &mut record);
         self.expand_many_to_one(ctx, entity, &mut record).await?;
         self.expand_one_to_many(ctx, entity, &mut record).await?;
+        self.expand_child_tables(ctx, entity, &mut record).await?;
         self.attach_workflow(ctx, entity, &mut record);
         self.attach_actions(ctx, entity, &mut record);
         Ok(record)
@@ -672,6 +786,355 @@ impl EntityService {
         Ok(())
     }
 
+    async fn expand_child_tables(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        record: &mut Value,
+    ) -> QefroResult<()> {
+        use qefro_core::RelationKind;
+        let Some(id) = record.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()) else {
+            return Ok(());
+        };
+        for field in &entity.fields {
+            let Some(rel) = &field.relation else { continue };
+            if rel.kind != RelationKind::ChildTable {
+                continue;
+            }
+            let inverse = rel
+                .inverse_field
+                .clone()
+                .unwrap_or_else(|| "parent_id".into());
+            let Ok(target) = self.registry.get(&rel.target_entity) else {
+                continue;
+            };
+            let mut query = child_rows_query(&target, &inverse, &id);
+            query.page_size = 200;
+            if let Ok(mut page) = self.repo.list(&target, ctx, &query).await {
+                for item in &mut page.items {
+                    coerce_numeric_json(&target, item);
+                }
+                if let Some(obj) = record.as_object_mut() {
+                    obj.insert(field.name.clone(), json!(page.items));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn validate_child_payloads(
+        &self,
+        _ctx: &OpContext,
+        parent: &qefro_core::EntityDef,
+        children: &std::collections::HashMap<String, Vec<Value>>,
+        partial: bool,
+    ) -> QefroResult<()> {
+        let mut errors = Vec::new();
+        for field in &parent.fields {
+            if !field.is_child_table() {
+                continue;
+            }
+            let Some(rows) = children.get(&field.name) else {
+                continue;
+            };
+            let Some(rel) = &field.relation else { continue };
+            let child = self.registry.get(&rel.target_entity)?;
+            let inverse = rel
+                .inverse_field
+                .clone()
+                .unwrap_or_else(|| "parent_id".into());
+            let fields: Vec<_> = child
+                .business_fields()
+                .iter()
+                .filter(|f| {
+                    f.name != inverse
+                        && f.name != "parent_id"
+                        && f.relation.as_ref().map(|r| r.target_entity.as_str())
+                            != Some(parent.name.as_str())
+                })
+                .cloned()
+                .collect();
+            for (i, row) in rows.iter().enumerate() {
+                if let Err(qefro_core::QefroError::Validation { fields, .. }) =
+                    validate_record(&fields, row, partial)
+                {
+                    for err in fields {
+                        errors.push(FieldError::new(
+                            format!("{}.{}.{}", field.name, i, err.field),
+                            err.code,
+                            err.message,
+                        ));
+                    }
+                }
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(QefroError::validation(errors))
+        }
+    }
+
+    async fn write_children(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        ctx: &OpContext,
+        parent: &qefro_core::EntityDef,
+        parent_id: Uuid,
+        children: std::collections::HashMap<String, Vec<Value>>,
+        is_create: bool,
+    ) -> QefroResult<std::collections::HashMap<String, Vec<Value>>> {
+        use qefro_core::RelationKind;
+        use std::collections::{HashMap, HashSet};
+        let mut stored: HashMap<String, Vec<Value>> = HashMap::new();
+        for field in &parent.fields {
+            let Some(rel) = &field.relation else { continue };
+            if rel.kind != RelationKind::ChildTable {
+                continue;
+            }
+            let child = self.registry.get(&rel.target_entity)?;
+            let inverse = rel
+                .inverse_field
+                .clone()
+                .unwrap_or_else(|| "parent_id".into());
+            if !children.contains_key(&field.name) {
+                if is_create {
+                    stored.insert(field.name.clone(), Vec::new());
+                } else {
+                    let mut query = child_rows_query(&child, &inverse, &parent_id.to_string());
+                    query.page_size = 200;
+                    let page = self.repo.list_tx(tx, &child, ctx, &query).await?;
+                    stored.insert(field.name.clone(), page.items);
+                }
+                continue;
+            }
+            let incoming = children.get(&field.name).cloned().unwrap_or_default();
+            let mut query = child_rows_query(&child, &inverse, &parent_id.to_string());
+            query.page_size = 500;
+            let existing = if is_create {
+                Vec::new()
+            } else {
+                self.repo.list_tx(tx, &child, ctx, &query).await?.items
+            };
+            let existing_ids: HashSet<Uuid> = existing
+                .iter()
+                .filter_map(|row| record_id(row).ok())
+                .collect();
+            let mut seen = HashSet::new();
+            let mut out_rows = Vec::new();
+            for (i, mut row) in incoming.into_iter().enumerate() {
+                reject_client_tenant(&row)?;
+                strip_computed(&child, &mut row);
+                if let Some(obj) = row.as_object_mut() {
+                    obj.insert(inverse.clone(), json!(parent_id.to_string()));
+                    if child.get_field("sort_order").is_some() {
+                        obj.insert("sort_order".into(), json!(i as i64));
+                    }
+                }
+                qefro_core::apply_computed_fields(
+                    child.business_fields(),
+                    &mut row,
+                    &HashMap::new(),
+                )?;
+                let row_id = row
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok());
+                let saved = if let Some(cid) = row_id {
+                    if !existing_ids.contains(&cid) {
+                        return Err(QefroError::forbidden(
+                            "cannot attach a child that does not belong to this document",
+                        ));
+                    }
+                    let current = self.repo.get_tx(tx, &child, ctx, cid, true).await?;
+                    let parent_ok = current
+                        .get(&inverse)
+                        .and_then(|v| v.as_str())
+                        .map(|s| s == parent_id.to_string())
+                        .unwrap_or(false);
+                    if !parent_ok {
+                        return Err(QefroError::forbidden(
+                            "cannot attach a child from another document",
+                        ));
+                    }
+                    seen.insert(cid);
+                    if let Some(obj) = row.as_object_mut() {
+                        obj.remove("id");
+                    }
+                    self.repo.update_tx(tx, &child, ctx, cid, row).await?
+                } else {
+                    self.repo.insert_tx(tx, &child, ctx, row).await?
+                };
+                out_rows.push(saved);
+            }
+            if !is_create {
+                for old in existing {
+                    let oid = record_id(&old)?;
+                    if !seen.contains(&oid) {
+                        self.repo.delete_tx(tx, &child, ctx, oid).await?;
+                    }
+                }
+            }
+            stored.insert(field.name.clone(), out_rows);
+        }
+        Ok(stored)
+    }
+
+    async fn recalculate_computed(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        mut record: Value,
+        children: &std::collections::HashMap<String, Vec<Value>>,
+    ) -> QefroResult<Value> {
+        if !entity.fields.iter().any(|f| f.computed) {
+            return Ok(record);
+        }
+        qefro_core::apply_computed_fields(entity.business_fields(), &mut record, children)?;
+        let mut patch = serde_json::Map::new();
+        for field in entity.stored_fields() {
+            if field.computed {
+                if let Some(v) = record.get(&field.name) {
+                    patch.insert(field.name.clone(), v.clone());
+                }
+            }
+        }
+        if patch.is_empty() {
+            return Ok(record);
+        }
+        let id = record_id(&record)?;
+        self.repo
+            .update_tx(tx, entity, ctx, id, Value::Object(patch))
+            .await
+    }
+
+    async fn soft_delete_children(
+        &self,
+        ctx: &OpContext,
+        parent: &qefro_core::EntityDef,
+        parent_id: Uuid,
+    ) -> QefroResult<()> {
+        use qefro_core::RelationKind;
+        for field in &parent.fields {
+            let Some(rel) = &field.relation else { continue };
+            if rel.kind != RelationKind::ChildTable {
+                continue;
+            }
+            let Ok(child) = self.registry.get(&rel.target_entity) else {
+                continue;
+            };
+            let inverse = rel
+                .inverse_field
+                .clone()
+                .unwrap_or_else(|| "parent_id".into());
+            let mut query = child_rows_query(&child, &inverse, &parent_id.to_string());
+            query.page_size = 500;
+            let page = self.repo.list(&child, ctx, &query).await?;
+            for row in page.items {
+                if let Ok(cid) = record_id(&row) {
+                    let _ = self.repo.delete(&child, ctx, cid).await;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn run_report(
+        &self,
+        ctx: &OpContext,
+        report: &qefro_core::ReportDef,
+        filters: Value,
+    ) -> QefroResult<Value> {
+        let entity = self.registry.get(&report.entity)?;
+        self.ensure_app(ctx, &entity)?;
+        self.permissions.check(ctx, &entity.name, Action::List)?;
+        crate::reports::validate_report(&entity, report)?;
+        for field in report.fields.iter().chain(report.group_by.iter()) {
+            if let Some(def) = entity.get_field(field) {
+                if def.ui.hidden {
+                    return Err(QefroError::forbidden(format!(
+                        "field '{field}' is not visible"
+                    )));
+                }
+            }
+        }
+        let parsed = crate::reports::filters_from_json(&entity, &filters)?;
+        let mut query = qefro_search::Query::default();
+        query.filters = parsed;
+        query.page_size = 500;
+        let rows = crate::reports::execute_report(
+            self.pool(),
+            &entity,
+            entity.tenant_owned.then_some(ctx.tenant_id),
+            report,
+            &query,
+        )
+        .await?;
+        let series: Vec<Value> = rows
+            .iter()
+            .map(|row| {
+                let label = report
+                    .group_by
+                    .first()
+                    .and_then(|g| row.get(g))
+                    .cloned()
+                    .unwrap_or(json!(""));
+                let value = report
+                    .aggregations
+                    .keys()
+                    .next()
+                    .and_then(|k| row.get(k))
+                    .cloned()
+                    .unwrap_or(json!(0));
+                json!({ "label": label, "value": value })
+            })
+            .collect();
+        Ok(json!({
+            "name": report.name,
+            "label": report.label,
+            "entity": report.entity,
+            "chart": report.chart,
+            "group_by": report.group_by,
+            "rows": rows,
+            "series": series,
+        }))
+    }
+
+    pub async fn print_document(
+        &self,
+        ctx: &OpContext,
+        entity_name: &str,
+        id: Uuid,
+        format_name: Option<&str>,
+    ) -> QefroResult<(qefro_core::PrintFormat, Value, Vec<Value>)> {
+        let entity = self.registry.get(entity_name)?;
+        self.ensure_app(ctx, &entity)?;
+        self.permissions.check(ctx, &entity.name, Action::Read)?;
+        let record = self.get(ctx, entity_name, id).await?;
+        let format = entity
+            .print_formats
+            .iter()
+            .find(|f| format_name.map(|n| f.name == n).unwrap_or(true))
+            .cloned()
+            .or_else(|| {
+                Some(qefro_core::PrintFormat::new(
+                    format!("{} Standard", entity.label),
+                    &entity.name,
+                ))
+            })
+            .unwrap();
+        let items = entity
+            .fields
+            .iter()
+            .find(|f| f.is_child_table())
+            .and_then(|f| record.get(&f.name))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok((format, record, items))
+    }
+
     pub async fn dashboard_card_value(
         &self,
         ctx: &OpContext,
@@ -767,6 +1230,73 @@ impl EntityService {
             ))
         } else {
             Ok(())
+        }
+    }
+}
+
+fn child_rows_query(child: &qefro_core::EntityDef, inverse: &str, parent_id: &str) -> qefro_search::Query {
+    use qefro_search::{Filter, Query, Sort, SortDir};
+    let mut query = Query::default();
+    query.filters.push(Filter::Eq {
+        field: inverse.to_string(),
+        value: json!(parent_id),
+    });
+    if child.get_field("sort_order").is_some() {
+        query.sort.push(Sort {
+            field: "sort_order".into(),
+            dir: SortDir::Asc,
+        });
+    }
+    query.sort.push(Sort {
+        field: "created_at".into(),
+        dir: SortDir::Asc,
+    });
+    query
+}
+
+fn extract_children(
+    entity: &qefro_core::EntityDef,
+    data: &mut Value,
+) -> std::collections::HashMap<String, Vec<Value>> {
+    let mut out = std::collections::HashMap::new();
+    let Some(obj) = data.as_object_mut() else {
+        return out;
+    };
+    for field in &entity.fields {
+        if !field.is_child_table() {
+            continue;
+        }
+        if let Some(Value::Array(rows)) = obj.remove(&field.name) {
+            out.insert(field.name.clone(), rows);
+        }
+    }
+    out
+}
+
+fn strip_computed(entity: &qefro_core::EntityDef, data: &mut Value) {
+    let Some(obj) = data.as_object_mut() else {
+        return;
+    };
+    for field in &entity.fields {
+        if field.computed {
+            obj.remove(&field.name);
+        }
+    }
+}
+
+fn coerce_numeric_json(entity: &qefro_core::EntityDef, record: &mut Value) {
+    let Some(obj) = record.as_object_mut() else {
+        return;
+    };
+    for field in entity.stored_fields() {
+        if !field.field_type.is_numeric() {
+            continue;
+        }
+        let Some(Value::String(raw)) = obj.get(&field.name) else {
+            continue;
+        };
+        if let Ok(n) = raw.parse::<f64>() {
+            obj.insert(field.name.clone(), json!(n));
         }
     }
 }

@@ -51,7 +51,14 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
     { slug: string; entity: string; items: Record<string, unknown>[]; total: number }
   >;
   const visible = meta.fields.filter(
-    (f) => detailVisible(f) && f.relation_kind !== "one_to_many",
+    (f) =>
+      detailVisible(f) &&
+      f.relation_kind !== "one_to_many" &&
+      f.relation_kind !== "child_table" &&
+      f.type !== "child_table",
+  );
+  const childTables = meta.fields.filter(
+    (f) => f.relation_kind === "child_table" || f.type === "child_table",
   );
   const tabs = [...new Set(visible.map((f) => f.tab).filter(Boolean) as string[])];
   const activeTab = tab || tabs[0] || "";
@@ -70,6 +77,12 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
           <Link to={`/${slug}/${id}/edit`}>
             <button className="ghost">Edit</button>
           </Link>
+          <a href={`/api/v1/${slug}/${id}/print`} target="_blank" rel="noreferrer">
+            <button className="ghost">Print</button>
+          </a>
+          <a href={`/api/v1/${slug}/${id}/print.pdf`} target="_blank" rel="noreferrer">
+            <button className="ghost">PDF</button>
+          </a>
           <button
             className="ghost"
             onClick={async () => {
@@ -161,6 +174,43 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
           </div>
         )
       )}
+      {childTables.map((field) => {
+        const items = (Array.isArray(row[field.name]) ? row[field.name] : []) as Record<
+          string,
+          unknown
+        >[];
+        const child = entities.find((e) => e.entity === (field.child_entity || field.relation));
+        const cols = (child?.fields ?? []).filter(
+          (f) => !f.hidden && f.list !== false && f.relation_kind !== "one_to_many",
+        );
+        return (
+          <div key={field.name} className="panel">
+            <h3 style={{ padding: "0.85rem 0.85rem 0" }}>{field.label}</h3>
+            {items.length === 0 ? (
+              <p className="empty">No rows.</p>
+            ) : (
+              <table className="data">
+                <thead>
+                  <tr>
+                    {cols.map((c) => (
+                      <th key={c.name}>{c.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item, i) => (
+                    <tr key={String(item.id ?? i)}>
+                      {cols.map((c) => (
+                        <td key={c.name}>{String(item[c.name] ?? "")}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })}
       {Object.entries(related).map(([name, rel]) => (
         <div key={name} className="related panel">
           <h3 style={{ padding: "0.85rem 0.85rem 0" }}>

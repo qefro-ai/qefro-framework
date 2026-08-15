@@ -11,13 +11,14 @@ use qefro_workflow::WorkflowDef;
 
 pub fn module() -> AppModule {
     AppModule::new("crm")
-        .version("0.5.0")
+        .version("1.0.0")
         .label("CRM")
         .description("Leads, contacts, opportunities, and activities")
         .entity(entities::crm_customer())
         .entity(entities::lead())
         .entity(entities::contact())
         .entity(entities::opportunity())
+        .entity(entities::opportunity_item())
         .entity(entities::activity())
         .dashboard(dashboard::ops())
         .build()

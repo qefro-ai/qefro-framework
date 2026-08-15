@@ -1,5 +1,12 @@
 # Configuration
 
+Install the CLI first so `qefro` is on your PATH:
+
+```bash
+cargo install --path crates/qefro-cli --locked --force
+qefro --help
+```
+
 Qefro reads process configuration from the environment. Copy `.env.example` to `.env` locally. Never commit secrets.
 
 ## Required in production

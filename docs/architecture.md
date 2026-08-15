@@ -2,6 +2,12 @@
 
 Qefro is a modular monolith. One HTTP process, an optional dedicated worker, one PostgreSQL database, one generic frontend. Redis is not required.
 
+Building an app end to end: [Build a fullstack application](fullstack.md).
+
+V0.7 extends V0.6. It does not rewrite the runtime. It turns repository-local app directories into versioned, installable `.qefro` packages with validation, a registry, tenant enablement, and additive migrations.
+
+V0.6 extends V0.5. It does not rewrite the runtime. It turns metadata-driven CRUD into business documents: child tables, formulas, numbering, print, and reports.
+
 V0.5 extends V0.4. It does not rewrite the runtime. It turns generic CRUD into a metadata-driven form engine: data type stays independent of widget, UI schema is versioned, and the frontend resolves widgets through a registry.
 
 V0.4 extends V0.3. It does not rewrite CRUD, operations, or the agent boundary. It adds production tenant customization, application entitlements, and an explicit worker policy.
@@ -17,6 +23,8 @@ V0.4 extends V0.3. It does not rewrite CRUD, operations, or the agent boundary. 
 - Generic React widgets and action buttons
 - Agent tool JSON schemas
 - Dashboard cards
+- Child tables and computed fields
+- Document numbering, print, and reports
 - Audit, events, and optional jobs
 
 ## Security pipeline
@@ -90,7 +98,7 @@ If `after_operation` fails, the transaction rolls back (no event, no job). Event
 
 ## Relationships
 
-Many-to-one fields store a UUID and expand to `{ id, label, slug, entity }` in `_expanded` using batched lookups. One-to-many fields do not store a column; GET responses include `_related`. Many-to-many uses a junction table `{table}_{field}`.
+Many-to-one fields store a UUID and expand to `{ id, label, slug, entity }` in `_expanded` using batched lookups. One-to-many fields do not store a column; GET responses include `_related`. Child tables are nested collections on the parent payload and form. Many-to-many uses a junction table `{table}_{field}`.
 
 ## Application modules
 

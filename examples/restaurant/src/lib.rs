@@ -5,13 +5,13 @@ mod permissions;
 mod workflows;
 
 use qefro_api::InstalledApp;
-use qefro_core::AppModule;
+use qefro_core::{AppModule, ReportDef};
 use qefro_permissions::PermissionGrant;
 use qefro_workflow::WorkflowDef;
 
 pub fn module() -> AppModule {
     AppModule::new("restaurant")
-        .version("0.5.0")
+        .version("1.0.0")
         .label("Restaurant")
         .description("Tables, reservations, menus, orders, and payments")
         .entity(entities::customer())
@@ -25,7 +25,17 @@ pub fn module() -> AppModule {
         .entity(entities::order_item())
         .entity(entities::payment())
         .entity(entities::ui_showcase())
+        .entity(entities::showcase_line())
         .dashboard(dashboard::ops())
+        .report(
+            ReportDef::new("sales-by-day", "Order")
+                .label("Sales By Day")
+                .module("restaurant")
+                .fields(&["order_date", "grand_total"])
+                .group_by(&["order_date"])
+                .sum("grand_total")
+                .chart("bar"),
+        )
         .build()
 }
 
@@ -73,6 +83,8 @@ mod tests {
         assert_eq!(widget("rich_description"), "rich_text");
         assert_eq!(widget("image"), "image");
         assert_eq!(widget("attachment"), "file");
+        assert_eq!(widget("lines"), "child_table");
         assert!(ui.tabs.contains(&"Details".into()));
+        assert!(ui.fields.iter().any(|f| f.name == "line_total" && f.computed));
     }
 }

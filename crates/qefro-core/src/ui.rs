@@ -31,6 +31,7 @@ pub enum UiWidget {
     Image,
     Json,
     Boolean,
+    ChildTable,
 }
 
 impl UiWidget {
@@ -60,6 +61,7 @@ impl UiWidget {
             Self::Image => "image",
             Self::Json => "json",
             Self::Boolean => "checkbox",
+            Self::ChildTable => "child_table",
         }
     }
 }
@@ -102,6 +104,14 @@ pub struct WidgetOptions {
     pub allow_create: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub columns: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editable: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub addable: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletable: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reorderable: Option<bool>,
 }
 
 /// Presentation-only condition. Server validation still applies when hidden.
@@ -374,6 +384,18 @@ pub struct UiEntityMeta {
     pub tabs: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sections: Vec<String>,
+    #[serde(default = "default_true_standalone")]
+    pub standalone: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_of: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document: Option<crate::document::DocumentConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub naming: Option<crate::document::NamingConfig>,
+}
+
+fn default_true_standalone() -> bool {
+    true
 }
 
 fn schema_version() -> String {
@@ -446,6 +468,12 @@ pub struct UiFieldView {
     pub readonly_when: Option<UiWhen>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_from: Option<String>,
+    #[serde(default)]
+    pub computed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub child_entity: Option<String>,
 }
 
 fn widget_options_empty(opts: &WidgetOptions) -> bool {

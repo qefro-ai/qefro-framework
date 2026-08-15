@@ -62,6 +62,11 @@ export function FormLayout({
                         {fieldErrors[field.name]}
                       </span>
                     )}
+                    {nestedErrors(fieldErrors, field.name).map((msg) => (
+                      <span key={msg} className="error" role="alert">
+                        {msg}
+                      </span>
+                    ))}
                   </div>
                 );
               })}
@@ -121,4 +126,11 @@ function groupBy<T>(items: T[], key: (item: T) => string): Array<[string, T[]]> 
 
 function collapsedClass(fields: UiField[]) {
   return fields.some((f) => f.widget_options?.collapsed) ? "is-collapsed" : "";
+}
+
+function nestedErrors(fieldErrors: Record<string, string>, name: string) {
+  const prefix = `${name}.`;
+  return Object.entries(fieldErrors)
+    .filter(([key]) => key.startsWith(prefix))
+    .map(([key, message]) => `${key}: ${message}`);
 }

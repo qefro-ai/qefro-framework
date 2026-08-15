@@ -1,4 +1,4 @@
-use qefro_core::{EntityDef, FieldDef, UiConfig};
+use qefro_core::{ChildTableDef, EntityDef, FieldDef, UiConfig};
 use serde_json::json;
 
 pub fn crm_customer() -> EntityDef {
@@ -49,7 +49,7 @@ pub fn lead() -> EntityDef {
             FieldDef::decimal("expected_value")
                 .nullable()
                 .min(0.0)
-                .currency()
+                .with_currency()
                 .label("Expected value"),
         )
         .field(
@@ -108,7 +108,6 @@ pub fn opportunity() -> EntityDef {
                 .nullable()
                 .label("Contact"),
         )
-        .field(FieldDef::decimal("amount").nullable().min(0.0).currency().label("Value"))
         .field(
             FieldDef::decimal("probability")
                 .nullable()
@@ -128,6 +127,35 @@ pub fn opportunity() -> EntityDef {
                 .default_value(json!("Open"))
                 .filterable(),
         )
+        .child_table(ChildTableDef::new("lines", "OpportunityItem").parent_field("opportunity_id"))
+        .field(
+            FieldDef::currency("amount")
+                .computed("SUM(lines.amount)")
+                .label("Value"),
+        )
+        .build()
+}
+
+pub fn opportunity_item() -> EntityDef {
+    EntityDef::new("OpportunityItem")
+        .label("Opportunity Line")
+        .label_plural("Opportunity Lines")
+        .table_name("opportunity_items")
+        .child_of("Opportunity", "lines")
+        .field(
+            FieldDef::many_to_one("opportunity_id", "Opportunity")
+                .required()
+                .hidden(),
+        )
+        .field(FieldDef::string("description").required().searchable())
+        .field(
+            FieldDef::integer("quantity")
+                .required()
+                .min(1.0)
+                .default_value(json!(1)),
+        )
+        .field(FieldDef::currency("rate").required().min(0.0))
+        .field(FieldDef::currency("amount").computed("quantity * rate"))
         .build()
 }
 

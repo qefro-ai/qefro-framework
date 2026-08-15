@@ -5,6 +5,7 @@ import { TenantThemeContext } from "../../metadata/context";
 import type { UiField } from "../../metadata/types";
 import {
   Checkbox,
+  ChildTable,
   ColorPicker,
   CurrencyInput,
   DatePicker,
@@ -257,5 +258,37 @@ describe("widgets", () => {
         <RichText field={field({ name: "body", widget: "rich_text" })} value="<p>Hi</p>" onChange={() => undefined} entities={[]} />,
       );
       expect(screen.getByLabelText("body")).toBeInTheDocument();
+    });
+
+    it("child table add and delete", async () => {
+      const onChange = vi.fn();
+      wrap(
+        <ChildTable
+          field={field({
+            name: "items",
+            widget: "child_table",
+            type: "child_table",
+            child_entity: "Line",
+            relation_kind: "child_table",
+          })}
+          value={[]}
+          onChange={onChange}
+          entities={[
+            {
+              entity: "Line",
+              label: "Line",
+              label_plural: "Lines",
+              slug: "lines",
+              searchable: false,
+              fields: [
+                field({ name: "quantity", widget: "number", type: "integer", label: "Qty" }),
+                field({ name: "rate", widget: "currency", type: "decimal", label: "Rate" }),
+              ],
+            },
+          ]}
+        />,
+      );
+      await userEvent.click(screen.getByRole("button", { name: /\+ Add/i }));
+      expect(onChange).toHaveBeenCalled();
     });
 });

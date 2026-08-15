@@ -208,6 +208,18 @@ export const api = {
     }),
   deleteSavedFilter: (id: string) =>
     request<void>(`/api/v1/saved-filters/${id}`, { method: "DELETE" }),
+  reports: () =>
+    request<{ reports: Array<{ name: string; label: string; entity: string; group_by?: string[]; chart?: string }> }>(
+      "/api/v1/meta/reports",
+    ),
+  runReport: (name: string, body: unknown) =>
+    request<{
+      name: string;
+      label: string;
+      chart?: string;
+      rows: Array<Record<string, unknown>>;
+      series?: Array<{ label: string; value: number }>;
+    }>(`/api/v1/reports/${name}/run`, { method: "POST", body: JSON.stringify(body) }),
 };
 
 const AUTH_EVENT = "qefro-auth";

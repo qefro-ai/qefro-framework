@@ -1,5 +1,11 @@
 name = "restaurant"
-version = "0.2.0"
-label = "Restaurant"
+version = "1.0.0"
+label = "Restaurant Management"
 description = "Tables, reservations, menus, orders, and payments"
-depends_on = ["qefro-framework"]
+author = "Qefro"
+license = "MIT"
+api_version = "1"
+framework_version = ">=0.7"
+source = "builtin"
+
+[dependencies]

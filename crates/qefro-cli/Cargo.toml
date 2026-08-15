@@ -3,11 +3,19 @@ name = "qefro-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
 description = "Command-line interface for Qefro Framework"
+readme = "README.md"
+homepage.workspace = true
+keywords = ["qefro", "cli", "framework", "postgres"]
+categories = ["command-line-utilities", "web-programming"]
+default-run = "qefro"
 
 [[bin]]
 name = "qefro"
 path = "src/main.rs"
+doc = false
 
 [dependencies]
 qefro-core.workspace = true
@@ -16,8 +24,10 @@ qefro-db.workspace = true
 qefro-permissions.workspace = true
 qefro-workflow.workspace = true
 qefro-search.workspace = true
-qefro-restaurant = { path = "../../examples/restaurant" }
-qefro-crm = { path = "../../examples/basic-crm" }
+qefro-restaurant.workspace = true
+qefro-crm.workspace = true
+qefro-tenant.workspace = true
+uuid.workspace = true
 tokio.workspace = true
 clap.workspace = true
 anyhow.workspace = true

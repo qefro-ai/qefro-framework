@@ -3,7 +3,7 @@ use crate::state::AppState;
 use anyhow::Context;
 use qefro_agent::ToolRegistry;
 use qefro_auth::AuthService;
-use qefro_core::{AppManifest, AppModule, EntityRegistry, HookRegistry, LocalBlobStore, OperationDef};
+use qefro_core::{AppModule, EntityRegistry, HookRegistry, LocalBlobStore, OperationDef};
 use qefro_db::{
     apply_schema, connect, BlobMetaStore, EntityService, JobHandler, JobQueue, JobRegistry,
     LogNotificationJob, OperationHandler, OperationRegistry, SavedFilterStore,
@@ -223,6 +223,8 @@ impl QefroRuntime {
             "POST /api/v1/users".into(),
             "GET /api/v1/meta/ui".into(),
             "GET /api/v1/meta/dashboards".into(),
+            "GET /api/v1/meta/reports".into(),
+            "POST /api/v1/reports/:name/run".into(),
             "GET /api/v1/tools".into(),
             "GET /api/v1/operations".into(),
             "GET /api/v1/agent/tools".into(),
@@ -240,6 +242,9 @@ impl QefroRuntime {
                 }
                 routes.push(format!("GET /api/v1/{}/:id/actions", entity.slug));
                 routes.push(format!("POST /api/v1/{}/:id/actions/:name", entity.slug));
+                if !entity.print_formats.is_empty() || entity.document.is_some() {
+                    routes.push(format!("GET /api/v1/{}/:id/print", entity.slug));
+                }
             }
         }
         routes
@@ -256,6 +261,8 @@ impl QefroRuntime {
         let mut hooks = HookRegistry::new();
         let mut manifests = Vec::new();
         let mut dashboards = Vec::new();
+        let mut reports = Vec::new();
+        let mut print_formats = Vec::new();
 
         for app in &self.apps {
             app.module.install_entities(&mut registry)?;
@@ -271,14 +278,13 @@ impl QefroRuntime {
                     hooks.register(hook.clone());
                 }
             }
-            manifests.push(AppManifest {
-                name: app.module.name.clone(),
-                version: app.module.version.clone(),
-                label: app.module.label.clone(),
-                description: app.module.description.clone(),
-                depends_on: vec!["qefro-framework".into()],
-            });
+            manifests.push(qefro_core::AppManifest::from_module(&app.module));
             dashboards.extend(app.module.dashboards.clone());
+            reports.extend(app.module.reports.clone());
+            print_formats.extend(app.module.print_formats.clone());
+            for entity in &app.module.entities {
+                print_formats.extend(entity.print_formats.clone());
+            }
         }
 
         registry
@@ -289,6 +295,20 @@ impl QefroRuntime {
             apply_schema(&pool, &registry)
                 .await
                 .map_err(|e| anyhow::anyhow!("schema apply failed: {e}"))?;
+            for app in &self.apps {
+                let status = if qefro_core::load_installed().is_disabled(&app.module.name) {
+                    "disabled"
+                } else {
+                    "installed"
+                };
+                let _ = qefro_db::app_registry::upsert_app(
+                    &pool,
+                    &qefro_core::AppManifest::from_module(&app.module),
+                    status,
+                    None,
+                )
+                .await;
+            }
         } else {
             qefro_db::pool::ping(&pool)
                 .await
@@ -312,6 +332,7 @@ impl QefroRuntime {
                 job_handlers.register(name.clone(), handler.clone());
             }
         }
+        qefro_db::register_document_operations(&mut operations, &registry);
         let operations = Arc::new(operations);
         let job_handlers = Arc::new(job_handlers);
         let jobs = Arc::new(JobQueue::new(pool.clone()));
@@ -338,7 +359,17 @@ impl QefroRuntime {
             self.config.jwt_secret.clone(),
         ));
         let tenants = Arc::new(TenantService::new(pool.clone()));
-        let installed_apps: Vec<String> = manifests.iter().map(|m| m.name.clone()).collect();
+        let installed_set = qefro_core::load_installed();
+        let installed_apps: Vec<String> = manifests
+            .iter()
+            .map(|m| m.name.clone())
+            .filter(|n| !installed_set.is_disabled(n))
+            .collect();
+        let default_navigation: Vec<String> = self
+            .apps
+            .iter()
+            .flat_map(|a| a.module.default_nav_slugs())
+            .collect();
         let blob_store: Arc<dyn qefro_core::BlobStore> =
             Arc::new(LocalBlobStore::new(&self.config.storage_path));
         let blobs = Arc::new(BlobMetaStore::new(pool.clone()));
@@ -351,9 +382,12 @@ impl QefroRuntime {
             tools,
             modules: manifests,
             dashboards,
+            reports,
+            print_formats,
             entitlements: qefro_core::Entitlements::new(),
             rate_limiter: Arc::new(qefro_core::MemoryRateLimiter::default()),
             installed_apps,
+            default_navigation,
             blob_store,
             blobs,
             saved_filters,

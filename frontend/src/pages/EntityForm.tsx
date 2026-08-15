@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, formVisible, type UiEntity, type UiField } from "../api";
 import { FormLayout } from "../components/forms/FormLayout";
+import { previewFormula } from "../metadata/formula";
 
 export default function EntityForm({ entities }: { entities: UiEntity[] }) {
   const { slug, id } = useParams();
@@ -90,7 +91,26 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
           values={values}
           entities={entities}
           fieldErrors={fieldErrors}
-          onChange={(name, value) => setValues((prev) => ({ ...prev, [name]: value }))}
+          onChange={(name, value) =>
+            setValues((prev) => {
+              const next = { ...prev, [name]: value };
+              const children: Record<string, Array<Record<string, unknown>>> = {};
+              for (const f of fields) {
+                if (f.relation_kind === "child_table" || f.type === "child_table") {
+                  children[f.name] = Array.isArray(next[f.name])
+                    ? (next[f.name] as Array<Record<string, unknown>>)
+                    : [];
+                }
+              }
+              for (const f of fields) {
+                if (f.computed && f.formula) {
+                  const preview = previewFormula(f.formula, next, children);
+                  if (preview != null) next[f.name] = preview;
+                }
+              }
+              return next;
+            })
+          }
         />
         {error && (
           <p className="error" role="alert">
@@ -107,6 +127,8 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
 
 function coerce(field: UiField, raw: unknown): unknown {
   if (raw === "" || raw == null) return null;
+  if (field.type === "child_table" || field.relation_kind === "child_table") return raw;
+  if (field.computed) return raw;
   if (field.type === "integer" || field.type === "decimal") return Number(raw);
   if (field.type === "boolean") return Boolean(raw);
   return raw;

@@ -1,6 +1,6 @@
 # Example applications
 
-Both examples are ordinary Qefro apps. Neither requires changes to framework core.
+Both examples are ordinary Qefro apps. Neither requires changes to framework core. To build your own from scratch, see [Build a fullstack application](fullstack.md).
 
 ## Restaurant
 

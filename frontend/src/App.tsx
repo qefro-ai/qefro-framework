@@ -9,6 +9,7 @@ import EntityForm from "./pages/EntityForm";
 import EntityDetail from "./pages/EntityDetail";
 import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
+import Reports from "./pages/Reports";
 
 export default function App() {
   const [authed, setAuthed] = useState(hasToken());
@@ -99,7 +100,9 @@ function Shell() {
   const navEntities = useMemo(() => {
     const hidden = new Set(config?.ui_config.hidden_entities ?? []);
     const ordered = config?.ui_config.navigation ?? [];
-    const visible = entities.filter((e) => !hidden.has(e.slug) && !hidden.has(e.entity));
+    const visible = entities.filter(
+      (e) => !hidden.has(e.slug) && !hidden.has(e.entity) && e.standalone !== false,
+    );
     if (ordered.length === 0) return visible;
     const bySlug = new Map(visible.map((e) => [e.slug, e]));
     const picked = ordered.map((slug) => bySlug.get(slug)).filter(Boolean) as UiEntity[];
@@ -136,6 +139,9 @@ function Shell() {
               {e.label_plural}
             </NavLink>
           ))}
+          <NavLink to="/reports" className={({ isActive }) => (isActive ? "active" : "")}>
+            Reports
+          </NavLink>
           <NavLink to="/settings" className={({ isActive }) => (isActive ? "active" : "")}>
             Settings
           </NavLink>
@@ -161,6 +167,7 @@ function Shell() {
             path="/settings"
             element={<Settings config={config} onSaved={setConfig} />}
           />
+          <Route path="/reports" element={<Reports />} />
           <Route path="/:slug" element={<EntityList entities={entities} />} />
           <Route path="/:slug/new" element={<EntityForm entities={entities} />} />
           <Route path="/:slug/:id" element={<EntityDetail entities={entities} />} />

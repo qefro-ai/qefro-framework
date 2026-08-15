@@ -44,7 +44,7 @@ pub fn validate_record(fields: &[FieldDef], record: &Value, partial: bool) -> Qe
     let mut errors = Vec::new();
 
     for field in fields {
-        if field.system {
+        if field.system || field.computed || field.is_child_table() {
             continue;
         }
         if !field.stores_column() {

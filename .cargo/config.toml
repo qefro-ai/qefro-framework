@@ -1,0 +1,4 @@
+# From the repo: `cargo qefro --help` (no install required).
+# For a global `qefro` command: `cargo install --path crates/qefro-cli --locked --force`
+[alias]
+qefro = ["run", "-p", "qefro-cli", "--"]

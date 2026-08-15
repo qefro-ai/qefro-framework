@@ -16,6 +16,10 @@ export type WidgetOptions = {
   collapsed?: boolean;
   allow_create?: boolean;
   columns?: number;
+  editable?: boolean;
+  addable?: boolean;
+  deletable?: boolean;
+  reorderable?: boolean;
 };
 
 export type UiWhen = {
@@ -58,6 +62,9 @@ export type UiField = {
   visible_when?: UiWhen;
   readonly_when?: UiWhen;
   default_from?: string;
+  computed?: boolean;
+  formula?: string;
+  child_entity?: string;
 };
 
 export type UiEntity = {
@@ -73,6 +80,15 @@ export type UiEntity = {
   fields: UiField[];
   tabs?: string[];
   sections?: string[];
+  standalone?: boolean;
+  child_of?: string;
+  document?: {
+    submit_enabled?: boolean;
+    cancel_enabled?: boolean;
+    duplicate_enabled?: boolean;
+    lock_states?: string[];
+  };
+  naming?: { pattern: string; field?: string };
 };
 
 export type TenantTheme = {

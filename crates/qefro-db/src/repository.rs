@@ -690,6 +690,60 @@ impl EntityRepository {
             .map_err(|e| QefroError::database(e.to_string()))?;
         Ok(value)
     }
+
+    pub async fn delete_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, Postgres>,
+        entity: &EntityDef,
+        ctx: &OpContext,
+        id: Uuid,
+    ) -> QefroResult<Value> {
+        let existing = self.get_tx(tx, entity, ctx, id, true).await?;
+        if entity.soft_delete {
+            let mut qb = QueryBuilder::<Postgres>::new("UPDATE ");
+            qb.push(table_ident(entity)?);
+            qb.push(" SET ");
+            qb.push(quote_ident("deleted_at")?);
+            qb.push(" = ");
+            qb.push_bind(Utc::now());
+            qb.push(", ");
+            qb.push(quote_ident("updated_at")?);
+            qb.push(" = ");
+            qb.push_bind(Utc::now());
+            qb.push(" WHERE ");
+            qb.push(quote_ident("id")?);
+            qb.push(" = ");
+            qb.push_bind(id);
+            if entity.tenant_owned {
+                qb.push(" AND ");
+                qb.push(quote_ident("tenant_id")?);
+                qb.push(" = ");
+                qb.push_bind(ctx.tenant_id);
+            }
+            qb.build()
+                .execute(&mut **tx)
+                .await
+                .map_err(map_db_err)?;
+        } else {
+            let mut qb = QueryBuilder::<Postgres>::new("DELETE FROM ");
+            qb.push(table_ident(entity)?);
+            qb.push(" WHERE ");
+            qb.push(quote_ident("id")?);
+            qb.push(" = ");
+            qb.push_bind(id);
+            if entity.tenant_owned {
+                qb.push(" AND ");
+                qb.push(quote_ident("tenant_id")?);
+                qb.push(" = ");
+                qb.push_bind(ctx.tenant_id);
+            }
+            qb.build()
+                .execute(&mut **tx)
+                .await
+                .map_err(map_db_err)?;
+        }
+        Ok(existing)
+    }
 }
 
 fn project_fields(value: Value, fields: &[String]) -> Value {

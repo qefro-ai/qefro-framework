@@ -3,6 +3,9 @@ name = "qefro-db"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "PostgreSQL access, schema generation, and entity CRUD for Qefro Framework"
 
 [dependencies]

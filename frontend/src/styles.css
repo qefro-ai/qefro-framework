@@ -265,6 +265,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   outline-offset: 2px;
 }
 
+.child-table { overflow-x: auto; }
+.child-table table { width: 100%; border-collapse: collapse; }
+.child-table th, .child-table td { padding: 0.35rem; vertical-align: top; }
+.child-row-ops { white-space: nowrap; display: flex; gap: 0.25rem; }
+
 @media (max-width: 840px) {
   .field-cell.width-half, .field-cell.width-third { grid-column: span 12; }
   .card-wide { grid-column: span 1; }
