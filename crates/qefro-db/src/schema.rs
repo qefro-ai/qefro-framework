@@ -84,6 +84,14 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS jobs_poll_idx ON jobs (status, run_at);
 CREATE INDEX IF NOT EXISTS jobs_tenant_idx ON jobs (tenant_id, created_at DESC);
+
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS jobs_idemp_uidx
+    ON jobs (tenant_id, name, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+ALTER TABLE tenant_settings ADD COLUMN IF NOT EXISTS feature_flags JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE tenant_settings ADD COLUMN IF NOT EXISTS plan TEXT;
 "#;
 
 pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
@@ -195,6 +203,66 @@ pub async fn apply_schema(pool: &PgPool, registry: &EntityRegistry) -> QefroResu
 
     apply_foreign_keys(pool, registry).await?;
     apply_junction_tables(pool, registry).await?;
+    apply_enum_checks(pool, registry).await?;
+    Ok(())
+}
+
+/// CREATE TABLE IF NOT EXISTS does not refresh CHECK constraints. Re-apply
+/// enum CHECKs so status values can grow without leftover rejections.
+async fn apply_enum_checks(pool: &PgPool, registry: &EntityRegistry) -> QefroResult<()> {
+    for entity in registry.list() {
+        ident_check(&entity.table)?;
+        for field in entity.stored_fields() {
+            let FieldType::Enum { values } = &field.field_type else {
+                continue;
+            };
+            ident_check(&field.column_name())?;
+            let names: Vec<String> = sqlx::query_scalar(
+                r#"
+                SELECT con.conname
+                FROM pg_constraint con
+                JOIN pg_attribute att
+                  ON att.attrelid = con.conrelid AND att.attnum = ANY (con.conkey)
+                WHERE con.contype = 'c'
+                  AND con.conrelid = $1::regclass
+                  AND att.attname = $2
+                "#,
+            )
+            .bind(&entity.table)
+            .bind(field.column_name())
+            .fetch_all(pool)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+            let table = quote_ident(&entity.table)?;
+            for name in &names {
+                ident_check(name)?;
+                let drop = format!(
+                    "ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {}",
+                    quote_ident(name)?
+                );
+                sqlx::query(&drop)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| QefroError::database(e.to_string()))?;
+            }
+            let col = quote_ident(&field.column_name())?;
+            let constraint = format!("{}_{}_check", entity.table, field.column_name());
+            ident_check(&constraint)?;
+            let list = values
+                .iter()
+                .map(|v| format!("'{}'", v.replace('\'', "''")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let add = format!(
+                "ALTER TABLE {table} ADD CONSTRAINT {} CHECK ({col} IN ({list}))",
+                quote_ident(&constraint)?
+            );
+            sqlx::query(&add)
+                .execute(pool)
+                .await
+                .map_err(|e| QefroError::database(e.to_string()))?;
+        }
+    }
     Ok(())
 }
 

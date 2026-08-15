@@ -19,9 +19,15 @@ Create user body: `{ name, email, password, roles }`
 
 ## Tenants
 
-`GET/POST /tenants`
+`GET /tenants` — current tenant only
 
-`GET/PATCH /tenants/me/config` — branding and navigation. PATCH is Admin-only.
+`GET/PATCH /tenants/me/config` — full configuration. PATCH is Admin-only.
+
+`GET/PATCH /tenant`, `/tenant/branding`, `/tenant/apps`, `/tenant/features` — same tenant, never another tenant's row.
+
+## Health
+
+`GET /health` — process liveness. `GET /ready` — database reachable. Neither returns infrastructure details.
 
 ## Metadata
 

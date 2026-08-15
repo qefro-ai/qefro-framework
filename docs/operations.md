@@ -103,7 +103,7 @@ POST /api/v1/{slug}/{id}/actions/{name}
 
 ## Transactions
 
-`execute` begins a SQLx transaction, locks the primary row (`FOR UPDATE`), runs hooks and the handler, writes audit and jobs, then commits. Any error rolls back every mutation. Domain events are published only after a successful commit.
+`execute` begins a SQLx transaction, locks the primary row (`FOR UPDATE`), runs hooks and the handler, writes audit and jobs, then commits. Related rows loaded with `ctx.get` are also locked. Any error rolls back every mutation, including audit rows and job inserts. Domain events are published only after a successful commit. A failed handler does not emit a successful business event and does not write a success audit entry.
 
 ## CLI
 

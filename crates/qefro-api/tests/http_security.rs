@@ -51,6 +51,7 @@ async fn runtime() -> (axum::Router, String) {
         database_url: url.clone(),
         jwt_secret: "test-secret".into(),
         bind: "127.0.0.1:0".into(),
+        ..Config::default()
     });
     rt.install(test_app());
     let (router, _) = rt.build().await.expect("build");
@@ -144,6 +145,19 @@ async fn health_is_public() {
     let (status, body) = json(router, get("/health", None)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "ok");
+    assert!(body.get("database").is_none());
+}
+
+#[tokio::test]
+async fn ready_requires_database() {
+    if test_db_url().is_none() {
+        eprintln!("skipping: DATABASE_URL not set");
+        return;
+    }
+    let (router, _) = runtime().await;
+    let (status, body) = json(router, get("/ready", None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "ready");
 }
 
 #[tokio::test]

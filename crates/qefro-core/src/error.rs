@@ -35,6 +35,9 @@ pub enum QefroError {
     Database {
         message: String,
     },
+    RateLimited {
+        message: String,
+    },
     Internal {
         message: String,
     },
@@ -124,6 +127,12 @@ impl QefroError {
         }
     }
 
+    pub fn rate_limited(message: impl Into<String>) -> Self {
+        Self::RateLimited {
+            message: message.into(),
+        }
+    }
+
     pub fn status_code(&self) -> u16 {
         match self {
             Self::NotFound { .. } => 404,
@@ -134,6 +143,7 @@ impl QefroError {
             Self::BadRequest { .. } => 400,
             Self::Workflow { .. } => 409,
             Self::Business { .. } => 409,
+            Self::RateLimited { .. } => 429,
             Self::Database { .. } | Self::Internal { .. } => 500,
         }
     }
@@ -148,8 +158,28 @@ impl QefroError {
             Self::BadRequest { .. } => "bad_request",
             Self::Workflow { .. } => "workflow_error",
             Self::Business { .. } => "business_rule_failed",
+            Self::RateLimited { .. } => "rate_limited",
             Self::Database { .. } => "database_error",
             Self::Internal { .. } => "internal_error",
+        }
+    }
+
+    /// Client-facing message. Database and internal errors never include driver text.
+    pub fn public_message(&self) -> String {
+        match self {
+            Self::Database { .. } | Self::Internal { .. } => "an internal error occurred".into(),
+            _ => self.to_string(),
+        }
+    }
+
+    /// Client-facing details. Never includes SQL, credentials, or stack traces.
+    pub fn public_details(&self) -> serde_json::Value {
+        match self {
+            Self::Database { .. } | Self::Internal { .. } => serde_json::json!({}),
+            Self::Business { code, message } => {
+                serde_json::json!({ "code": code, "message": message })
+            }
+            other => serde_json::to_value(other).unwrap_or(serde_json::json!({})),
         }
     }
 }
@@ -164,6 +194,7 @@ impl fmt::Display for QefroError {
             | Self::BadRequest { message }
             | Self::Workflow { message }
             | Self::Business { message, .. }
+            | Self::RateLimited { message }
             | Self::Database { message }
             | Self::Internal { message } => write!(f, "{message}"),
             Self::Validation { message, .. } => write!(f, "{message}"),
@@ -174,3 +205,18 @@ impl fmt::Display for QefroError {
 impl std::error::Error for QefroError {}
 
 pub type QefroResult<T> = Result<T, QefroError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn database_errors_are_not_leaked_to_clients() {
+        let err = QefroError::database("SELECT * FROM users WHERE password = 'secret'");
+        assert_eq!(err.public_message(), "an internal error occurred");
+        let details = err.public_details().to_string();
+        assert!(!details.contains("SELECT"));
+        assert!(!details.contains("password"));
+        assert!(!details.contains("secret"));
+    }
+}

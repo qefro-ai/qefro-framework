@@ -15,6 +15,8 @@ pub struct ToolDef {
     pub input_schema: Value,
     pub required_permissions: Vec<String>,
     pub permissions: Vec<String>,
+    #[serde(default)]
+    pub required_roles: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +110,7 @@ impl ToolRegistry {
             input_schema: input_schema(entity, false),
             required_permissions: vec![format!("{}.create", snake)],
             permissions: vec![format!("{}:create", entity.name)],
+            required_roles: Vec::new(),
         });
         self.register(ToolDef {
             name: format!("get_{snake}"),
@@ -122,6 +125,7 @@ impl ToolRegistry {
             }),
             required_permissions: vec![format!("{}.read", snake)],
             permissions: vec![format!("{}:read", entity.name)],
+            required_roles: Vec::new(),
         });
         self.register(ToolDef {
             name: format!("update_{snake}"),
@@ -137,6 +141,7 @@ impl ToolRegistry {
             },
             required_permissions: vec![format!("{}.update", snake)],
             permissions: vec![format!("{}:update", entity.name)],
+            required_roles: Vec::new(),
         });
         self.register(ToolDef {
             name: format!("delete_{snake}"),
@@ -151,6 +156,7 @@ impl ToolRegistry {
             }),
             required_permissions: vec![format!("{}.delete", snake)],
             permissions: vec![format!("{}:delete", entity.name)],
+            required_roles: Vec::new(),
         });
         self.register(ToolDef {
             name: format!("find_{plural}"),
@@ -172,6 +178,7 @@ impl ToolRegistry {
             }),
             required_permissions: vec![format!("{}.list", snake)],
             permissions: vec![format!("{}:list", entity.name)],
+            required_roles: Vec::new(),
         });
         if entity.workflow.is_some() {
             self.register(ToolDef {
@@ -190,6 +197,7 @@ impl ToolRegistry {
                 }),
                 required_permissions: vec![format!("{}.update", snake)],
                 permissions: vec![format!("{}:update", entity.name)],
+                required_roles: Vec::new(),
             });
         }
     }
@@ -232,6 +240,7 @@ impl ToolRegistry {
             input_schema: schema,
             required_permissions: vec![def.permission.clone()],
             permissions: vec![format!("{}:update", def.entity)],
+            required_roles: def.roles.clone(),
         });
     }
 
@@ -260,9 +269,16 @@ impl ToolRegistry {
         self.list()
             .into_iter()
             .filter(|tool| {
-                parse_action(&tool.action)
+                let allowed = parse_action(&tool.action)
                     .map(|action| perms.allows(&ctx.roles, &tool.entity, action))
-                    .unwrap_or(false)
+                    .unwrap_or(false);
+                if !allowed {
+                    return false;
+                }
+                if ctx.is_admin() || tool.required_roles.is_empty() {
+                    return true;
+                }
+                tool.required_roles.iter().any(|r| ctx.has_role(r))
             })
             .collect()
     }
@@ -275,6 +291,14 @@ impl ToolRegistry {
         mut input: Value,
     ) -> QefroResult<ToolResult> {
         let tool = self.get(name)?.clone();
+        if !tool.required_roles.is_empty()
+            && !ctx.is_admin()
+            && !tool.required_roles.iter().any(|r| ctx.has_role(r))
+        {
+            return Err(QefroError::forbidden(
+                "not allowed to invoke this tool",
+            ));
+        }
         let action = parse_action(&tool.action)?;
         let _ = action;
 
@@ -448,10 +472,52 @@ mod tests {
     #[test]
     fn agent_crate_has_no_sqlx_dependency() {
         let manifest = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
+        let deps = manifest
+            .split("[dependencies]")
+            .nth(1)
+            .unwrap_or(manifest);
         assert!(
-            !manifest.contains("sqlx"),
-            "qefro-agent must not depend on sqlx"
+            !deps.lines().any(|l| l.trim_start().starts_with("sqlx")),
+            "qefro-agent [dependencies] must not include sqlx"
         );
+        let lock = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.lock"));
+        let block = lock
+            .split("[[package]]")
+            .find(|p| {
+                p.contains("name = \"qefro-agent\"")
+                    && p.contains(&format!("version = \"{}\"", env!("CARGO_PKG_VERSION")))
+            })
+            .expect("qefro-agent package in Cargo.lock");
+        let deps = block
+            .split("dependencies = [")
+            .nth(1)
+            .and_then(|s| s.split(']').next())
+            .unwrap_or("");
+        for forbidden in ["sqlx", "postgres", "tokio-postgres", "deadpool"] {
+            assert!(
+                !deps.contains(forbidden),
+                "qefro-agent lockfile must not depend on {forbidden}: {deps}"
+            );
+        }
+    }
+
+    #[test]
+    fn operation_tools_hide_manager_roles_from_staff() {
+        use qefro_core::OperationDef;
+        use qefro_permissions::PermissionGrant;
+        let mut perms = PermissionRegistry::new();
+        perms.grant(PermissionGrant::crud("Staff", "Reservation"));
+        let mut tools = ToolRegistry::new();
+        tools.register_operation(
+            &OperationDef::new("explode", "Reservation").roles(&["Manager"]),
+        );
+        let staff = OpContext::new(uuid::Uuid::nil(), uuid::Uuid::nil(), vec!["Staff".into()]);
+        let names: Vec<_> = tools
+            .available(&staff, &perms)
+            .into_iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert!(!names.contains(&"explode_reservation"));
     }
 
     #[test]

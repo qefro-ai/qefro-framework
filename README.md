@@ -25,7 +25,7 @@ Open the generic UI:
 cd frontend && npm install && npm run dev
 ```
 
-The UI reads `/api/v1/meta/ui`. There is no per-entity React page to write.
+The UI reads `/api/v1/meta/ui`. Branding, navigation, terminology, and dashboards come from the authenticated tenant. There is no per-entity React page and no per-tenant frontend build.
 
 ## Create an application
 
@@ -90,9 +90,11 @@ qefro operations Reservation
 qefro action Reservation <id> confirm
 qefro tools
 qefro doctor
+qefro serve
+qefro worker
 ```
 
-`qefro dev --app restaurant` loads the restaurant example. `--app crm` loads CRM. Default is both, or whatever is listed in `.qefro/installed.json`.
+`qefro dev --app restaurant` loads the restaurant example. `--app crm` loads CRM. Default is both, or whatever is listed in `.qefro/installed.json`. Production: `qefro migrate` then `qefro serve` and `qefro worker` with `QEFRO_ENV=production`.
 
 ## Workspace
 
@@ -147,7 +149,7 @@ cargo test --workspace
 DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro cargo test --workspace -- --test-threads=1
 ```
 
-Integration tests that need PostgreSQL skip when `DATABASE_URL` is unset.
+Integration tests that need PostgreSQL skip when `DATABASE_URL` is unset. V0.4 verification covers V0.3 operations plus tenant branding isolation, application entitlements, feature flags, worker policy, and a two-tenant SaaS scenario (restaurant vs CRM on one runtime).
 
 ## Docs
 
@@ -161,5 +163,9 @@ Integration tests that need PostgreSQL skip when `DATABASE_URL` is unset.
 - [UI](docs/ui.md)
 - [Agents](docs/agents.md)
 - [Multi-tenancy](docs/multitenancy.md)
+- [Tenants](docs/tenants.md)
+- [Security](docs/security.md)
+- [Deployment](docs/deployment.md)
+- [Configuration](docs/configuration.md)
 - [API](docs/api.md)
 - [Examples](docs/examples.md)

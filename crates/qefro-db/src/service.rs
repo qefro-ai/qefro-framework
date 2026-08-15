@@ -114,6 +114,8 @@ impl EntityService {
         input: Value,
     ) -> QefroResult<Value> {
         let entity = self.registry.get(entity_name)?;
+        self.ensure_app(ctx, &entity)?;
+        reject_client_tenant(&input)?;
         let (record, events) = execute_operation(
             &self.repo,
             &self.registry,
@@ -139,6 +141,9 @@ impl EntityService {
     pub fn list_operations(&self, ctx: &OpContext) -> Vec<OperationDef> {
         let mut out = Vec::new();
         for entity in self.registry.list() {
+            if !ctx.allows_app(entity.module.as_deref()) {
+                continue;
+            }
             for def in crud_operation_defs(&entity) {
                 let action = match def.kind.as_str() {
                     "create" => Action::Create,
@@ -184,6 +189,8 @@ impl EntityService {
         query: Query,
     ) -> QefroResult<Page> {
         let entity = self.registry.get(entity_name)?;
+        self.ensure_app(ctx, &entity)?;
+        self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::List)?;
         let query = query.sanitize(&entity)?;
         let mut page = self.repo.list(&entity, ctx, &query).await?;
@@ -197,6 +204,8 @@ impl EntityService {
 
     pub async fn get(&self, ctx: &OpContext, entity_name: &str, id: Uuid) -> QefroResult<Value> {
         let entity = self.registry.get(entity_name)?;
+        self.ensure_app(ctx, &entity)?;
+        self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Read)?;
         let record = self.repo.get(&entity, ctx, id).await?;
         self.present(ctx, &entity, record).await
@@ -209,6 +218,8 @@ impl EntityService {
         mut data: Value,
     ) -> QefroResult<Value> {
         let entity = self.registry.get(entity_name)?;
+        self.ensure_app(ctx, &entity)?;
+        self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Create)?;
         reject_client_tenant(&data)?;
         apply_defaults(&entity, &mut data);
@@ -255,6 +266,8 @@ impl EntityService {
         mut patch: Value,
     ) -> QefroResult<Value> {
         let entity = self.registry.get(entity_name)?;
+        self.ensure_app(ctx, &entity)?;
+        self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Update)?;
         reject_client_tenant(&patch)?;
         let current = self.repo.get(&entity, ctx, id).await?;
@@ -304,6 +317,8 @@ impl EntityService {
 
     pub async fn delete(&self, ctx: &OpContext, entity_name: &str, id: Uuid) -> QefroResult<Value> {
         let entity = self.registry.get(entity_name)?;
+        self.ensure_app(ctx, &entity)?;
+        self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Delete)?;
         let current = self.repo.get(&entity, ctx, id).await?;
         self.hooks
@@ -339,11 +354,13 @@ impl EntityService {
         transition: &str,
     ) -> QefroResult<Value> {
         let entity = self.registry.get(entity_name)?;
+        self.ensure_app(ctx, &entity)?;
         if self.operations.try_get(&entity.name, transition).is_some() {
             return self
                 .execute(ctx, &entity.name, id, transition, json!({}))
                 .await;
         }
+        self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Update)?;
         let current = self.repo.get(&entity, ctx, id).await?;
         let wf = self
@@ -659,6 +676,7 @@ impl EntityService {
     ) -> QefroResult<Value> {
         use qefro_search::parse_query;
         let entity = self.registry.get(&card.entity)?;
+        self.ensure_app(ctx, &entity)?;
         self.permissions.check(ctx, &entity.name, Action::List)?;
         let mut raw: Vec<(String, String)> = card
             .filters
@@ -684,6 +702,24 @@ impl EntityService {
             "metric": card.metric,
             "value": value,
         }))
+    }
+
+    fn ensure_app(&self, ctx: &OpContext, entity: &qefro_core::EntityDef) -> QefroResult<()> {
+        if ctx.allows_app(entity.module.as_deref()) {
+            Ok(())
+        } else {
+            Err(QefroError::not_found(format!("{} not found", entity.name)))
+        }
+    }
+
+    fn reject_worker_crud(&self, ctx: &OpContext) -> QefroResult<()> {
+        if ctx.is_worker() {
+            Err(QefroError::forbidden(
+                "workers cannot perform generic entity mutations",
+            ))
+        } else {
+            Ok(())
+        }
     }
 }
 

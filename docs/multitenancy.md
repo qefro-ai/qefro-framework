@@ -1,26 +1,31 @@
 # Multi-tenancy
 
-Every tenant-owned row includes `tenant_id`. That value is taken from the authenticated session, never from the client body or query string. Supplying `tenant_id` in a create/update payload returns 400.
+Every tenant-owned row includes `tenant_id`. That value is taken from the authenticated session, never from the client body, query string, or `X-Tenant-ID`. Supplying `tenant_id` in a create/update/action payload or as a filter returns 400.
 
 ## Isolation
 
 - Tenant A cannot read Tenant B (404, not 403).
 - Tenant A cannot update or delete Tenant B.
 - Tenant A cannot invoke Tenant B's records through agent tools.
+- Tenant A cannot read or modify Tenant B branding, feature flags, dashboards, or enabled apps.
 - List queries always include `WHERE tenant_id = $1`.
+- `GET /api/v1/tenants` returns the current tenant only.
 
-## Tenant configuration
+See [Tenant customization](tenants.md) and [Security](security.md).
+
+## Configuration
 
 ```
 Tenant
- ├── branding        logo, colors, favicon, app name
- ├── ui_config       navigation, hidden entities, default dashboard
- ├── enabled_apps
- └── business_config JSON bag for later SaaS flags
+ ├── branding        logo, colors, favicon, company name
+ ├── ui_config       navigation, hidden entities, dashboard, terminology
+ ├── enabled_apps    tenant choice ∩ plan ∩ globally installed apps
+ ├── features        enabled/disabled flags
+ └── business        timezone, locale, currency, formats
 ```
 
-Stored in `tenant_settings`. This is the customization seam for a multi-tenant product without forking backends. V0.2 implements branding and navigation only.
+Stored in `tenant_settings` with a short in-memory cache keyed by `tenant_id`. This is the customization seam for a multi-tenant product without forking backends or frontend builds.
 
 ## Roles
 
-Register creates an Admin for a new tenant. Admins can `POST /api/v1/users` to add Staff/Manager members. RBAC is evaluated in `EntityService` for both REST and tools.
+Register creates an Admin for a new tenant. Admins can `POST /api/v1/users` to add Staff/Manager members. RBAC is evaluated in `EntityService` for both REST and tools. Workers use a separate `Worker` role and cannot inherit Admin.

@@ -18,6 +18,9 @@ fn test_db_url() -> Option<String> {
 
 struct ConfirmBooking;
 struct ExplodeBooking;
+struct SeatBooking;
+struct CompleteBooking;
+struct CancelBooking;
 
 #[async_trait]
 impl OperationHandler for ConfirmBooking {
@@ -53,6 +56,52 @@ impl OperationHandler for ExplodeBooking {
     }
 }
 
+#[async_trait]
+impl OperationHandler for SeatBooking {
+    async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> qefro_core::QefroResult<Value> {
+        let room_id = ctx.uuid_field("room_id")?;
+        ctx.update("OpRoom", room_id, json!({ "status": "occupied" }))
+            .await?;
+        ctx.apply_transition("seat")?;
+        Ok(ctx.record.clone())
+    }
+}
+
+#[async_trait]
+impl OperationHandler for CompleteBooking {
+    async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> qefro_core::QefroResult<Value> {
+        let room_id = ctx.uuid_field("room_id")?;
+        ctx.update("OpRoom", room_id, json!({ "status": "available" }))
+            .await?;
+        ctx.apply_transition("complete")?;
+        Ok(ctx.record.clone())
+    }
+}
+
+#[async_trait]
+impl OperationHandler for CancelBooking {
+    async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> qefro_core::QefroResult<Value> {
+        match ctx.status() {
+            "Pending" => {
+                ctx.apply_transition("cancel")?;
+            }
+            "Confirmed" => {
+                ctx.apply_transition("cancel_confirmed")?;
+                let room_id = ctx.uuid_field("room_id")?;
+                ctx.update("OpRoom", room_id, json!({ "status": "available" }))
+                    .await?;
+            }
+            _ => {
+                return Err(OperationCtx::fail(
+                    "invalid_state",
+                    "Booking cannot be cancelled in the current state",
+                ));
+            }
+        };
+        Ok(ctx.record.clone())
+    }
+}
+
 fn ops_app() -> InstalledApp {
     let module = AppModule::new("ops_test")
         .entity(
@@ -74,9 +123,12 @@ fn ops_app() -> InstalledApp {
                 .workflow("op_booking")
                 .field(FieldDef::many_to_one("room_id", "OpRoom").required())
                 .field(
-                    FieldDef::enum_values("status", vec!["Pending", "Confirmed", "Cancelled"])
-                        .required()
-                        .default_value(json!("Pending")),
+                    FieldDef::enum_values(
+                        "status",
+                        vec!["Pending", "Confirmed", "Seated", "Completed", "Cancelled"],
+                    )
+                    .required()
+                    .default_value(json!("Pending")),
                 )
                 .build(),
         )
@@ -87,7 +139,17 @@ fn ops_app() -> InstalledApp {
                 .transition(
                     TransitionDef::new("confirm", "Pending", "Confirmed").roles(&["Manager", "Staff"]),
                 )
-                .transition(TransitionDef::new("cancel", "Pending", "Cancelled")),
+                .transition(
+                    TransitionDef::new("seat", "Confirmed", "Seated").roles(&["Manager", "Staff"]),
+                )
+                .transition(
+                    TransitionDef::new("complete", "Seated", "Completed").roles(&["Manager", "Staff"]),
+                )
+                .transition(TransitionDef::new("cancel", "Pending", "Cancelled"))
+                .transition(
+                    TransitionDef::new("cancel_confirmed", "Confirmed", "Cancelled")
+                        .roles(&["Manager"]),
+                ),
         )
         .permission(PermissionGrant::crud(ROLE_MANAGER, "OpRoom"))
         .permission(PermissionGrant::crud(ROLE_MANAGER, "OpBooking"))
@@ -113,6 +175,28 @@ fn ops_app() -> InstalledApp {
                 .transition("confirm"),
             ExplodeBooking,
         )
+        .operation(
+            OperationDef::new("seat_customer", "OpBooking")
+                .label("Seat")
+                .roles(&["Manager", "Staff"])
+                .transition("seat")
+                .event("booking.seated"),
+            SeatBooking,
+        )
+        .operation(
+            OperationDef::new("complete", "OpBooking")
+                .label("Complete")
+                .roles(&["Manager", "Staff"])
+                .transition("complete")
+                .event("booking.completed"),
+            CompleteBooking,
+        )
+        .operation(
+            OperationDef::new("cancel", "OpBooking")
+                .label("Cancel")
+                .event("booking.cancelled"),
+            CancelBooking,
+        )
 }
 
 async fn runtime() -> axum::Router {
@@ -121,6 +205,7 @@ async fn runtime() -> axum::Router {
         database_url: url,
         jwt_secret: "test-secret".into(),
         bind: "127.0.0.1:0".into(),
+        ..Config::default()
     });
     rt.install(ops_app());
     let (router, _) = rt.build().await.expect("build");
@@ -160,6 +245,45 @@ fn get(path: &str, token: Option<&str>) -> Request<Body> {
 
 fn clone_router(router: &axum::Router) -> axum::Router {
     router.clone()
+}
+
+fn patch(path: &str, token: Option<&str>, body: Value) -> Request<Body> {
+    let mut b = Request::builder()
+        .method("PATCH")
+        .uri(path)
+        .header("content-type", "application/json");
+    if let Some(t) = token {
+        b = b.header("authorization", format!("Bearer {t}"));
+    }
+    b.body(Body::from(body.to_string())).unwrap()
+}
+
+fn delete(path: &str, token: Option<&str>) -> Request<Body> {
+    let mut b = Request::builder().method("DELETE").uri(path);
+    if let Some(t) = token {
+        b = b.header("authorization", format!("Bearer {t}"));
+    }
+    b.body(Body::empty()).unwrap()
+}
+
+async fn register_admin(router: &axum::Router, suffix: &str, tag: &str) -> String {
+    let (status, body) = json(
+        clone_router(router),
+        post(
+            "/api/v1/auth/register",
+            None,
+            json!({
+                "name": tag,
+                "email": format!("{tag}-{suffix}@example.com"),
+                "password": "password123",
+                "tenant_name": format!("{tag}-{suffix}"),
+                "tenant_slug": format!("{tag}-{suffix}")
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["access_token"].as_str().unwrap().to_string()
 }
 
 #[tokio::test]
@@ -444,3 +568,443 @@ async fn operations_pipeline_transactions_events_and_agent() {
     assert_eq!(status, StatusCode::CONFLICT, "{unavailable}");
     assert_eq!(unavailable["error"], "business_rule_failed");
 }
+
+#[tokio::test]
+async fn lifecycle_workflow_rbac_isolation_audit_and_concurrency() {
+    if test_db_url().is_none() {
+        eprintln!("skipping: DATABASE_URL not set");
+        return;
+    }
+    let router = runtime().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let admin = register_admin(&router, suffix, "life-a").await;
+    let other = register_admin(&router, suffix, "life-b").await;
+
+    let (status, manager_user) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/users",
+            Some(&admin),
+            json!({
+                "name": "Mgr",
+                "email": format!("life-mgr-{suffix}@example.com"),
+                "password": "password123",
+                "roles": ["Manager"]
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{manager_user}");
+    let (status, staff_user) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/users",
+            Some(&admin),
+            json!({
+                "name": "Staff",
+                "email": format!("life-staff-{suffix}@example.com"),
+                "password": "password123",
+                "roles": ["Staff"]
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{staff_user}");
+    let (status, mgr_login) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/auth/login",
+            None,
+            json!({
+                "email": format!("life-mgr-{suffix}@example.com"),
+                "password": "password123"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{mgr_login}");
+    let manager = mgr_login["access_token"].as_str().unwrap();
+    let (status, staff_login) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/auth/login",
+            None,
+            json!({
+                "email": format!("life-staff-{suffix}@example.com"),
+                "password": "password123"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{staff_login}");
+    let staff = staff_login["access_token"].as_str().unwrap();
+
+    let (_s, room) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/op-rooms",
+            Some(&admin),
+            json!({ "code": format!("L-{suffix}") }),
+        ),
+    )
+    .await;
+    let room_id = room["id"].as_str().unwrap();
+    let (_s, booking) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/op-bookings",
+            Some(&admin),
+            json!({ "room_id": room_id }),
+        ),
+    )
+    .await;
+    let booking_id = booking["id"].as_str().unwrap();
+
+    let (status, invalid) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{booking_id}/transition"),
+            Some(&admin),
+            json!({ "transition": "complete" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{invalid}");
+    assert_eq!(invalid["error"], "workflow_error");
+
+    let (status, staff_ops) =
+        json(clone_router(&router), get("/api/v1/operations", Some(staff))).await;
+    assert_eq!(status, StatusCode::OK, "{staff_ops}");
+    let staff_op_names: Vec<&str> = staff_ops["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["entity"] == "OpBooking")
+        .filter_map(|o| o["name"].as_str())
+        .collect();
+    assert!(staff_op_names.contains(&"confirm"));
+    assert!(!staff_op_names.contains(&"explode"));
+    let (_status, mgr_ops) =
+        json(clone_router(&router), get("/api/v1/operations", Some(manager))).await;
+    let mgr_op_names: Vec<&str> = mgr_ops["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["entity"] == "OpBooking")
+        .filter_map(|o| o["name"].as_str())
+        .collect();
+    assert!(mgr_op_names.contains(&"explode"), "{mgr_ops}");
+
+    let (_status, staff_tools) =
+        json(clone_router(&router), get("/api/v1/tools", Some(staff))).await;
+    let staff_tool_names: Vec<&str> = staff_tools["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert!(staff_tool_names.contains(&"confirm_op_booking"));
+    assert!(!staff_tool_names.contains(&"explode_op_booking"));
+
+    let (status, denied) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/agent/tools/explode_op_booking/invoke",
+            Some(staff),
+            json!({ "id": booking_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+
+    let (status, tenant_id_action) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{booking_id}/actions/confirm"),
+            Some(&admin),
+            json!({ "tenant_id": Uuid::new_v4() }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{tenant_id_action}");
+
+    let (_s, booking_ok) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/op-bookings",
+            Some(&admin),
+            json!({ "room_id": room_id }),
+        ),
+    )
+    .await;
+    let ok_id = booking_ok["id"].as_str().unwrap();
+    let (status, tenant_id_agent) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/agent/tools/confirm_op_booking/invoke",
+            Some(&admin),
+            json!({ "id": ok_id, "tenant_id": Uuid::new_v4() }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{tenant_id_agent}");
+
+    let (status, confirmed) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{booking_id}/actions/confirm"),
+            Some(staff),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{confirmed}");
+
+    let (status, seated) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{booking_id}/actions/seat_customer"),
+            Some(staff),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{seated}");
+    assert_eq!(seated["status"], "Seated");
+
+    let (status, completed) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{booking_id}/actions/complete"),
+            Some(&admin),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{completed}");
+    assert_eq!(completed["status"], "Completed");
+
+    let (status, cancel_done) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{booking_id}/actions/cancel"),
+            Some(&admin),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{cancel_done}");
+    assert_eq!(cancel_done["details"]["code"], "invalid_state");
+
+    let (_s, pending) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/op-bookings",
+            Some(&admin),
+            json!({ "room_id": room_id }),
+        ),
+    )
+    .await;
+    let pending_id = pending["id"].as_str().unwrap();
+    let (status, cancelled) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{pending_id}/actions/cancel"),
+            Some(&admin),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{cancelled}");
+    assert_eq!(cancelled["status"], "Cancelled");
+
+    let (status, leaked_get) = json(
+        clone_router(&router),
+        get(&format!("/api/v1/op-bookings/{booking_id}"), Some(&other)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{leaked_get}");
+
+    let (status, leaked_patch) = json(
+        clone_router(&router),
+        patch(
+            &format!("/api/v1/op-bookings/{booking_id}"),
+            Some(&other),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{leaked_patch}");
+    let (status, leaked_delete) = json(
+        clone_router(&router),
+        delete(&format!("/api/v1/op-bookings/{booking_id}"), Some(&other)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{leaked_delete}");
+    let (status, leaked_action) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{booking_id}/actions/confirm"),
+            Some(&other),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{leaked_action}");
+    for tool in [
+        "get_op_booking",
+        "update_op_booking",
+        "delete_op_booking",
+        "confirm_op_booking",
+        "cancel_op_booking",
+        "complete_op_booking",
+    ] {
+        let (status, leaked_agent) = json(
+            clone_router(&router),
+            post(
+                &format!("/api/v1/agent/tools/{tool}/invoke"),
+                Some(&other),
+                json!({ "id": booking_id }),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{tool} {leaked_agent}");
+    }
+
+    let (status, search) = json(
+        clone_router(&router),
+        get(
+            &format!("/api/v1/op-bookings?id={booking_id}"),
+            Some(&other),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{search}");
+    assert_eq!(search["items"].as_array().unwrap().len(), 0);
+
+    let (status, filter) = json(
+        clone_router(&router),
+        get("/api/v1/op-bookings?status=Completed", Some(&other)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{filter}");
+    assert_eq!(filter["items"].as_array().unwrap().len(), 0);
+
+    let (status, exploded) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/op-bookings",
+            Some(&admin),
+            json!({ "room_id": room_id }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{exploded}");
+    let explode_id = exploded["id"].as_str().unwrap();
+    let (_s, boom) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{explode_id}/actions/explode"),
+            Some(manager),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(boom["error"], "business_rule_failed");
+    let (_s, audit) = json(
+        clone_router(&router),
+        get(
+            &format!("/api/v1/audit?entity=OpBooking&entity_id={explode_id}"),
+            Some(&admin),
+        ),
+    )
+    .await;
+    let actions: Vec<&str> = audit["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|a| a["action"].as_str())
+        .collect();
+    assert!(!actions.iter().any(|a| *a == "explode"), "{audit}");
+    assert!(!actions.iter().any(|a| *a == "confirm"), "{audit}");
+
+    let (_s, room2) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/op-rooms",
+            Some(&admin),
+            json!({ "code": format!("C-{suffix}") }),
+        ),
+    )
+    .await;
+    let room2_id = room2["id"].as_str().unwrap();
+    let (_s, b1) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/op-bookings",
+            Some(&admin),
+            json!({ "room_id": room2_id }),
+        ),
+    )
+    .await;
+    let (_s, b2) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/op-bookings",
+            Some(&admin),
+            json!({ "room_id": room2_id }),
+        ),
+    )
+    .await;
+    let (r1, r2) = tokio::join!(
+        json(
+            clone_router(&router),
+            post(
+                &format!(
+                    "/api/v1/op-bookings/{}/actions/confirm",
+                    b1["id"].as_str().unwrap()
+                ),
+                Some(&admin),
+                json!({}),
+            ),
+        ),
+        json(
+            clone_router(&router),
+            post(
+                &format!(
+                    "/api/v1/op-bookings/{}/actions/confirm",
+                    b2["id"].as_str().unwrap()
+                ),
+                Some(&admin),
+                json!({}),
+            ),
+        )
+    );
+    let ok = [r1.0.is_success(), r2.0.is_success()]
+        .into_iter()
+        .filter(|v| *v)
+        .count();
+    assert_eq!(ok, 1, "exactly one confirm should win: {:?} {:?}", r1, r2);
+
+    let started = std::time::Instant::now();
+    let mut samples = Vec::new();
+    for _ in 0..8 {
+        let t0 = std::time::Instant::now();
+        let (_s, _) = json(
+            clone_router(&router),
+            get(&format!("/api/v1/op-bookings/{booking_id}"), Some(&admin)),
+        )
+        .await;
+        samples.push(t0.elapsed().as_millis() as u64);
+    }
+    samples.sort_unstable();
+    let p50 = samples[samples.len() / 2];
+    let p95 = samples[(samples.len() * 95 / 100).min(samples.len() - 1)];
+    let p99 = samples[samples.len() - 1];
+    eprintln!(
+        "latency_smoke get_booking p50={p50}ms p95={p95}ms p99={p99}ms total_ms={}",
+        started.elapsed().as_millis()
+    );
+    assert!(p99 < 5_000, "p99 {p99}ms is an obvious bottleneck");
+}
+

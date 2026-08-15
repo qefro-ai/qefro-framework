@@ -217,15 +217,9 @@ impl AuthService {
             return Err(QefroError::unauthorized("token mismatch"));
         }
 
-        Ok(OpContext {
-            tenant_id: claims.tid,
-            user_id: claims.sub,
-            roles: claims.roles,
-            request_id: Uuid::new_v4(),
-            session_id: Some(claims.sid),
-            ip: None,
-            user_agent: None,
-        })
+        let mut ctx = OpContext::new(claims.tid, claims.sub, claims.roles);
+        ctx.session_id = Some(claims.sid);
+        Ok(ctx)
     }
 
     pub async fn get_user(&self, id: Uuid) -> QefroResult<User> {

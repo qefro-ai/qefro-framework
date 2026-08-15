@@ -76,6 +76,18 @@ impl InProcessEventBus {
         let inner = self.inner.read().await;
         inner.log.iter().rev().take(limit).cloned().collect()
     }
+
+    pub async fn recent_for_tenant(&self, tenant_id: Uuid, limit: usize) -> Vec<DomainEvent> {
+        let inner = self.inner.read().await;
+        inner
+            .log
+            .iter()
+            .rev()
+            .filter(|e| e.tenant_id == tenant_id)
+            .take(limit)
+            .cloned()
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -86,6 +98,7 @@ impl EventBus for InProcessEventBus {
             entity = %event.entity,
             entity_id = %event.entity_id,
             tenant_id = %event.tenant_id,
+            request_id = ?event.user_id,
             "domain event"
         );
         let handlers = {

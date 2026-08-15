@@ -9,8 +9,8 @@ pub fn error_response(err: QefroError) -> Response {
         StatusCode::from_u16(err.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = json!({
         "error": err.error_code(),
-        "message": err.to_string(),
-        "details": err,
+        "message": err.public_message(),
+        "details": err.public_details(),
     });
     (status, Json(body)).into_response()
 }

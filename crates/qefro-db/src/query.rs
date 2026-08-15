@@ -100,7 +100,11 @@ pub fn push_bind_owned(
                 qb.push_bind(sqlx::types::Json(value.clone()));
             }
             _ => {
-                qb.push_bind(s.clone());
+                if let Ok(id) = Uuid::parse_str(s) {
+                    qb.push_bind(id);
+                } else {
+                    qb.push_bind(s.clone());
+                }
             }
         },
         Value::Array(_) | Value::Object(_) => {

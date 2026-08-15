@@ -39,7 +39,7 @@ GET /api/v1/tools
 GET /api/v1/agent/tools
 ```
 
-Both return tools the authenticated user may invoke in the current tenant. The list is already permission-filtered. Invoke still goes through `EntityService`.
+Both return tools the authenticated user may invoke in the current tenant. The list is filtered by CRUD permission **and** `OperationDef.roles` (Staff does not see Manager-only tools). Invoke still goes through `EntityService` and re-checks roles. Knowing a tool name does not make it executable.
 
 ```
 POST /api/v1/agent/tools/{name}/invoke
@@ -73,10 +73,12 @@ Event
 
 The agent cannot:
 
-- access PostgreSQL directly (`qefro-agent` has no SQLx)
-- bypass permissions
+- access PostgreSQL directly (`qefro-agent` has no SQLx; Cargo.lock is tested for this)
+- bypass permissions or operation roles
 - bypass workflow
-- specify an arbitrary tenant
+- specify an arbitrary tenant (`tenant_id` in tool input is rejected)
 - execute arbitrary SQL
+
+Agents are not principals. They run as the authenticated user. There is no `agent_admin` role.
 
 `qefro tools` prints the generated names for the selected app.

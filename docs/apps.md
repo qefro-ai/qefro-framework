@@ -54,7 +54,9 @@ qefro app remove myshop
 qefro app info myshop
 ```
 
-`qefro app install` writes `.qefro/installed.json`. `qefro dev` with `--app all` loads that set. If the file is empty, restaurant and CRM load as the demo default.
+`qefro app install` writes `.qefro/installed.json`. That marks an application as **installed globally**. Each tenant then **enables** a subset via `/api/v1/tenant/apps`. Enabling is constrained by `Entitlements` (plan). UI, REST, and agent tools all honor the resolved list. Frontend visibility is not security.
+
+`qefro dev` with `--app all` loads the installed set. If the file is empty, restaurant and CRM load as the demo default.
 
 ## Registering from Rust
 

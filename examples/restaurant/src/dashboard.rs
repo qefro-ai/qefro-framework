@@ -1,7 +1,7 @@
 use qefro_core::{DashboardCard, DashboardDef};
 
 pub fn ops() -> DashboardDef {
-    DashboardDef::new("restaurant-ops", "Restaurant operations")
+    DashboardDef::new("restaurant-ops", "Restaurant operations").module("restaurant")
         .card(
             DashboardCard::count("Today's reservations", "Reservation")
                 .filter("reservation_date", "today"),

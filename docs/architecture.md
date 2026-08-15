@@ -1,8 +1,8 @@
 # Architecture
 
-Qefro is a modular monolith. One Axum process, one PostgreSQL database. Redis is not required.
+Qefro is a modular monolith. One HTTP process, an optional dedicated worker, one PostgreSQL database, one generic frontend. Redis is not required.
 
-V0.3 extends V0.2. It does not rewrite CRUD. Business operations join the same `EntityService` pipeline used by REST and agents.
+V0.4 extends V0.3. It does not rewrite CRUD, operations, or the agent boundary. It adds production tenant customization, application entitlements, and an explicit worker policy.
 
 ## Metadata is the source of truth
 
@@ -24,11 +24,11 @@ HTTP APIs, CLI actions, and agent tools share `EntityService`:
 ```
 HTTP / Agent / CLI / UI
         ↓
-   BusinessOperation
-        ↓
     Authentication
         ↓
-      Tenant Context
+    Tenant Context
+        ↓
+    Application availability
         ↓
          RBAC
         ↓
@@ -54,15 +54,19 @@ CLI  ─────────────┤
 Agent ────────────┘
 ```
 
-Clients cannot set `tenant_id`. Agents have no SQLx dependency and cannot run SQL. Restaurant and CRM rules live in `examples/`, not in core crates.
+Clients cannot set `tenant_id` on create, update, action, or agent invoke. `X-Tenant-ID` is ignored. Agents have no SQLx dependency and cannot run SQL. Restaurant and CRM rules live in `examples/`, not in core crates.
+
+User and agent calls use user RBAC. Workers use `OpContext::worker` and may run only handlers/operations marked `worker_safe`.
+
+`ctx.get` inside an operation transaction uses `SELECT … FOR UPDATE` so exclusive resources (a dining table, a room) cannot be acquired twice. HTTP 5xx responses use `QefroError::public_message`: SQL, credentials, and stack traces are not returned to clients.
 
 ## Tenant isolation
 
-Every tenant-owned row has `tenant_id`. The authenticated session supplies tenant identity. Repositories always add `WHERE tenant_id = $1`. A post-read check rejects mismatches as 404.
+Every tenant-owned row has `tenant_id`. The authenticated session supplies tenant identity. Repositories always add `WHERE tenant_id = $1`. A post-read check rejects mismatches as 404. Tenant branding, feature flags, and dashboards are loaded for that session tenant only.
 
 ## Authorization
 
-Permissions are evaluated in `EntityService`. Admin bypasses entity grants; other roles use the matrix registered by application modules. Operations also honor `OperationDef.roles`. The frontend never decides whether an action is legal.
+Permissions are evaluated in `EntityService`. Admin bypasses entity grants; other roles use the matrix registered by application modules. Operations also honor `OperationDef.roles`. Application entitlements run before RBAC. The frontend never decides whether an action is legal.
 
 ## Workflows and operations
 
@@ -97,3 +101,19 @@ Applications register entities, workflows, permissions, **operations**, jobs, ho
 ## Why not a custom ORM
 
 SQLx `QueryBuilder` binds values. Table and column names come only from validated metadata.
+
+## Multi-tenant SaaS runtime
+
+```
+                    QEFRO PLATFORM
+                          │
+               Shared Runtime + Platform Admin
+                          │
+            Tenant A / Tenant B / Tenant C
+            (branding, apps, features, UI config)
+                          │
+                    EntityService
+```
+
+One application module is installed once and enabled per tenant. Customization is configuration, not a fork. See [Deployment](deployment.md) and [Tenants](tenants.md).
+

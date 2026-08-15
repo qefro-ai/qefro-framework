@@ -41,7 +41,7 @@ export default function Dashboard({
       <h2>{label}</h2>
       {error && <p className="error">{error}</p>}
       {cards.length === 0 && !error && (
-        <p className="muted">No dashboard cards are registered. Open an entity from the sidebar.</p>
+        <p className="muted">No dashboard is configured for the applications enabled on this tenant.</p>
       )}
       <div className="cards">
         {cards.map((card) => {

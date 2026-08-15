@@ -15,5 +15,78 @@ services:
       timeout: 5s
       retries: 10
 
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://qefro:qefro@postgres:5432/qefro
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      QEFRO_ENV: production
+    command: ["qefro", "migrate"]
+    restart: "no"
+
+  server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://qefro:qefro@postgres:5432/qefro
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      QEFRO_BIND: 0.0.0.0:8080
+      QEFRO_ENV: production
+      QEFRO_PUBLIC_URL: ${QEFRO_PUBLIC_URL:-http://localhost:8080}
+      QEFRO_LOG_LEVEL: info
+      QEFRO_STORAGE_PATH: /var/qefro-storage
+      QEFRO_AUTO_MIGRATE: "false"
+      QEFRO_EMBED_WORKER: "false"
+    volumes:
+      - qefro-storage:/var/qefro-storage
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/health >/dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://qefro:qefro@postgres:5432/qefro
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me}
+      QEFRO_ENV: production
+      QEFRO_LOG_LEVEL: info
+      QEFRO_STORAGE_PATH: /var/qefro-storage
+      QEFRO_AUTO_MIGRATE: "false"
+    volumes:
+      - qefro-storage:/var/qefro-storage
+    command: ["qefro", "worker"]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    depends_on:
+      - server
+    ports:
+      - "8081:80"
+
 volumes:
   qefro-pg:
+  qefro-storage:

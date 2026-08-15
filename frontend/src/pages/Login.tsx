@@ -33,8 +33,8 @@ export default function Login() {
 
   return (
     <div className="login">
-      <h1>Qefro</h1>
-      <p className="muted">Sign in to a tenant. UI is generated from entity metadata.</p>
+      <h1>Sign in</h1>
+      <p className="muted">Sign in to your workspace. The application UI is generated from tenant metadata.</p>
       <form className="form" onSubmit={onSubmit}>
         {mode === "register" && (
           <>

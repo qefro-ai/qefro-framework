@@ -1,7 +1,7 @@
 use crate::jobs::JobQueue;
 use crate::repository::{record_id, EntityRepository};
 use async_trait::async_trait;
-use qefro_core::{EntityRegistry, HookRegistry, OpContext, OperationDef, QefroError, QefroResult};
+use qefro_core::{EntityRegistry, HookRegistry, MeteringEvent, OpContext, OperationDef, QefroError, QefroResult};
 use qefro_events::DomainEvent;
 use qefro_permissions::{Action, PermissionRegistry};
 use qefro_search::{Filter, Query};
@@ -307,12 +307,21 @@ pub async fn execute_operation(
     let started = Instant::now();
     let binding = operations.get(entity_name, name)?;
     let entity = registry.get(entity_name)?;
-    permissions.check(ctx, &entity.name, Action::Update)?;
-    if !binding.def.role_allowed(ctx) {
-        return Err(QefroError::forbidden(format!(
-            "role(s) {:?} cannot {} {}",
-            ctx.roles, binding.def.name, entity.name
-        )));
+    if ctx.is_worker() {
+        if !binding.def.worker_safe {
+            return Err(QefroError::forbidden(format!(
+                "operation '{entity_name}.{}' is not worker-safe",
+                binding.def.name
+            )));
+        }
+    } else {
+        permissions.check(ctx, &entity.name, Action::Update)?;
+        if !binding.def.role_allowed(ctx) {
+            return Err(QefroError::forbidden(format!(
+                "role(s) {:?} cannot {} {}",
+                ctx.roles, binding.def.name, entity.name
+            )));
+        }
     }
 
     let mut tx = repo
@@ -343,6 +352,7 @@ pub async fn execute_operation(
                 .await
                 .map_err(|e| QefroError::database(e.to_string()))?;
             tracing::info!(
+                request_id = %ctx.request_id,
                 operation = %format!("{entity_name}.{}", binding.def.name),
                 tenant_id = %ctx.tenant_id,
                 user_id = %ctx.user_id,
@@ -352,6 +362,15 @@ pub async fn execute_operation(
                 status = "success",
                 "business operation"
             );
+            MeteringEvent::new(
+                ctx.tenant_id,
+                "workflow.executed",
+                entity_name,
+                ctx.request_id,
+            )
+            .with_resource_id(id.to_string())
+            .with_user(ctx.user_id)
+            .emit();
             Ok((record, events))
         }
         Err(err) => {
@@ -364,8 +383,20 @@ pub async fn execute_operation(
                 entity_id = %id,
                 duration_ms = started.elapsed().as_millis() as u64,
                 status = "error",
+                error = err.error_code(),
                 "business operation"
             );
+            if matches!(
+                err,
+                QefroError::Database { .. } | QefroError::Internal { .. }
+            ) {
+                tracing::error!(
+                    operation = %format!("{entity_name}.{}", binding.def.name),
+                    tenant_id = %ctx.tenant_id,
+                    error = %err,
+                    "internal operation failure"
+                );
+            }
             Err(err)
         }
     }

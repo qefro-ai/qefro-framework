@@ -17,6 +17,7 @@ use uuid::Uuid;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/ready", get(ready))
         .route("/api/v1/auth/register", post(register))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/logout", post(logout))
@@ -40,6 +41,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/agent/tools/{name}/invoke", post(invoke_tool))
         .route("/api/v1/events", get(list_events))
         .route("/api/v1/tenants/me/config", get(get_tenant_config).patch(patch_tenant_config))
+        .route("/api/v1/tenant", get(get_tenant).patch(patch_tenant))
+        .route("/api/v1/tenant/branding", get(get_branding).patch(patch_branding))
+        .route("/api/v1/tenant/apps", get(get_apps).patch(patch_apps))
+        .route("/api/v1/tenant/features", get(get_features).patch(patch_features))
         .route("/api/v1/dashboards/{name}", get(get_dashboard))
         .route("/api/v1/{slug}/{id}/workflow", get(get_workflow_state))
         .route("/api/v1/{slug}/{id}/transition", post(transition_entity))
@@ -54,7 +59,14 @@ pub fn router(state: AppState) -> Router {
 }
 
 async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok", "framework": "qefro", "version": "0.3.0" }))
+    Json(json!({ "status": "ok" }))
+}
+
+async fn ready(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+    qefro_db::pool::ping(state.entities.pool())
+        .await
+        .map_err(|_| QefroError::internal("not ready"))?;
+    Ok(Json(json!({ "status": "ready" })))
 }
 
 #[derive(Deserialize)]
@@ -114,6 +126,11 @@ async fn me(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<Value
         "user": user,
         "tenant_id": ctx.tenant_id,
         "roles": ctx.roles,
+        "enabled_apps": ctx.enabled_apps,
+        "timezone": ctx.timezone,
+        "locale": ctx.locale,
+        "plan": ctx.plan,
+        "request_id": ctx.request_id,
     })))
 }
 
@@ -136,9 +153,9 @@ async fn switch_tenant(
 
 async fn list_tenants(
     State(state): State<AppState>,
-    Auth(_ctx): Auth,
+    Auth(ctx): Auth,
 ) -> Result<Json<Vec<Tenant>>, ApiError> {
-    Ok(Json(state.tenants.list().await?))
+    Ok(Json(vec![state.tenants.get(ctx.tenant_id).await?]))
 }
 
 #[derive(Deserialize)]
@@ -187,12 +204,13 @@ async fn create_user(
     Ok((StatusCode::CREATED, Json(user)))
 }
 
-async fn meta_entities(State(state): State<AppState>, Auth(_): Auth) -> Json<Value> {
+async fn meta_entities(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
     let entities: Vec<_> = state
         .entities
         .registry()
         .list()
         .into_iter()
+        .filter(|e| ctx.allows_app(e.module.as_deref()))
         .map(|e| {
             json!({
                 "name": e.name,
@@ -209,22 +227,44 @@ async fn meta_entities(State(state): State<AppState>, Auth(_): Auth) -> Json<Val
 
 async fn meta_entity(
     State(state): State<AppState>,
-    Auth(_): Auth,
+    Auth(ctx): Auth,
     Path(name): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let entity = state.entities.registry().get(&name)?;
+    if !ctx.allows_app(entity.module.as_deref()) {
+        return Err(QefroError::not_found(format!("entity '{name}' not found")).into());
+    }
     Ok(Json(serde_json::to_value(&*entity).unwrap_or(json!({}))))
 }
 
-async fn meta_ui(State(state): State<AppState>, Auth(_): Auth) -> Json<Value> {
+async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<Value>, ApiError> {
+    let config = state.tenants.get_config(ctx.tenant_id).await?;
     let entities: Vec<_> = state
         .entities
         .registry()
         .list()
         .into_iter()
-        .map(|e| e.to_ui_meta())
+        .filter(|e| ctx.allows_app(e.module.as_deref()))
+        .map(|e| {
+            let mut meta = e.to_ui_meta();
+            meta.apply_terminology(&config.ui_config.terminology);
+            meta
+        })
         .collect();
-    Json(json!({ "entities": entities }))
+    Ok(Json(json!({
+        "entities": entities,
+        "branding": config.branding,
+        "enabled_apps": ctx.enabled_apps,
+        "features": config.features.flags,
+        "locale": config.business.locale,
+        "timezone": config.business.timezone,
+        "currency": config.business.currency,
+        "date_format": config.business.date_format,
+        "number_format": config.business.number_format,
+        "navigation": config.ui_config.navigation,
+        "terminology": config.ui_config.terminology,
+        "default_dashboard": config.ui_config.default_dashboard,
+    })))
 }
 
 async fn meta_permissions(State(state): State<AppState>, Auth(_): Auth) -> Json<Value> {
@@ -269,7 +309,20 @@ async fn list_audit(
 }
 
 async fn list_tools(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
-    Json(json!({ "tools": state.tools.available(&ctx, state.entities.permissions()) }))
+    let tools: Vec<_> = state
+        .tools
+        .available(&ctx, state.entities.permissions())
+        .into_iter()
+        .filter(|t| {
+            state
+                .entities
+                .registry()
+                .try_get(&t.entity)
+                .map(|e| ctx.allows_app(e.module.as_deref()))
+                .unwrap_or(false)
+        })
+        .collect();
+    Json(json!({ "tools": tools }))
 }
 
 async fn invoke_tool(
@@ -278,6 +331,15 @@ async fn invoke_tool(
     Path(name): Path<String>,
     Json(input): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
+    if !ctx.feature_allowed("agent_actions") {
+        return Err(QefroError::forbidden("agent actions are disabled for this tenant").into());
+    }
+    let tool = state.tools.get(&name)?.clone();
+    if let Some(entity) = state.entities.registry().try_get(&tool.entity) {
+        if !ctx.allows_app(entity.module.as_deref()) {
+            return Err(QefroError::not_found(format!("tool '{name}' not found")).into());
+        }
+    }
     let result = state
         .tools
         .invoke(
@@ -287,18 +349,35 @@ async fn invoke_tool(
             input,
         )
         .await?;
+    tracing::info!(
+        request_id = %ctx.request_id,
+        tenant_id = %ctx.tenant_id,
+        user_id = %ctx.user_id,
+        operation = %name,
+        entity = %tool.entity,
+        status = "success",
+        "agent.tool.executed"
+    );
+    qefro_core::MeteringEvent::new(
+        ctx.tenant_id,
+        "agent.tool.executed",
+        &tool.entity,
+        ctx.request_id,
+    )
+    .with_user(ctx.user_id)
+    .emit();
     Ok(Json(serde_json::to_value(result).unwrap_or(json!({}))))
 }
 
-async fn list_events(State(state): State<AppState>, Auth(_): Auth) -> Json<Value> {
-    let events = state.entities.events().recent(100).await;
+async fn list_events(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
+    let events = state.entities.events().recent_for_tenant(ctx.tenant_id, 100).await;
     Json(json!({ "items": events }))
 }
 
 fn reject_reserved(slug: &str) -> Result<(), ApiError> {
     const RESERVED: &[&str] = &[
-        "auth", "meta", "tenants", "agent", "audit", "health", "events", "docs", "tools",
-        "dashboards", "settings", "users", "operations", "jobs",
+        "auth", "meta", "tenants", "tenant", "agent", "audit", "health", "ready", "events", "docs",
+        "tools", "dashboards", "settings", "users", "operations", "jobs",
     ];
     if RESERVED.contains(&slug) {
         Err(QefroError::not_found(format!("entity '{slug}' not found")).into())
@@ -437,8 +516,14 @@ async fn get_workflow_state(
     Ok(Json(state.entities.workflow_snapshot(&ctx, &slug, &record)))
 }
 
-async fn meta_dashboards(State(state): State<AppState>, Auth(_): Auth) -> Json<Value> {
-    Json(json!({ "dashboards": state.dashboards }))
+async fn meta_dashboards(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
+    let dashboards: Vec<_> = state
+        .dashboards
+        .iter()
+        .filter(|d| ctx.allows_app(d.module.as_deref()))
+        .cloned()
+        .collect();
+    Json(json!({ "dashboards": dashboards }))
 }
 
 async fn get_dashboard(
@@ -451,6 +536,9 @@ async fn get_dashboard(
         .iter()
         .find(|d| d.name == name)
         .ok_or_else(|| QefroError::not_found(format!("dashboard '{name}' not found")))?;
+    if !ctx.allows_app(dash.module.as_deref()) {
+        return Err(QefroError::not_found(format!("dashboard '{name}' not found")).into());
+    }
     let mut cards = Vec::new();
     for card in &dash.cards {
         cards.push(state.entities.dashboard_card_value(&ctx, card).await?);
@@ -481,4 +569,145 @@ async fn patch_tenant_config(
     }
     let config = state.tenants.upsert_config(ctx.tenant_id, &body).await?;
     Ok(Json(serde_json::to_value(config).unwrap_or(json!({}))))
+}
+
+fn require_admin(ctx: &qefro_core::OpContext) -> Result<(), ApiError> {
+    if ctx.is_admin() {
+        Ok(())
+    } else {
+        Err(QefroError::forbidden("only Admin can update tenant configuration").into())
+    }
+}
+
+async fn get_tenant(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+) -> Result<Json<Value>, ApiError> {
+    let tenant = state.tenants.get(ctx.tenant_id).await?;
+    let config = state.tenants.get_config(ctx.tenant_id).await?;
+    Ok(Json(json!({
+        "id": tenant.id,
+        "name": tenant.name,
+        "slug": tenant.slug,
+        "created_at": tenant.created_at,
+        "branding": config.branding,
+        "ui_config": config.ui_config,
+        "enabled_apps": ctx.enabled_apps,
+        "features": config.features.flags,
+        "business": config.business,
+        "plan": config.plan,
+        "installed_apps": state.installed_apps,
+    })))
+}
+
+async fn patch_tenant(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Json(body): Json<TenantConfig>,
+) -> Result<Json<Value>, ApiError> {
+    require_admin(&ctx)?;
+    reject_client_tenant_field(&serde_json::to_value(&body).unwrap_or(json!({})))?;
+    let config = state.tenants.upsert_config(ctx.tenant_id, &body).await?;
+    Ok(Json(serde_json::to_value(config).unwrap_or(json!({}))))
+}
+
+async fn get_branding(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+) -> Result<Json<Value>, ApiError> {
+    let config = state.tenants.get_config(ctx.tenant_id).await?;
+    Ok(Json(serde_json::to_value(config.branding).unwrap_or(json!({}))))
+}
+
+async fn patch_branding(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Json(body): Json<Value>,
+) -> Result<Json<Value>, ApiError> {
+    require_admin(&ctx)?;
+    reject_client_tenant_field(&body)?;
+    let branding: qefro_core::TenantBranding =
+        serde_json::from_value(body).map_err(|e| QefroError::bad_request(e.to_string()))?;
+    let mut config = state.tenants.get_config(ctx.tenant_id).await?;
+    config.branding = branding;
+    let config = state.tenants.upsert_config(ctx.tenant_id, &config).await?;
+    Ok(Json(serde_json::to_value(config.branding).unwrap_or(json!({}))))
+}
+
+#[derive(Deserialize)]
+struct AppsBody {
+    enabled_apps: Vec<String>,
+}
+
+async fn get_apps(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<Value>, ApiError> {
+    let config = state.tenants.get_config(ctx.tenant_id).await?;
+    Ok(Json(json!({
+        "installed": state.installed_apps,
+        "enabled": ctx.enabled_apps,
+        "configured": config.enabled_apps,
+        "plan": config.plan,
+    })))
+}
+
+async fn patch_apps(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Json(body): Json<AppsBody>,
+) -> Result<Json<Value>, ApiError> {
+    require_admin(&ctx)?;
+    let mut config = state.tenants.get_config(ctx.tenant_id).await?;
+    for app in &body.enabled_apps {
+        if !state
+            .entitlements
+            .can_enable(app, &state.installed_apps, config.plan.as_deref())
+        {
+            return Err(QefroError::forbidden(format!(
+                "application '{app}' is not available on this plan"
+            ))
+            .into());
+        }
+    }
+    config.enabled_apps = body.enabled_apps;
+    let config = state.tenants.upsert_config(ctx.tenant_id, &config).await?;
+    Ok(Json(json!({
+        "enabled": state.entitlements.resolve_apps(
+            &state.installed_apps,
+            &config.enabled_apps,
+            config.plan.as_deref(),
+        ),
+        "configured": config.enabled_apps,
+    })))
+}
+
+#[derive(Deserialize)]
+struct FeaturesBody {
+    flags: std::collections::HashMap<String, bool>,
+}
+
+async fn get_features(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+) -> Result<Json<Value>, ApiError> {
+    let config = state.tenants.get_config(ctx.tenant_id).await?;
+    Ok(Json(json!({ "flags": config.features.flags })))
+}
+
+async fn patch_features(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Json(body): Json<FeaturesBody>,
+) -> Result<Json<Value>, ApiError> {
+    require_admin(&ctx)?;
+    let mut config = state.tenants.get_config(ctx.tenant_id).await?;
+    config.features.flags = body.flags;
+    let config = state.tenants.upsert_config(ctx.tenant_id, &config).await?;
+    Ok(Json(json!({ "flags": config.features.flags })))
+}
+
+fn reject_client_tenant_field(data: &Value) -> Result<(), ApiError> {
+    if data.get("tenant_id").is_some() {
+        Err(QefroError::bad_request("tenant_id cannot be set by the client").into())
+    } else {
+        Ok(())
+    }
 }

@@ -44,15 +44,28 @@ export type TenantConfig = {
     logo?: string | null;
     favicon?: string | null;
     primary_color?: string | null;
+    secondary_color?: string | null;
+    accent_color?: string | null;
+    company_name?: string | null;
     app_name?: string | null;
   };
   ui_config: {
     navigation: string[];
     hidden_entities: string[];
     default_dashboard?: string | null;
+    terminology?: Record<string, string>;
   };
   enabled_apps: string[];
-  business_config: unknown;
+  business?: {
+    currency?: string;
+    timezone?: string;
+    locale?: string;
+    date_format?: string;
+    number_format?: string;
+  };
+  business_config?: unknown;
+  features?: { flags?: Record<string, boolean> };
+  plan?: string | null;
 };
 
 export type WorkflowAction = {
@@ -117,7 +130,20 @@ export const api = {
     request<{ user: { name: string; email: string }; roles: string[]; tenant_id: string }>(
       "/api/v1/auth/me",
     ),
-  ui: () => request<{ entities: UiEntity[] }>("/api/v1/meta/ui"),
+  ui: () =>
+    request<{
+      entities: UiEntity[];
+      branding?: TenantConfig["branding"];
+      enabled_apps?: string[];
+      features?: Record<string, boolean>;
+      locale?: string;
+      timezone?: string;
+      currency?: string;
+      navigation?: string[];
+      terminology?: Record<string, string>;
+      default_dashboard?: string | null;
+    }>("/api/v1/meta/ui"),
+  tenant: () => request<Record<string, unknown>>("/api/v1/tenant"),
   tenantConfig: () => request<TenantConfig>("/api/v1/tenants/me/config"),
   saveTenantConfig: (body: TenantConfig) =>
     request<TenantConfig>("/api/v1/tenants/me/config", {

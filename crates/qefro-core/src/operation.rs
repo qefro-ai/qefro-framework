@@ -37,6 +37,9 @@ pub struct OperationDef {
     pub kind: String,
     #[serde(default)]
     pub tool_name: String,
+    /// When true, a Worker principal may execute this operation. Default false.
+    #[serde(default)]
+    pub worker_safe: bool,
 }
 
 fn default_style() -> String {
@@ -69,6 +72,7 @@ impl OperationDef {
             job: None,
             kind: "action".into(),
             tool_name,
+            worker_safe: false,
             name,
             entity,
         }
@@ -138,6 +142,11 @@ impl OperationDef {
 
     pub fn input_schema(mut self, schema: Value) -> Self {
         self.input_schema = schema;
+        self
+    }
+
+    pub fn worker_safe(mut self) -> Self {
+        self.worker_safe = true;
         self
     }
 

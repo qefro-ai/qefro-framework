@@ -13,6 +13,10 @@ struct AlwaysFail;
 
 #[async_trait]
 impl JobHandler for AlwaysFail {
+    fn worker_safe(&self) -> bool {
+        true
+    }
+
     async fn run(&self, _ctx: &OpContext, _payload: &Value) -> QefroResult<()> {
         Err(QefroError::internal("boom"))
     }
@@ -22,6 +26,10 @@ struct Succeed;
 
 #[async_trait]
 impl JobHandler for Succeed {
+    fn worker_safe(&self) -> bool {
+        true
+    }
+
     async fn run(&self, ctx: &OpContext, payload: &Value) -> QefroResult<()> {
         assert!(!ctx.tenant_id.is_nil());
         assert_eq!(payload["entity"], "Reservation");
@@ -93,6 +101,25 @@ async fn jobs_execute_retry_fail_and_preserve_tenant() {
     assert_eq!(failed.attempts, 2);
     assert!(failed.last_error.as_deref().unwrap().contains("boom"));
     assert_eq!(failed.tenant_id, tenant_id);
+
+    let key = format!("notify-{}", Uuid::new_v4());
+    let first = queue
+        .enqueue(
+            &ctx,
+            "succeed_job",
+            json!({ "entity": "Reservation", "idempotency_key": key }),
+        )
+        .await
+        .unwrap();
+    let second = queue
+        .enqueue(
+            &ctx,
+            "succeed_job",
+            json!({ "entity": "Reservation", "idempotency_key": key }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first, second, "retry enqueue must reuse the same job row");
 }
 
 async fn process_until(

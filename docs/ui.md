@@ -33,8 +33,10 @@ The server re-checks authentication, tenant, permission, workflow, and business 
 
 ## Tenant branding
 
-`GET/PATCH /api/v1/tenants/me/config` stores logo, colors, favicon, navigation order, hidden entities, and enabled apps. PATCH is Admin-only. This is branding/navigation configuration, not a visual page builder.
+The generic frontend loads `/api/v1/meta/ui` and `/api/v1/tenant`. Company name, colors, logo, favicon, navigation, terminology, locale, enabled apps, and the selected dashboard come from tenant configuration. There is one frontend. Disabled applications are omitted by the server, not merely hidden in CSS.
 
-## Restaurant dashboard
+`GET/PATCH /api/v1/tenants/me/config` and `/api/v1/tenant/*` store that configuration. PATCH is Admin-only. This is not a visual page builder.
 
-The restaurant app registers a `DashboardDef` with count/sum cards. The same Dashboard page renders CRM cards when that app is installed. No restaurant-specific frontend architecture.
+## Restaurant vs CRM
+
+The same Dashboard page renders restaurant or CRM cards depending on which applications the tenant has enabled. No restaurant-specific or CRM-specific frontend architecture.

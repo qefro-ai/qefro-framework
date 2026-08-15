@@ -11,7 +11,7 @@ use qefro_workflow::WorkflowDef;
 
 pub fn module() -> AppModule {
     AppModule::new("restaurant")
-        .version("0.3.0")
+        .version("0.4.0")
         .label("Restaurant")
         .description("Tables, reservations, menus, orders, and payments")
         .entity(entities::customer())

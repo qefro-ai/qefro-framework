@@ -22,10 +22,16 @@ pub struct JobRecord {
     pub last_error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub idempotency_key: Option<String>,
 }
 
 #[async_trait]
 pub trait JobHandler: Send + Sync {
+    /// Jobs are denied unless they opt in. Notifications opt in; mutations do not.
+    fn worker_safe(&self) -> bool {
+        false
+    }
+
     async fn run(&self, ctx: &OpContext, payload: &Value) -> QefroResult<()>;
 }
 
@@ -46,6 +52,13 @@ impl JobRegistry {
     pub fn get(&self, name: &str) -> Option<Arc<dyn JobHandler>> {
         self.handlers.get(name).cloned()
     }
+
+    pub fn is_worker_safe(&self, name: &str) -> bool {
+        self.handlers
+            .get(name)
+            .map(|h| h.worker_safe())
+            .unwrap_or(false)
+    }
 }
 
 pub struct JobQueue {
@@ -64,13 +77,31 @@ impl JobQueue {
         name: &str,
         payload: Value,
     ) -> QefroResult<Uuid> {
+        let key = payload
+            .get("idempotency_key")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        if let Some(key) = key.as_deref() {
+            if let Some(existing) = sqlx::query_scalar::<_, Uuid>(
+                "SELECT id FROM jobs WHERE tenant_id = $1 AND name = $2 AND idempotency_key = $3",
+            )
+            .bind(ctx.tenant_id)
+            .bind(name)
+            .bind(key)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?
+            {
+                return Ok(existing);
+            }
+        }
         let id = Uuid::new_v4();
         sqlx::query(
             r#"
             INSERT INTO jobs (
                 id, tenant_id, user_id, name, payload, status, attempts, max_attempts,
-                run_at, created_at, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,'pending',0,5, now(), now(), now())
+                run_at, created_at, updated_at, idempotency_key
+            ) VALUES ($1,$2,$3,$4,$5,'pending',0,5, now(), now(), now(), $6)
             "#,
         )
         .bind(id)
@@ -78,6 +109,7 @@ impl JobQueue {
         .bind(ctx.user_id)
         .bind(name)
         .bind(payload)
+        .bind(key.as_deref())
         .execute(&mut **tx)
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
@@ -109,7 +141,7 @@ impl JobQueue {
                 LIMIT 1
             )
             RETURNING id, tenant_id, user_id, name, payload, status, attempts,
-                      max_attempts, run_at, last_error, created_at, updated_at
+                      max_attempts, run_at, last_error, created_at, updated_at, idempotency_key
             "#,
         )
         .fetch_optional(&self.pool)
@@ -122,16 +154,27 @@ impl JobQueue {
         let Some(job) = self.claim_one().await? else {
             return Ok(false);
         };
-        let ctx = OpContext::new(
-            job.tenant_id,
-            job.user_id.unwrap_or(Uuid::nil()),
-            vec!["System".into()],
-        );
-        let result = if let Some(handler) = registry.get(&job.name) {
-            handler.run(&ctx, &job.payload).await
-        } else {
-            tracing::warn!(job = %job.name, "no job handler registered");
-            Ok(())
+        let mut ctx = OpContext::worker(job.tenant_id, job.user_id.unwrap_or(Uuid::nil()));
+        ctx.request_id = job.id;
+        if let Ok(Some(apps)) = sqlx::query_scalar::<_, Vec<String>>(
+            "SELECT enabled_apps FROM tenant_settings WHERE tenant_id = $1",
+        )
+        .bind(job.tenant_id)
+        .fetch_optional(&self.pool)
+        .await
+        {
+            ctx.enabled_apps = apps;
+        }
+        let result = match registry.get(&job.name) {
+            Some(handler) if handler.worker_safe() => handler.run(&ctx, &job.payload).await,
+            Some(_) => Err(QefroError::forbidden(format!(
+                "job '{}' is not registered as worker-safe",
+                job.name
+            ))),
+            None => {
+                tracing::warn!(job = %job.name, "no job handler registered");
+                Err(QefroError::not_found(format!("job handler '{}' not found", job.name)))
+            }
         };
         match result {
             Ok(()) => {
@@ -173,7 +216,7 @@ impl JobQueue {
         sqlx::query_as::<_, JobRecord>(
             r#"
             SELECT id, tenant_id, user_id, name, payload, status, attempts,
-                   max_attempts, run_at, last_error, created_at, updated_at
+                   max_attempts, run_at, last_error, created_at, updated_at, idempotency_key
             FROM jobs WHERE id = $1 AND tenant_id = $2
             "#,
         )
@@ -191,6 +234,10 @@ pub struct LogNotificationJob;
 
 #[async_trait]
 impl JobHandler for LogNotificationJob {
+    fn worker_safe(&self) -> bool {
+        true
+    }
+
     async fn run(&self, ctx: &OpContext, payload: &Value) -> QefroResult<()> {
         tracing::info!(
             tenant_id = %ctx.tenant_id,

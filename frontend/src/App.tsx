@@ -29,7 +29,31 @@ function Shell() {
   useEffect(() => {
     api
       .ui()
-      .then((d) => setEntities(d.entities))
+      .then((d) => {
+        setEntities(d.entities);
+        if (d.branding) {
+          setConfig((prev) =>
+            prev
+              ? { ...prev, branding: { ...prev.branding, ...d.branding } }
+              : {
+                  branding: d.branding ?? {},
+                  ui_config: {
+                    navigation: d.navigation ?? [],
+                    hidden_entities: [],
+                    default_dashboard: d.default_dashboard,
+                    terminology: d.terminology,
+                  },
+                  enabled_apps: d.enabled_apps ?? [],
+                  business: {
+                    locale: d.locale,
+                    timezone: d.timezone,
+                    currency: d.currency,
+                  },
+                  features: { flags: d.features },
+                },
+          );
+        }
+      })
       .catch(() => {
         clearToken();
         navigate("/login");
@@ -42,10 +66,16 @@ function Shell() {
   }, [navigate]);
 
   useEffect(() => {
-    const color = config?.branding.primary_color;
-    if (color) document.documentElement.style.setProperty("--accent", color);
-    const name = config?.branding.app_name;
-    if (name) document.title = name;
+    const root = document.documentElement;
+    const primary = config?.branding.primary_color;
+    const secondary = config?.branding.secondary_color;
+    const accent = config?.branding.accent_color;
+    if (primary) root.style.setProperty("--accent", primary);
+    if (secondary) root.style.setProperty("--bg", secondary);
+    if (accent) root.style.setProperty("--accent", accent);
+    const name =
+      config?.branding.company_name || config?.branding.app_name || "Workspace";
+    document.title = name;
     const favicon = config?.branding.favicon;
     if (favicon) {
       let link = document.querySelector("link[rel='icon']") as HTMLLinkElement | null;
@@ -69,7 +99,8 @@ function Shell() {
     return [...picked, ...rest];
   }, [entities, config]);
 
-  const appName = config?.branding.app_name || "Qefro";
+  const appName =
+    config?.branding.company_name || config?.branding.app_name || "Workspace";
 
   return (
     <div className="shell">
@@ -77,7 +108,6 @@ function Shell() {
         {config?.branding.logo ? <img src={config.branding.logo} alt="" className="logo" /> : null}
         <h1>{appName}</h1>
         <div className="badge">{me}</div>
-        <p className="muted">Metadata UI</p>
         <NavLink to="/" className={({ isActive }) => (isActive ? "active" : "")} end>
           Dashboard
         </NavLink>

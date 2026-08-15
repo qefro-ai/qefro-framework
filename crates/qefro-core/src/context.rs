@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Role assigned to background job execution. Not Admin. Not a user principal.
+pub const ROLE_WORKER: &str = "Worker";
+
 /// Server-side operation context. Tenant identity is taken from the
 /// authenticated session, never from an untrusted client field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,6 +16,17 @@ pub struct OpContext {
     pub session_id: Option<Uuid>,
     pub ip: Option<String>,
     pub user_agent: Option<String>,
+    /// Empty means all globally installed apps (V0.3 default).
+    #[serde(default)]
+    pub enabled_apps: Vec<String>,
+    #[serde(default)]
+    pub features: std::collections::HashMap<String, bool>,
+    #[serde(default)]
+    pub timezone: String,
+    #[serde(default)]
+    pub locale: String,
+    #[serde(default)]
+    pub plan: Option<String>,
 }
 
 impl OpContext {
@@ -25,15 +39,56 @@ impl OpContext {
             session_id: None,
             ip: None,
             user_agent: None,
+            enabled_apps: Vec::new(),
+            features: Default::default(),
+            timezone: "UTC".into(),
+            locale: "en-US".into(),
+            plan: None,
         }
+    }
+
+    pub fn worker(tenant_id: Uuid, user_id: Uuid) -> Self {
+        let mut ctx = Self::new(tenant_id, user_id, vec![ROLE_WORKER.into()]);
+        ctx.request_id = Uuid::new_v4();
+        ctx
     }
 
     pub fn is_admin(&self) -> bool {
         self.roles.iter().any(|r| r.eq_ignore_ascii_case("Admin"))
     }
 
+    pub fn is_worker(&self) -> bool {
+        self.roles
+            .iter()
+            .any(|r| r.eq_ignore_ascii_case(ROLE_WORKER))
+    }
+
     pub fn has_role(&self, role: &str) -> bool {
         self.roles.iter().any(|r| r.eq_ignore_ascii_case(role))
+    }
+
+    /// Application modules the tenant may use. Empty `enabled_apps` allows all.
+    pub fn allows_app(&self, module: Option<&str>) -> bool {
+        let Some(module) = module else {
+            return true;
+        };
+        if self.enabled_apps.is_empty() {
+            return true;
+        }
+        self.enabled_apps.iter().any(|a| a == module)
+    }
+
+    /// Missing flags are unrestricted. Explicit `false` denies.
+    pub fn feature_allowed(&self, name: &str) -> bool {
+        self.features.get(name).copied().unwrap_or(true)
+    }
+
+    pub fn apply_tenant_config(&mut self, config: &crate::TenantConfig) {
+        self.enabled_apps = config.enabled_apps.clone();
+        self.features = config.features.flags.clone();
+        self.timezone = config.business.timezone.clone();
+        self.locale = config.business.locale.clone();
+        self.plan = config.plan.clone();
     }
 }
 
@@ -46,5 +101,25 @@ mod tests {
         let ctx = OpContext::new(Uuid::new_v4(), Uuid::new_v4(), vec!["Manager".into()]);
         assert!(!ctx.is_admin());
         assert!(ctx.has_role("manager"));
+        assert!(!ctx.is_worker());
+    }
+
+    #[test]
+    fn worker_is_not_admin() {
+        let ctx = OpContext::worker(Uuid::new_v4(), Uuid::new_v4());
+        assert!(ctx.is_worker());
+        assert!(!ctx.is_admin());
+    }
+
+    #[test]
+    fn app_and_feature_gates() {
+        let mut ctx = OpContext::new(Uuid::new_v4(), Uuid::new_v4(), vec!["Staff".into()]);
+        assert!(ctx.allows_app(Some("crm")));
+        ctx.enabled_apps = vec!["restaurant".into()];
+        assert!(ctx.allows_app(Some("restaurant")));
+        assert!(!ctx.allows_app(Some("crm")));
+        ctx.features.insert("agent_actions".into(), false);
+        assert!(!ctx.feature_allowed("agent_actions"));
+        assert!(ctx.feature_allowed("unknown"));
     }
 }

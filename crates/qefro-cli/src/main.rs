@@ -84,6 +84,13 @@ enum Commands {
         #[arg(long, env = "QEFRO_TOKEN")]
         token: Option<String>,
     },
+    /// Run the HTTP server (production). Set QEFRO_EMBED_WORKER=false and run `qefro worker` separately.
+    Serve {
+        #[arg(long, default_value = "all")]
+        app: String,
+    },
+    /// Poll and run worker-safe background jobs
+    Worker,
     /// Check local development prerequisites
     Doctor,
 }
@@ -122,12 +129,16 @@ enum EntityCommands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let env = std::env::var("QEFRO_ENV").unwrap_or_else(|_| "development".into());
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        let level = std::env::var("QEFRO_LOG_LEVEL").unwrap_or_else(|_| "info".into());
+        tracing_subscriber::EnvFilter::new(format!("{level},sqlx=warn,tower_http=info"))
+    });
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,sqlx=warn".into()),
-        )
+        .with_env_filter(filter)
+        .with_target(false)
         .init();
+    tracing::info!(env, "qefro starting");
 
     let cli = Cli::parse();
     match cli.command {
@@ -150,11 +161,13 @@ async fn main() -> Result<()> {
             EntityCommands::Create { name, app } => cmd_entity_create(&name, app.as_deref())?,
         },
         Commands::Migrate { app } => {
-            let runtime = runtime_for(&app)?;
-            let _ = runtime.build().await?;
+            let _ = runtime_for(&app)?.with_auto_migrate(true).build().await?;
             println!("schema applied");
         }
         Commands::Dev { app } => {
+            runtime_for(&app)?.serve().await?;
+        }
+        Commands::Serve { app } => {
             runtime_for(&app)?.serve().await?;
         }
         Commands::Routes { app } => {
@@ -218,6 +231,7 @@ async fn main() -> Result<()> {
             url,
             token,
         } => cmd_action(&entity, &id, &name, input.as_deref(), &url, token.as_deref()).await?,
+        Commands::Worker => runtime_for("all")?.run_worker().await?,
         Commands::Doctor => cmd_doctor().await?,
     }
     Ok(())
@@ -764,4 +778,29 @@ async fn cmd_doctor() -> Result<()> {
         println!("installed: {}", installed.installed.join(", "));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operations_list_uses_restaurant_defs_not_a_parallel_cli_path() {
+        let mut runtime = QefroRuntime::new(Config {
+            database_url: "postgres://unused".into(),
+            jwt_secret: "test".into(),
+            bind: "127.0.0.1:0".into(),
+            ..Config::default()
+        });
+        runtime.install(qefro_restaurant::installed());
+        let names: Vec<String> = runtime
+            .operation_defs()
+            .into_iter()
+            .map(|d| format!("{}.{}", d.entity, d.name))
+            .collect();
+        assert!(names.contains(&"Reservation.confirm".into()));
+        assert!(names.contains(&"Reservation.cancel".into()));
+        assert!(names.contains(&"Reservation.seat_customer".into()));
+        assert!(names.contains(&"Reservation.complete".into()));
+    }
 }

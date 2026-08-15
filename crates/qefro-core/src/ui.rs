@@ -106,6 +106,20 @@ pub struct UiEntityMeta {
     pub fields: Vec<UiFieldView>,
 }
 
+impl UiEntityMeta {
+    pub fn apply_terminology(&mut self, terms: &std::collections::HashMap<String, String>) {
+        if let Some(label) = terms.get(&self.entity).or_else(|| terms.get(&self.label)) {
+            self.label = label.clone();
+        }
+        let plural_key = format!("{}.plural", self.entity);
+        if let Some(plural) = terms.get(&plural_key).or_else(|| terms.get(&self.label_plural)) {
+            self.label_plural = plural.clone();
+        } else if terms.contains_key(&self.entity) {
+            self.label_plural = format!("{}s", self.label);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiFieldView {
     pub name: String,
@@ -181,6 +195,11 @@ impl DashboardDef {
         }
     }
 
+    pub fn module(mut self, module: impl Into<String>) -> Self {
+        self.module = Some(module.into());
+        self
+    }
+
     pub fn card(mut self, card: DashboardCard) -> Self {
         self.cards.push(card);
         self
@@ -226,7 +245,19 @@ pub struct TenantBranding {
     #[serde(default)]
     pub primary_color: Option<String>,
     #[serde(default)]
+    pub secondary_color: Option<String>,
+    #[serde(default)]
+    pub accent_color: Option<String>,
+    #[serde(default)]
+    pub company_name: Option<String>,
+    #[serde(default)]
     pub app_name: Option<String>,
+}
+
+impl TenantBranding {
+    pub fn display_name(&self) -> Option<&str> {
+        self.company_name.as_deref().or(self.app_name.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -237,6 +268,57 @@ pub struct TenantUiConfig {
     pub hidden_entities: Vec<String>,
     #[serde(default)]
     pub default_dashboard: Option<String>,
+    /// Entity name → presentation label. Underlying entity names stay stable.
+    #[serde(default)]
+    pub terminology: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TenantBusinessConfig {
+    #[serde(default = "default_currency")]
+    pub currency: String,
+    #[serde(default = "default_tz")]
+    pub timezone: String,
+    #[serde(default = "default_locale")]
+    pub locale: String,
+    #[serde(default = "default_date_format")]
+    pub date_format: String,
+    #[serde(default = "default_number_format")]
+    pub number_format: String,
+}
+
+fn default_currency() -> String {
+    "USD".into()
+}
+fn default_tz() -> String {
+    "UTC".into()
+}
+fn default_locale() -> String {
+    "en-US".into()
+}
+fn default_date_format() -> String {
+    "YYYY-MM-DD".into()
+}
+fn default_number_format() -> String {
+    "1,234.56".into()
+}
+
+impl Default for TenantBusinessConfig {
+    fn default() -> Self {
+        Self {
+            currency: default_currency(),
+            timezone: default_tz(),
+            locale: default_locale(),
+            date_format: default_date_format(),
+            number_format: default_number_format(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TenantFeatures {
+    #[serde(default)]
+    pub flags: std::collections::HashMap<String, bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -248,5 +330,12 @@ pub struct TenantConfig {
     #[serde(default)]
     pub enabled_apps: Vec<String>,
     #[serde(default)]
+    pub business: TenantBusinessConfig,
+    /// Legacy JSON bag. Prefer `business` for typed fields.
+    #[serde(default)]
     pub business_config: serde_json::Value,
+    #[serde(default)]
+    pub features: TenantFeatures,
+    #[serde(default)]
+    pub plan: Option<String>,
 }

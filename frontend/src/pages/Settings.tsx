@@ -8,19 +8,44 @@ export default function Settings({
   config: TenantConfig | null;
   onSaved: (next: TenantConfig) => void;
 }) {
+  const [companyName, setCompanyName] = useState("");
   const [appName, setAppName] = useState("");
   const [primary, setPrimary] = useState("");
+  const [secondary, setSecondary] = useState("");
+  const [accent, setAccent] = useState("");
   const [logo, setLogo] = useState("");
+  const [favicon, setFavicon] = useState("");
   const [navigation, setNavigation] = useState("");
+  const [apps, setApps] = useState("");
+  const [timezone, setTimezone] = useState("");
+  const [locale, setLocale] = useState("");
+  const [currency, setCurrency] = useState("");
+  const [dateFormat, setDateFormat] = useState("");
+  const [terminology, setTerminology] = useState("");
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
 
   useEffect(() => {
     if (!config) return;
+    setCompanyName(config.branding.company_name ?? "");
     setAppName(config.branding.app_name ?? "");
     setPrimary(config.branding.primary_color ?? "");
+    setSecondary(config.branding.secondary_color ?? "");
+    setAccent(config.branding.accent_color ?? "");
     setLogo(config.branding.logo ?? "");
+    setFavicon(config.branding.favicon ?? "");
     setNavigation((config.ui_config.navigation ?? []).join(", "));
+    setApps((config.enabled_apps ?? []).join(", "));
+    setTimezone(config.business?.timezone ?? "UTC");
+    setLocale(config.business?.locale ?? "en-US");
+    setCurrency(config.business?.currency ?? "USD");
+    setDateFormat(config.business?.date_format ?? "YYYY-MM-DD");
+    const terms = config.ui_config.terminology ?? {};
+    setTerminology(
+      Object.entries(terms)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("\n"),
+    );
   }, [config]);
 
   async function onSubmit(e: FormEvent) {
@@ -28,13 +53,23 @@ export default function Settings({
     if (!config) return;
     setError("");
     setOk("");
+    const terms: Record<string, string> = {};
+    for (const line of terminology.split("\n")) {
+      const idx = line.indexOf("=");
+      if (idx <= 0) continue;
+      terms[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+    }
     const next: TenantConfig = {
       ...config,
       branding: {
         ...config.branding,
+        company_name: companyName || null,
         app_name: appName || null,
         primary_color: primary || null,
+        secondary_color: secondary || null,
+        accent_color: accent || null,
         logo: logo || null,
+        favicon: favicon || null,
       },
       ui_config: {
         ...config.ui_config,
@@ -42,6 +77,18 @@ export default function Settings({
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
+        terminology: terms,
+      },
+      enabled_apps: apps
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+      business: {
+        timezone: timezone || "UTC",
+        locale: locale || "en-US",
+        currency: currency || "USD",
+        date_format: dateFormat || "YYYY-MM-DD",
+        number_format: config.business?.number_format ?? "1,234.56",
       },
     };
     try {
@@ -56,12 +103,16 @@ export default function Settings({
   return (
     <div>
       <div className="badge">Tenant</div>
-      <h2>Branding & navigation</h2>
+      <h2>Workspace settings</h2>
       <p className="muted">
-        These settings apply to this tenant only. The frontend is not the authority for permissions
-        or workflows.
+        Branding, navigation, applications, and locale apply to this tenant only. The server
+        enforces enabled apps and permissions — hiding a nav item is not a security control.
       </p>
       <form className="form" onSubmit={onSubmit}>
+        <label>
+          Company name
+          <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
+        </label>
         <label>
           App name
           <input value={appName} onChange={(e) => setAppName(e.target.value)} />
@@ -71,8 +122,20 @@ export default function Settings({
           <input value={primary} onChange={(e) => setPrimary(e.target.value)} placeholder="#9a3412" />
         </label>
         <label>
+          Secondary color
+          <input value={secondary} onChange={(e) => setSecondary(e.target.value)} placeholder="#f4f1ea" />
+        </label>
+        <label>
+          Accent color
+          <input value={accent} onChange={(e) => setAccent(e.target.value)} placeholder="#9a3412" />
+        </label>
+        <label>
           Logo URL
           <input value={logo} onChange={(e) => setLogo(e.target.value)} />
+        </label>
+        <label>
+          Favicon URL
+          <input value={favicon} onChange={(e) => setFavicon(e.target.value)} />
         </label>
         <label>
           Navigation (entity slugs, comma-separated)
@@ -80,6 +143,39 @@ export default function Settings({
             value={navigation}
             onChange={(e) => setNavigation(e.target.value)}
             placeholder="customers, reservations, orders"
+          />
+        </label>
+        <label>
+          Enabled applications (comma-separated)
+          <input
+            value={apps}
+            onChange={(e) => setApps(e.target.value)}
+            placeholder="restaurant, crm"
+          />
+        </label>
+        <label>
+          Timezone
+          <input value={timezone} onChange={(e) => setTimezone(e.target.value)} placeholder="UTC" />
+        </label>
+        <label>
+          Locale
+          <input value={locale} onChange={(e) => setLocale(e.target.value)} placeholder="en-US" />
+        </label>
+        <label>
+          Currency
+          <input value={currency} onChange={(e) => setCurrency(e.target.value)} placeholder="USD" />
+        </label>
+        <label>
+          Date format
+          <input value={dateFormat} onChange={(e) => setDateFormat(e.target.value)} />
+        </label>
+        <label>
+          Terminology (Entity=Label, one per line)
+          <textarea
+            value={terminology}
+            onChange={(e) => setTerminology(e.target.value)}
+            placeholder={"Customer=Guest\nReservation=Booking"}
+            rows={4}
           />
         </label>
         {error && <p className="error">{error}</p>}

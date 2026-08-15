@@ -11,8 +11,18 @@ pub fn spec(state: &AppState) -> Value {
         json!({
             "get": {
                 "tags": ["system"],
-                "summary": "Health check",
+                "summary": "Liveness check",
                 "responses": { "200": { "description": "OK" } }
+            }
+        }),
+    );
+    paths.insert(
+        "/ready".into(),
+        json!({
+            "get": {
+                "tags": ["system"],
+                "summary": "Readiness check (database reachable)",
+                "responses": { "200": { "description": "Ready" }, "500": { "description": "Not ready" } }
             }
         }),
     );
@@ -65,7 +75,7 @@ pub fn spec(state: &AppState) -> Value {
         json!({
             "get": {
                 "tags": ["tenants"],
-                "summary": "List tenants",
+                "summary": "Current tenant only (never lists other tenants)",
                 "security": [{ "bearerAuth": [] }],
                 "responses": { "200": { "description": "Tenants" } }
             },
@@ -74,6 +84,74 @@ pub fn spec(state: &AppState) -> Value {
                 "summary": "Create tenant",
                 "security": [{ "bearerAuth": [] }],
                 "responses": { "200": { "description": "Tenant" } }
+            }
+        }),
+    );
+    paths.insert(
+        "/api/v1/tenant".into(),
+        json!({
+            "get": {
+                "tags": ["tenants"],
+                "summary": "Current tenant identity, branding, apps, features, and locale",
+                "security": [{ "bearerAuth": [] }],
+                "responses": { "200": { "description": "Tenant" } }
+            },
+            "patch": {
+                "tags": ["tenants"],
+                "summary": "Replace tenant configuration (Admin)",
+                "security": [{ "bearerAuth": [] }],
+                "responses": { "200": { "description": "Config" }, "403": { "description": "Forbidden" } }
+            }
+        }),
+    );
+    paths.insert(
+        "/api/v1/tenant/branding".into(),
+        json!({
+            "get": {
+                "tags": ["tenants"],
+                "summary": "Tenant branding",
+                "security": [{ "bearerAuth": [] }],
+                "responses": { "200": { "description": "Branding" } }
+            },
+            "patch": {
+                "tags": ["tenants"],
+                "summary": "Update branding (Admin)",
+                "security": [{ "bearerAuth": [] }],
+                "responses": { "200": { "description": "Branding" } }
+            }
+        }),
+    );
+    paths.insert(
+        "/api/v1/tenant/apps".into(),
+        json!({
+            "get": {
+                "tags": ["tenants"],
+                "summary": "Installed vs enabled applications",
+                "security": [{ "bearerAuth": [] }],
+                "responses": { "200": { "description": "Apps" } }
+            },
+            "patch": {
+                "tags": ["tenants"],
+                "summary": "Enable applications for this tenant (Admin)",
+                "security": [{ "bearerAuth": [] }],
+                "responses": { "200": { "description": "Apps" } }
+            }
+        }),
+    );
+    paths.insert(
+        "/api/v1/tenant/features".into(),
+        json!({
+            "get": {
+                "tags": ["tenants"],
+                "summary": "Feature flags",
+                "security": [{ "bearerAuth": [] }],
+                "responses": { "200": { "description": "Flags" } }
+            },
+            "patch": {
+                "tags": ["tenants"],
+                "summary": "Update feature flags (Admin)",
+                "security": [{ "bearerAuth": [] }],
+                "responses": { "200": { "description": "Flags" } }
             }
         }),
     );
@@ -146,8 +224,8 @@ pub fn spec(state: &AppState) -> Value {
         "openapi": "3.0.3",
         "info": {
             "title": "Qefro Framework API",
-            "version": "0.3.0",
-            "description": "Metadata-driven, multi-tenant business application API. Entity routes are generated from registered modules."
+            "version": "0.4.0",
+            "description": "Metadata-driven, multi-tenant business application API. Tenant identity comes from the session, never from the client."
         },
         "servers": [{ "url": "/" }],
         "components": {
