@@ -149,3 +149,39 @@ async fn process_until(
     let job = queue.get(tenant_id, id).await.unwrap();
     panic!("job {} stuck in {} attempts={}", id, job.status, job.attempts);
 }
+
+#[tokio::test]
+async fn reclaim_running_jobs_after_crash() {
+    let Some(url) = db_url() else {
+        eprintln!("skipping: DATABASE_URL not set");
+        return;
+    };
+    let pool = connect(&url).await.unwrap();
+    apply_schema(&pool, &qefro_core::EntityRegistry::new())
+        .await
+        .unwrap();
+    let tenant_id = Uuid::new_v4();
+    let user_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO tenants (id, name, slug, created_at) VALUES ($1,$2,$3,now())")
+        .bind(tenant_id)
+        .bind("Reclaim")
+        .bind(format!("reclaim-{}", &tenant_id.to_string()[..8]))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let ctx = OpContext::new(tenant_id, user_id, vec!["System".into()]);
+    let queue = JobQueue::new(pool.clone());
+    let id = queue
+        .enqueue(&ctx, "orphan_job", json!({ "entity": "Reservation" }))
+        .await
+        .unwrap();
+    sqlx::query("UPDATE jobs SET status = 'running' WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let n = queue.reclaim_running().await.unwrap();
+    assert!(n >= 1);
+    let job = queue.get(tenant_id, id).await.unwrap();
+    assert_eq!(job.status, "pending");
+}

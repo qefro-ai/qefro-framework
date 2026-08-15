@@ -284,7 +284,8 @@ async fn child_tables_formulas_documents_reports_and_security() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{locked}");
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{locked}");
+    assert_eq!(locked["fields"][0]["code"], "locked");
 
     let (status, cancel_body) = json(
         clone_router(&router),

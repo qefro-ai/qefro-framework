@@ -1,12 +1,15 @@
+use crate::platform::WebhookDeliverJob;
+use crate::realtime::{RealtimeFanout, RealtimeHub};
 use crate::routes;
 use crate::state::AppState;
 use anyhow::Context;
 use qefro_agent::ToolRegistry;
 use qefro_auth::AuthService;
-use qefro_core::{AppModule, EntityRegistry, HookRegistry, LocalBlobStore, OperationDef};
+use qefro_core::{AppModule, EntityRegistry, HookRegistry, LocalBlobStore, OperationDef, StudioCatalog};
 use qefro_db::{
-    apply_schema, connect, BlobMetaStore, EntityService, JobHandler, JobQueue, JobRegistry,
-    LogNotificationJob, OperationHandler, OperationRegistry, SavedFilterStore,
+    apply_schema, connect, AttachmentStore, BlobMetaStore, EmailNotifyJob, EntityService, JobHandler,
+    JobQueue, JobRegistry, LogNotificationJob, MetadataChangeService, NotificationStore,
+    OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore, WebhookLog,
 };
 use qefro_events::InProcessEventBus;
 use qefro_permissions::{PermissionGrant, PermissionRegistry};
@@ -76,12 +79,28 @@ impl Config {
             env,
         })
     }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.env.eq_ignore_ascii_case("production") {
+            if self.jwt_secret == "dev-only-change-me" || self.jwt_secret.len() < 16 {
+                anyhow::bail!("JWT_SECRET must be a non-default value of at least 16 characters in production");
+            }
+            if self.database_url.is_empty() {
+                anyhow::bail!("DATABASE_URL is required");
+            }
+        }
+        if self.bind.parse::<std::net::SocketAddr>().is_err() {
+            anyhow::bail!("invalid QEFRO_BIND '{}'", self.bind);
+        }
+        Ok(())
+    }
 }
 
 pub struct InstalledApp {
     pub module: AppModule,
     pub workflows: Vec<WorkflowDef>,
     pub permissions: Vec<PermissionGrant>,
+    pub field_levels: Vec<qefro_permissions::FieldLevelGrant>,
     pub operations: Vec<(OperationDef, Arc<dyn OperationHandler>)>,
     pub jobs: Vec<(String, Arc<dyn JobHandler>)>,
 }
@@ -92,6 +111,7 @@ impl InstalledApp {
             module,
             workflows: Vec::new(),
             permissions: Vec::new(),
+            field_levels: Vec::new(),
             operations: Vec::new(),
             jobs: Vec::new(),
         }
@@ -104,6 +124,11 @@ impl InstalledApp {
 
     pub fn permission(mut self, grant: PermissionGrant) -> Self {
         self.permissions.push(grant);
+        self
+    }
+
+    pub fn field_level(mut self, grant: qefro_permissions::FieldLevelGrant) -> Self {
+        self.field_levels.push(grant);
         self
     }
 
@@ -230,7 +255,14 @@ impl QefroRuntime {
             "GET /api/v1/agent/tools".into(),
             "GET /api/v1/tenant".into(),
             "GET /api/v1/tenants/me/config".into(),
-            "GET /docs".into(),
+            "GET /api/v1/studio/apps".into(),
+            "POST /api/v1/studio/drafts".into(),
+            "POST /api/v1/studio/validate".into(),
+            "GET /api/v1/studio/publish".into(),
+            "GET /api/v1/search".into(),
+            "GET /api/v1/settings/:slug".into(),
+            "GET /api/v1/notifications".into(),
+            "GET /api/v1/realtime".into(),
         ];
         for app in &self.apps {
             for entity in &app.module.entities {
@@ -268,6 +300,9 @@ impl QefroRuntime {
             app.module.install_entities(&mut registry)?;
             for grant in &app.permissions {
                 permissions.grant(grant.clone());
+            }
+            for grant in &app.field_levels {
+                permissions.grant_field_level(grant.clone());
             }
             for wf in &app.workflows {
                 workflows.register(wf.clone());
@@ -320,10 +355,31 @@ impl QefroRuntime {
         let workflows = Arc::new(workflows);
         let hooks = Arc::new(hooks);
         let events = InProcessEventBus::new();
+        let catalog = Arc::new(StudioCatalog::default());
+        let studio = Arc::new(MetadataChangeService::new(
+            pool.clone(),
+            registry.clone(),
+            workflows.clone(),
+            permissions.clone(),
+            catalog.clone(),
+            self.config.env.clone(),
+        ));
 
         let mut operations = OperationRegistry::new();
         let mut job_handlers = JobRegistry::new();
+        let webhook_log = WebhookLog::new(pool.clone());
         job_handlers.register("notify", Arc::new(LogNotificationJob));
+        job_handlers.register("notify.email", Arc::new(EmailNotifyJob));
+        job_handlers.register(
+            "webhook.deliver",
+            Arc::new(WebhookDeliverJob {
+                client: reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(10))
+                    .build()
+                    .unwrap_or_else(|_| reqwest::Client::new()),
+                log: webhook_log.clone(),
+            }),
+        );
         for app in &self.apps {
             for (def, handler) in &app.operations {
                 operations.register(def.clone(), handler.clone());
@@ -337,6 +393,13 @@ impl QefroRuntime {
         let job_handlers = Arc::new(job_handlers);
         let jobs = Arc::new(JobQueue::new(pool.clone()));
 
+        let mut notification_defs = Vec::new();
+        let mut webhook_defs = Vec::new();
+        for app in &self.apps {
+            notification_defs.extend(app.module.notifications.clone());
+            webhook_defs.extend(app.module.webhooks.clone());
+        }
+
         let entities = Arc::new(
             EntityService::new(
                 pool.clone(),
@@ -347,8 +410,25 @@ impl QefroRuntime {
                 events,
             )
             .with_operations(operations.clone())
-            .with_jobs(jobs, job_handlers),
+            .with_jobs(jobs.clone(), job_handlers.clone()),
         );
+        entities
+            .events()
+            .subscribe_async(
+                "*",
+                Arc::new(PlatformDispatcher::new(
+                    pool.clone(),
+                    jobs,
+                    notification_defs.clone(),
+                    webhook_defs.clone(),
+                )),
+            )
+            .await;
+        let realtime = Arc::new(RealtimeHub::new());
+        entities
+            .events()
+            .subscribe_async("*", Arc::new(RealtimeFanout(realtime.clone())))
+            .await;
         let mut tools = ToolRegistry::from_registry(&registry, &permissions);
         for binding in operations.all() {
             tools.register_operation(&binding.def);
@@ -373,7 +453,9 @@ impl QefroRuntime {
         let blob_store: Arc<dyn qefro_core::BlobStore> =
             Arc::new(LocalBlobStore::new(&self.config.storage_path));
         let blobs = Arc::new(BlobMetaStore::new(pool.clone()));
-        let saved_filters = Arc::new(SavedFilterStore::new(pool));
+        let saved_filters = Arc::new(SavedFilterStore::new(pool.clone()));
+        let notifications = Arc::new(NotificationStore::new(pool.clone()));
+        let attachments = Arc::new(AttachmentStore::new(pool));
 
         let state = AppState {
             entities,
@@ -386,11 +468,32 @@ impl QefroRuntime {
             print_formats,
             entitlements: qefro_core::Entitlements::new(),
             rate_limiter: Arc::new(qefro_core::MemoryRateLimiter::default()),
+            public_limiter: Arc::new(qefro_core::MemoryRateLimiter::new(
+                30,
+                std::time::Duration::from_secs(60),
+            )),
+            search_limiter: Arc::new(qefro_core::MemoryRateLimiter::new(
+                60,
+                std::time::Duration::from_secs(60),
+            )),
+            login_limiter: Arc::new(qefro_core::MemoryRateLimiter::new(
+                20,
+                std::time::Duration::from_secs(60),
+            )),
             installed_apps,
             default_navigation,
             blob_store,
             blobs,
             saved_filters,
+            env: self.config.env.clone(),
+            catalog,
+            studio,
+            realtime,
+            notifications,
+            webhook_log: Arc::new(webhook_log),
+            attachments,
+            notification_defs,
+            webhooks: webhook_defs,
         };
 
         let cors = CorsLayer::new()
@@ -400,12 +503,15 @@ impl QefroRuntime {
 
         let router = routes::router(state.clone())
             .layer(cors)
-            .layer(TraceLayer::new_for_http());
+            .layer(TraceLayer::new_for_http())
+            .layer(axum::middleware::from_fn(crate::metrics::track))
+            .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024));
 
         Ok((router, state))
     }
 
     pub async fn serve(self) -> anyhow::Result<()> {
+        self.config.validate()?;
         let bind: SocketAddr = self.config.bind.parse().context("invalid QEFRO_BIND")?;
         let config_bind = self.config.bind.clone();
         let embed_worker = self.config.embed_worker;
@@ -413,6 +519,8 @@ impl QefroRuntime {
         if embed_worker {
             let jobs = state.entities.job_queue();
             let handlers = state.entities.job_handlers();
+            let entities = state.entities.clone();
+            let _ = jobs.reclaim_running().await;
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -421,29 +529,66 @@ impl QefroRuntime {
                         Ok(false) => {}
                         Err(err) => tracing::warn!(error = %err, "job worker"),
                     }
+                    if let Err(err) = entities.dispatch_outbox().await {
+                        tracing::warn!(error = %err, "outbox dispatch");
+                    }
                 }
             });
         }
         tracing::info!(%config_bind, embed_worker, "qefro listening");
         let listener = tokio::net::TcpListener::bind(bind).await?;
-        axum::serve(listener, router).await?;
+        axum::serve(listener, router)
+            .with_graceful_shutdown(shutdown_signal())
+            .await?;
         Ok(())
     }
 
     pub async fn run_worker(self) -> anyhow::Result<()> {
+        self.config.validate()?;
         let (_router, state) = self.build().await?;
         let jobs = state.entities.job_queue();
         let handlers = state.entities.job_handlers();
-        tracing::info!("qefro worker polling jobs");
+        let entities = state.entities.clone();
+        let reclaimed = jobs.reclaim_running().await.unwrap_or(0);
+        tracing::info!(reclaimed, "qefro worker polling jobs");
         loop {
-            match jobs.process_one(&handlers).await {
-                Ok(true) => {}
-                Ok(false) => tokio::time::sleep(Duration::from_secs(2)).await,
-                Err(err) => {
-                    tracing::warn!(error = %err, "job worker");
-                    tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::select! {
+                _ = shutdown_signal() => {
+                    tracing::info!("worker shutting down; in-flight job will finish");
+                    break;
                 }
+                _ = async {
+                    match jobs.process_one(&handlers).await {
+                        Ok(true) => {}
+                        Ok(false) => tokio::time::sleep(Duration::from_secs(2)).await,
+                        Err(err) => {
+                            tracing::warn!(error = %err, "job worker");
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                        }
+                    }
+                    if let Err(err) = entities.dispatch_outbox().await {
+                        tracing::warn!(error = %err, "outbox dispatch");
+                    }
+                } => {}
             }
         }
+        Ok(())
+    }
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = ctrl_c.await;
     }
 }

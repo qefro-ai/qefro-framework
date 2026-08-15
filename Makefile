@@ -1,4 +1,4 @@
-.PHONY: qefro install install-dev uninstall help
+.PHONY: qefro install install-dev uninstall help check
 
 # cargo install puts the `qefro` binary in $(CARGO_HOME)/bin, usually ~/.cargo/bin
 CARGO_BIN ?= $(HOME)/.cargo/bin
@@ -8,9 +8,14 @@ help:
 	@echo "make install-dev  install debug qefro (faster)"
 	@echo "make uninstall    remove the installed qefro binary"
 	@echo "make qefro        build target/debug/qefro without installing"
+	@echo "make check        workspace tests + frontend tests"
 
 qefro:
 	cargo build -p qefro-cli
+
+check:
+	cargo test --workspace -- --test-threads=1
+	cd frontend && npm test
 
 install:
 	cargo install --path crates/qefro-cli --locked --force

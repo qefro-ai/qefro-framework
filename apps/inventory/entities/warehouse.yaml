@@ -1,0 +1,17 @@
+name: Warehouse
+label: Warehouse
+label_plural: Warehouses
+table: inv_warehouses
+slug: inv-warehouses
+soft_delete: true
+audit: true
+fields:
+  - name: name
+    type: string
+    required: true
+    searchable: true
+  - name: code
+    type: string
+    required: true
+    unique: true
+    searchable: true

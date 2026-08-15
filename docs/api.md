@@ -27,7 +27,7 @@ Create user body: `{ name, email, password, roles }`
 
 ## Health
 
-`GET /health` — process liveness. `GET /ready` — database reachable. Neither returns infrastructure details.
+`GET /health` — process liveness (`status`, `framework`). `GET /ready` — database reachable. `GET /metrics` — process counters. Neither health nor ready returns connection strings.
 
 ## Metadata
 
@@ -39,7 +39,20 @@ Create user body: `{ name, email, password, roles }`
 - `GET /meta/modules`
 - `GET /meta/dashboards`
 - `GET /dashboards/{name}`
-- `GET /api/openapi.json`
+- `GET /meta/reports`
+
+## Studio
+
+Requires Studio capabilities (`studio.view` and related). Tenant isolation applies to drafts.
+
+- `GET /studio/overview`
+- `GET /studio/apps`, `GET /studio/apps/{app}`
+- `GET /studio/entities`, `GET /studio/entities/{entity}`
+- `GET /studio/workflows/{entity}`
+- `GET /studio/permissions/{entity}`
+- `POST /studio/validate`, `POST /studio/publish`, `POST /studio/drafts`
+
+See [studio.md](studio.md).
 - `GET /docs`
 
 ## Entities
@@ -58,7 +71,25 @@ GET    /{slug}/{id}/actions
 POST   /{slug}/{id}/actions/{name}
 ```
 
-List/get include `_expanded` (many-to-one labels), `_related` (one-to-many, GET only), `_workflow` (allowed transitions), and `_actions` (allowed business operations).
+List/get include `_expanded` (many-to-one labels), `_related` (one-to-many, GET only), `_links` (related counts), `_workflow` (allowed transitions), and `_actions` (allowed business operations). Unauthorized fields are omitted.
+
+## Platform
+
+| Method | Path |
+| --- | --- |
+| GET/PATCH | `/settings/{slug}` |
+| GET | `/search?q=` |
+| GET | `/notifications` |
+| POST | `/notifications/{id}/read` |
+| GET | `/webhooks`, `/webhooks/{name}/deliveries` |
+| POST | `/webhooks/{name}/test` |
+| GET/POST | `/{slug}/{id}/attachments` |
+| GET/DELETE | `/attachments/{id}` |
+| POST | `/{slug}/import/preview`, `/{slug}/import` |
+| GET | `/realtime` (SSE) |
+| GET/POST | `/public/{tenant}/{form}` |
+
+See [singletons](singletons.md), [search](search.md), [attachments](attachments.md), [notifications](notifications.md), [webhooks](webhooks.md), [imports](imports.md), [realtime](realtime.md), [public forms](public-forms.md).
 
 ```
 GET /operations
@@ -77,8 +108,40 @@ Filter operators: `field`, `field.gt`, `field.lt`, `field.gte`, `field.lte`, `fi
 
 ## Errors
 
+Stable public envelope:
+
 ```json
-{ "error": "forbidden", "message": "...", "details": {} }
+{
+  "error": "validation_failed",
+  "message": "Reservation date is required",
+  "details": { "fields": [{ "field": "reservation_date", "code": "required", "message": "..." }] }
+}
 ```
 
-Business-rule failures use `error: "business_rule_failed"` (HTTP 409) with a stable `code` in `details`. Invalid workflow states use `workflow_error`. Permission failures use `forbidden`. Cross-tenant reads look like `not_found`.
+`error` is a string code (not a nested object) so the generic UI can branch on it. Validation and locked documents also include `fields` and nested `nested`.
+
+| Code | HTTP |
+| --- | --- |
+| `unauthenticated` | 401 |
+| `forbidden` | 403 |
+| `not_found` | 404 |
+| `app_not_enabled` | 404 |
+| `bad_request` | 400 |
+| `validation_failed` | 422 |
+| `locked` | 422 |
+| `conflict` | 409 |
+| `invalid_transition` | 409 |
+| `business_rule_failed` | 409 |
+| `migration_required` | 409 |
+| `rate_limited` | 429 |
+| `payload_too_large` | 413 |
+| `dependency_failed` | 500 |
+| `internal_error` | 500 |
+
+SQL, connection strings, filesystem paths, stack traces, secrets, and query text are never returned. They belong in server logs keyed by `request_id`.
+
+Cross-tenant reads look like `not_found`. Permission failures use `forbidden`.
+
+## System
+
+`GET /health` — process is alive. `GET /ready` — database ping succeeded. `GET /metrics` — process counters (no tenant PII). `GET /api/v1/meta/version` — framework and schema versions.

@@ -392,6 +392,16 @@ pub struct UiEntityMeta {
     pub document: Option<crate::document::DocumentConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub naming: Option<crate::document::NamingConfig>,
+    #[serde(default)]
+    pub singleton: bool,
+    #[serde(default)]
+    pub attachments: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<crate::platform::EntityActionDef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<crate::platform::LinkDef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_form: Option<crate::platform::PublicFormDef>,
 }
 
 fn default_true_standalone() -> bool {
@@ -472,6 +482,10 @@ pub struct UiFieldView {
     pub computed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub formula: Option<String>,
+    #[serde(default)]
+    pub permission_level: u8,
+    #[serde(default)]
+    pub allow_on_submit: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub child_entity: Option<String>,
 }

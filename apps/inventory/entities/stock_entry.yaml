@@ -1,0 +1,32 @@
+name: StockEntry
+label: Stock Entry
+label_plural: Stock Entries
+table: inv_stock_entries
+slug: inv-stock-entries
+soft_delete: true
+audit: true
+workflow: stock_entry
+attachments: true
+document:
+  submit_enabled: true
+  lock_states: [Submitted]
+child_tables:
+  - name: items
+    child_entity: StockEntryItem
+    parent_field: entry_id
+fields:
+  - name: status
+    type: enum
+    values: [Draft, Submitted, Cancelled]
+    required: true
+    default: Draft
+  - name: warehouse_id
+    type: relation
+    required: true
+    relation:
+      target_entity: Warehouse
+      kind: many_to_one
+  - name: remarks
+    type: text
+    nullable: true
+    allow_on_submit: true

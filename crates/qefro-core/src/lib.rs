@@ -21,11 +21,13 @@ pub mod metering;
 pub mod migration;
 pub mod operation;
 pub mod package;
+pub mod platform;
 pub mod rate_limit;
 pub mod registry;
 pub mod sanitize;
 pub mod seed;
 pub mod storage;
+pub mod studio;
 pub mod timezone;
 pub mod ui;
 pub mod validate;
@@ -39,7 +41,7 @@ pub use catalog::{
     load_installed, load_yaml_docs, load_yaml_entities, mark_installed, parse_app_toml, remove_app,
     store_dir, AppFileManifest, DiscoveredApp, InstalledRecord, InstalledSet,
 };
-pub use context::{OpContext, ROLE_WORKER};
+pub use context::{OpContext, ROLE_PUBLIC, ROLE_WORKER};
 pub use document::{DocumentConfig, NamingConfig, PrintFormat, ReportDef};
 pub use entitlement::{Entitlements, Plan};
 pub use entity::EntityDef;
@@ -57,8 +59,18 @@ pub use lifecycle::{lifecycle_event_name, LifecycleHookDef};
 pub use migration::{sql_is_destructive, AppMigration};
 pub use operation::{operation, OperationDef};
 pub use package::{extract_package, inspect_package, write_package, PackageMeta};
+pub use platform::{
+    webhook_secret, webhook_signature, ConfirmationDef, EntityActionDef, LinkDef, NotificationDef,
+    PublicFormDef, WebhookDef,
+};
 pub use registry::EntityRegistry;
 pub use sanitize::sanitize_html;
+pub use studio::{
+    capabilities as studio_capabilities, classify_entity_change, entity_referrers, preview_formula,
+    require_cap as require_studio_cap, ChangeAnalysis, FieldUiPatch, SchemaImpact, StudioCatalog,
+    CAP_EDIT, CAP_MANAGE_APPS, CAP_MANAGE_PERMISSIONS, CAP_MANAGE_WORKFLOWS, CAP_PUBLISH, CAP_VIEW,
+    FORMULA_FUNCTIONS,
+};
 pub use seed::SeedBatch;
 pub use timezone::{canonicalize_datetime, local_to_utc, utc_to_local};
 pub use ui::{
@@ -68,12 +80,16 @@ pub use ui::{
 };
 pub use validate::{destructive_field_removals, validate_bundle, InstalledAppRef, ValidationReport};
 pub use validation::{validate_record, ValidationRules};
-pub use version::{FRAMEWORK_VERSION, APP_API_VERSION};
+pub use version::{
+    is_framework_dep, API_VERSION, APP_API_VERSION, FRAMEWORK_COMPAT_REQ, FRAMEWORK_VERSION,
+    METADATA_SCHEMA_VERSION, MIGRATION_FORMAT_VERSION,
+};
 
 pub mod prelude {
     pub use crate::{
-        AppModule, AppModuleBuilder, ChildTableDef, DocumentConfig, EntityDef, EntityRegistry,
-        FieldDef, FieldType, NamingConfig, OpContext, PrintFormat, QefroError, QefroResult,
-        RelationDef, RelationKind, ReportDef, UiConfig, ValidationRules,
+        AppModule, AppModuleBuilder, ChildTableDef, DocumentConfig, EntityActionDef, EntityDef,
+        EntityRegistry, FieldDef, FieldType, LinkDef, NamingConfig, NotificationDef, OpContext,
+        PrintFormat, PublicFormDef, QefroError, QefroResult, RelationDef, RelationKind, ReportDef,
+        UiConfig, ValidationRules, WebhookDef,
     };
 }

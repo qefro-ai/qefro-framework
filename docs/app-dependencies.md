@@ -3,13 +3,13 @@
 Keep the solver small. Each app lists named dependencies with semver requirements:
 
 ```toml
-framework_version = ">=0.7"
+framework_version = ">=1.0,<2.0"
 
 [dependencies]
 inventory = ">=1.0,<2.0"
 ```
 
-`core`, `qefro-framework`, `qefro`, and `framework` are the current runtime, not separately installed apps. They are checked against `FRAMEWORK_VERSION` (this crate, 0.7.x).
+`core`, `qefro-framework`, `qefro`, and `framework` are the current runtime, not separately installed apps. They are checked against `FRAMEWORK_VERSION` (this crate, 1.0.x).
 
 Other names must already be **installed** (not merely catalogued) at a matching version. Missing or incompatible versions fail `qefro app validate` and `qefro app install`.
 

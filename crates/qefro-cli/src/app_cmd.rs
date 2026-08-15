@@ -78,7 +78,7 @@ description = ""
 author = ""
 license = "MIT"
 api_version = "1"
-framework_version = ">=0.7"
+framework_version = ">=1.0,<2.0"
 
 [dependencies]
 
@@ -636,28 +636,96 @@ pub async fn cmd_app_seed(name: &str, tenant: &str, kind: Option<&str>) -> Resul
 }
 
 pub async fn cmd_doctor() -> Result<()> {
+    let mut failed = false;
     println!("qefro doctor");
     println!("framework: {FRAMEWORK_VERSION}");
+    println!(
+        "metadata schema: {}  ui schema: {}  api: {}  migrations: {}",
+        qefro_core::METADATA_SCHEMA_VERSION,
+        qefro_core::UI_SCHEMA_VERSION,
+        qefro_core::API_VERSION,
+        qefro_core::MIGRATION_FORMAT_VERSION
+    );
     match std::process::Command::new("rustc").arg("--version").output() {
-        Ok(out) => println!("rustc: {}", String::from_utf8_lossy(&out.stdout).trim()),
-        Err(_) => println!("rustc: missing"),
+        Ok(out) => println!("✓ rustc {}", String::from_utf8_lossy(&out.stdout).trim()),
+        Err(_) => println!("⚠ rustc missing"),
     }
+
+    let env = std::env::var("QEFRO_ENV").unwrap_or_else(|_| "development".into());
+    let jwt = std::env::var("JWT_SECRET").unwrap_or_else(|_| "dev-only-change-me".into());
+    if env.eq_ignore_ascii_case("production")
+        && (jwt == "dev-only-change-me" || jwt.len() < 16)
+    {
+        println!("✗ JWT_SECRET must be a non-default value in production");
+        failed = true;
+    } else {
+        println!("✓ Configuration");
+    }
+
     let url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://qefro:qefro@127.0.0.1:5432/qefro".into());
-    println!("DATABASE_URL: {url}");
+    println!("DATABASE_URL: {}", redact_db_url(&url));
     let pool = match qefro_db::connect(&url).await {
-        Ok(pool) => {
-            match qefro_db::pool::ping(&pool).await {
-                Ok(()) => println!("postgres: ok"),
-                Err(e) => println!("postgres: {e}"),
+        Ok(pool) => match qefro_db::pool::ping(&pool).await {
+            Ok(()) => {
+                println!("✓ PostgreSQL");
+                Some(pool)
             }
-            Some(pool)
-        }
+            Err(e) => {
+                println!("✗ PostgreSQL {e}");
+                failed = true;
+                None
+            }
+        },
         Err(e) => {
-            println!("postgres: {e}");
+            println!("✗ PostgreSQL {e}");
+            failed = true;
             None
         }
     };
+
+    if let Some(pool) = &pool {
+        match qefro_db::Outbox::new(pool.clone()).pending_count().await {
+            Ok(n) => println!("✓ Event outbox ({n} pending)"),
+            Err(e) => {
+                println!("⚠ Event outbox {e}");
+            }
+        }
+        match qefro_db::JobQueue::new(pool.clone()).pending_count().await {
+            Ok(n) => println!("✓ Worker queue ({n} pending/running)"),
+            Err(e) => println!("⚠ Worker {e}"),
+        }
+        match qefro_db::app_registry::list_apps(pool).await {
+            Ok(apps) if !apps.is_empty() => {
+                for app in apps {
+                    println!("✓ {} {} ({})", app.name, app.version, app.status);
+                }
+            }
+            Ok(_) => println!("· no apps in registry"),
+            Err(_) => println!("· app registry not ready"),
+        }
+    }
+
+    let storage = std::env::var("QEFRO_STORAGE_PATH")
+        .unwrap_or_else(|_| "./var/qefro-storage".into());
+    match std::fs::create_dir_all(&storage).and_then(|_| std::fs::metadata(&storage)) {
+        Ok(meta) if meta.is_dir() => println!("✓ Storage ({storage})"),
+        Ok(_) => {
+            println!("✗ Storage is not a directory: {storage}");
+            failed = true;
+        }
+        Err(e) => {
+            println!("✗ Storage {e}");
+            failed = true;
+        }
+    }
+
+    if std::env::var("QEFRO_SMTP_URL").is_ok() || std::env::var("SMTP_URL").is_ok() {
+        println!("✓ Email");
+    } else {
+        println!("⚠ Email not configured");
+    }
+
     let installed = load_installed();
     let apps = discover_apps(&builtin_manifests());
     for app in &apps {
@@ -671,15 +739,18 @@ pub async fn cmd_doctor() -> Result<()> {
                 let report = validate_bundle(&bundle, &installed.refs());
                 if !report.ok() {
                     println!("✗ {name} {}", report.errors.join("; "));
+                    failed = true;
                     continue;
                 }
-                print!("✓ {name} manifest");
+                print!("✓ {name} {}", bundle.manifest.version);
                 if let Some(pool) = &pool {
                     match qefro_db::app_registry::pending_migrations(pool, name, &bundle.migrations)
                         .await
                     {
                         Ok(pending) if pending.is_empty() => print!("  ✓ migrations"),
-                        Ok(pending) => print!("  ⚠ migration pending: {}", pending[0].version),
+                        Ok(pending) => {
+                            print!("  ⚠ migration pending: {}", pending[0].version);
+                        }
                         Err(_) => print!("  · registry not ready"),
                     }
                 }
@@ -688,7 +759,10 @@ pub async fn cmd_doctor() -> Result<()> {
                     println!("  warning: {w}");
                 }
             }
-            Err(e) => println!("✗ {name} {e}"),
+            Err(e) => {
+                println!("✗ {name} {e}");
+                failed = true;
+            }
         }
     }
     if installed.installed.is_empty() {
@@ -699,7 +773,23 @@ pub async fn cmd_doctor() -> Result<()> {
             println!("disabled: {}", installed.disabled.join(", "));
         }
     }
+    if failed {
+        bail!("doctor found problems");
+    }
     Ok(())
+}
+
+fn redact_db_url(url: &str) -> String {
+    if let Some(at) = url.find('@') {
+        if let Some(scheme_end) = url.find("://") {
+            let creds = &url[scheme_end + 3..at];
+            if let Some(colon) = creds.find(':') {
+                let user = &creds[..colon];
+                return format!("{}{}:***{}", &url[..scheme_end + 3], user, &url[at..]);
+            }
+        }
+    }
+    url.to_string()
 }
 
 async fn persist_registry(

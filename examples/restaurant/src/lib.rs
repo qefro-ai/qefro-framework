@@ -5,7 +5,7 @@ mod permissions;
 mod workflows;
 
 use qefro_api::InstalledApp;
-use qefro_core::{AppModule, ReportDef};
+use qefro_core::{AppModule, NotificationDef, ReportDef, WebhookDef};
 use qefro_permissions::PermissionGrant;
 use qefro_workflow::WorkflowDef;
 
@@ -16,6 +16,7 @@ pub fn module() -> AppModule {
         .description("Tables, reservations, menus, orders, and payments")
         .entity(entities::customer())
         .entity(entities::restaurant())
+        .entity(entities::restaurant_settings())
         .entity(entities::branch())
         .entity(entities::table())
         .entity(entities::menu_category())
@@ -36,6 +37,22 @@ pub fn module() -> AppModule {
                 .sum("grand_total")
                 .chart("bar"),
         )
+        .notification(
+            NotificationDef::new("reservation_confirmed", "reservation.confirmed")
+                .channels(&["in_app", "email"])
+                .recipients(&["Staff", "Manager", "owner"])
+                .title("Reservation confirmed")
+                .module("restaurant"),
+        )
+        .webhook(
+            WebhookDef::new(
+                "reservation-created",
+                "reservation.created",
+                std::env::var("QEFRO_RESTAURANT_WEBHOOK_URL")
+                    .unwrap_or_else(|_| "test://reservation".into()),
+            )
+            .module("restaurant"),
+        )
         .build()
 }
 
@@ -54,6 +71,9 @@ pub fn installed() -> InstalledApp {
     }
     for grant in permissions() {
         app = app.permission(grant);
+    }
+    for grant in permissions::field_levels() {
+        app = app.field_level(grant);
     }
     operations::register(app)
 }

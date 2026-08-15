@@ -1,0 +1,30 @@
+name: StockEntryItem
+label: Stock Entry Item
+label_plural: Stock Entry Items
+table: inv_stock_entry_items
+slug: inv-stock-entry-items
+standalone: false
+soft_delete: false
+audit: true
+child_of:
+  parent_entity: StockEntry
+  parent_field: items
+fields:
+  - name: entry_id
+    type: relation
+    required: true
+    relation:
+      target_entity: StockEntry
+      kind: many_to_one
+  - name: product_id
+    type: relation
+    required: true
+    relation:
+      target_entity: Product
+      kind: many_to_one
+  - name: qty
+    type: decimal
+    required: true
+  - name: rate
+    type: decimal
+    nullable: true

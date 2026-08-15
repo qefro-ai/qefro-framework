@@ -1,0 +1,18 @@
+name: Assignment
+label: Assignment
+label_plural: Assignments
+table: hd_assignments
+slug: hd-assignments
+soft_delete: true
+audit: true
+fields:
+  - name: ticket_id
+    type: relation
+    required: true
+    relation:
+      target_entity: Ticket
+      kind: many_to_one
+  - name: assignee
+    type: string
+    required: true
+    searchable: true

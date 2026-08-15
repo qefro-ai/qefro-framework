@@ -22,7 +22,7 @@ apps/myshop/
 └── README.md
 ```
 
-Built-in examples are implemented in Rust (`examples/restaurant`, `examples/basic-crm`) and advertised through catalog manifests in `apps/`. YAML apps can be packaged as `.qefro` files and installed onto any Qefro 0.7 runtime.
+Built-in examples are implemented in Rust (`examples/restaurant`, `examples/basic-crm`) and advertised through catalog manifests in `apps/`. YAML apps can be packaged as `.qefro` files and installed onto any Qefro 1.x runtime (`framework_version = ">=1.0,<2.0"`). Benchmark apps: `apps/inventory`, `apps/helpdesk`.
 
 ## Manifest
 
@@ -34,7 +34,7 @@ description = "Restaurant operations and ordering"
 author = "Qefro"
 license = "MIT"
 api_version = "1"
-framework_version = ">=0.7"
+framework_version = ">=1.0,<2.0"
 
 [dependencies]
 inventory = ">=1.0,<2.0"

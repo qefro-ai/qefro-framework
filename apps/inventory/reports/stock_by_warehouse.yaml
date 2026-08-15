@@ -1,0 +1,8 @@
+name: stock_by_warehouse
+label: Stock by warehouse
+entity: StockBalance
+fields: [warehouse_id, product_id, qty]
+group_by: [warehouse_id]
+aggregations:
+  qty: sum
+chart: bar

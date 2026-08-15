@@ -1,0 +1,24 @@
+name: StockBalance
+label: Stock Balance
+label_plural: Stock Balances
+table: inv_stock_balances
+slug: inv-stock-balances
+soft_delete: true
+audit: true
+fields:
+  - name: warehouse_id
+    type: relation
+    required: true
+    relation:
+      target_entity: Warehouse
+      kind: many_to_one
+  - name: product_id
+    type: relation
+    required: true
+    relation:
+      target_entity: Product
+      kind: many_to_one
+  - name: qty
+    type: decimal
+    required: true
+    default: 0

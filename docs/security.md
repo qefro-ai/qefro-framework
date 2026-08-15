@@ -11,11 +11,17 @@ Application availability (installed ∩ enabled ∩ plan)
       ↓
 RBAC
       ↓
+Field permissions
+      ↓
 Validation
       ↓
 Workflow
       ↓
 Business operation
+      ↓
+COMMIT
+      ↓
+Event (realtime, notification, webhook, job)
 ```
 
 Workers are not on this path. See [Jobs](jobs.md).
@@ -47,11 +53,31 @@ Background jobs rebuild `OpContext` with role `Worker`, not `Admin` or `System`.
 
 ## Secrets and logs
 
-Do not log passwords, access tokens, `DATABASE_URL`, or JWT secrets. HTTP 5xx uses `QefroError::public_message`. Structured logs include `request_id`, `tenant_id`, `user_id`, operation, entity, duration, and status.
+Do not log passwords, access tokens, `DATABASE_URL`, or JWT secrets. HTTP 5xx uses `QefroError::public_message`. Structured logs include `request_id`, `tenant_id`, `user_id`, path, duration, and status. Every response may echo `x-request-id`.
 
 ## Rate limits
 
-`RateLimiter` is an in-memory hook keyed by `tenant:user:path`. It is not a distributed limiter. A Redis adapter can implement the same trait later.
+`RateLimiter` is an in-memory hook keyed by `tenant:user:path` (and specialized keys for login, search, public forms, uploads, and imports). Client-supplied tenant ids cannot change the key. It is not a distributed limiter. A Redis adapter can implement the same trait later.
+
+Limits: list page size ≤ 200, max 20 filters, max 3 sort fields, search ≤ 200 characters, CSV import ≤ 2 MiB, attachments ≤ 10 MiB, request body ≤ 12 MiB.
+
+See also [threat-model.md](threat-model.md) and [v1-compatibility.md](v1-compatibility.md).
+
+## Field permissions
+
+Unauthorized fields are stripped on read and rejected on write inside `EntityService`. The UI cannot be trusted to hide salary or similar fields.
+
+## Public forms
+
+Public routes resolve tenant from the URL slug. Bodies cannot set `tenant_id`. Only allowlisted fields are accepted. The execution context is `Public`, not Admin. Rate limits apply.
+
+## Webhooks and notifications
+
+Both run after COMMIT. Webhook HMAC secrets are never returned to clients. Attachment storage keys are generated server-side; `..` filenames are rejected.
+
+## Realtime
+
+SSE subscriptions use the session tenant. Record subscriptions require a successful read of that record.
 
 ## Metering
 

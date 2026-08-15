@@ -29,6 +29,11 @@ Qefro reads process configuration from the environment. Copy `.env.example` to `
 | `QEFRO_EMBED_WORKER` | `true` unless `QEFRO_ENV=production` | HTTP process also polls jobs |
 | `RUST_LOG` | (from `QEFRO_LOG_LEVEL`) | tracing filter |
 
+| `QEFRO_DB_MAX_CONNECTIONS` | `10` (clamped 2–100) | PostgreSQL pool size |
+| `QEFRO_DB_ACQUIRE_TIMEOUT_SECS` | `10` | Pool acquire timeout |
+
+Precedence: **environment > defaults**. There is no required config file in V1.0. Invalid production configuration (`JWT_SECRET` still the development default, unparseable `QEFRO_BIND`) fails at `qefro serve` / `qefro worker` startup.
+
 `qefro migrate` always applies schema, even when `QEFRO_AUTO_MIGRATE=false`.
 
 Production boot:

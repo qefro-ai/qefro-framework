@@ -49,7 +49,7 @@ fn default_api_version() -> String {
     crate::version::APP_API_VERSION.to_string()
 }
 fn default_framework_req() -> String {
-    ">=0.7".into()
+    crate::version::FRAMEWORK_COMPAT_REQ.into()
 }
 fn default_source() -> String {
     "catalog".into()

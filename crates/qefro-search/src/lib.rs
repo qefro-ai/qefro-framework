@@ -66,6 +66,17 @@ impl Query {
             self.page = 1;
         }
         self.page_size = self.page_size.clamp(1, 200);
+        if self.filters.len() > 20 {
+            return Err(QefroError::bad_request("too many filters (max 20)"));
+        }
+        if self.sort.len() > 3 {
+            self.sort.truncate(3);
+        }
+        if let Some(search) = &self.search {
+            if search.chars().count() > 200 {
+                return Err(QefroError::bad_request("search query too long"));
+            }
+        }
         for filter in &self.filters {
             let name = filter.field_name();
             if !entity.has_column(name) {

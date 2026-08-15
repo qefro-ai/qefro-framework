@@ -26,7 +26,7 @@ app.job("notify_reservation_confirmed", LogNotificationJob)
 
 The default `LogNotificationJob` logs tenant id and payload key count. It does not log customer PII. Applications replace it with email/SMS.
 
-The HTTP server may poll jobs (`QEFRO_EMBED_WORKER`, default on in development). Production should run `qefro worker` as a separate process with `QEFRO_EMBED_WORKER=false`. Tests call `JobQueue::process_one` directly.
+The HTTP server may poll jobs (`QEFRO_EMBED_WORKER`, default on in development). Production should run `qefro worker` as a separate process with `QEFRO_EMBED_WORKER=false`. On start, workers reclaim `running` rows left by a crash. SIGTERM stops claiming new jobs, finishes the current handler, then exits. Tests call `JobQueue::process_one` directly.
 
 Jobs are tenant-aware: enqueue uses the operation's tenant, and `JobQueue::get` requires `tenant_id`.
 

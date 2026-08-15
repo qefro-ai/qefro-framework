@@ -340,7 +340,7 @@ mod tests {
                 author: String::new(),
                 license: "MIT".into(),
                 api_version: "1".into(),
-                framework_version: ">=0.7".into(),
+                framework_version: crate::version::FRAMEWORK_COMPAT_REQ.into(),
                 source: "catalog".into(),
                 dependencies: BTreeMap::new(),
                 navigation: Vec::new(),

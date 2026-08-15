@@ -1,6 +1,7 @@
-import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
-import { api, ApiError, clearToken, hasToken, onAuthChange, type TenantConfig, type UiEntity } from "./api";
+import StudioApp from "./studio/StudioApp";
+import { api, ApiError, clearToken, hasToken, METADATA_EVENT, onAuthChange, type TenantConfig, type UiEntity } from "./api";
 import { TenantThemeContext } from "./metadata/context";
 import "./widgets";
 import Login from "./pages/Login";
@@ -10,6 +11,9 @@ import EntityDetail from "./pages/EntityDetail";
 import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
 import Reports from "./pages/Reports";
+import PublicForm from "./pages/PublicForm";
+import GlobalSearch from "./components/GlobalSearch";
+import NotificationBell from "./components/NotificationBell";
 
 export default function App() {
   const [authed, setAuthed] = useState(hasToken());
@@ -20,6 +24,7 @@ export default function App() {
     return (
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/p/:tenant/:form" element={<PublicForm />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
@@ -31,47 +36,57 @@ function Shell() {
   const [entities, setEntities] = useState<UiEntity[]>([]);
   const [config, setConfig] = useState<TenantConfig | null>(null);
   const [me, setMe] = useState("");
+  const [studio, setStudio] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
-    api
-      .ui()
-      .then((d) => {
-        setEntities(d.entities);
-        if (d.branding) {
-          setConfig((prev) =>
-            prev
-              ? { ...prev, branding: { ...prev.branding, ...d.branding } }
-              : {
-                  branding: d.branding ?? {},
-                  ui_config: {
-                    navigation: d.navigation ?? [],
-                    hidden_entities: [],
-                    default_dashboard: d.default_dashboard,
-                    terminology: d.terminology,
+    function loadUi() {
+      api
+        .ui()
+        .then((d) => {
+          setEntities(d.entities);
+          if (d.branding) {
+            setConfig((prev) =>
+              prev
+                ? { ...prev, branding: { ...prev.branding, ...d.branding } }
+                : {
+                    branding: d.branding ?? {},
+                    ui_config: {
+                      navigation: d.navigation ?? [],
+                      hidden_entities: [],
+                      default_dashboard: d.default_dashboard,
+                      terminology: d.terminology,
+                    },
+                    enabled_apps: d.enabled_apps ?? [],
+                    business: {
+                      locale: d.locale,
+                      timezone: d.timezone,
+                      currency: d.currency,
+                    },
+                    features: { flags: d.features },
                   },
-                  enabled_apps: d.enabled_apps ?? [],
-                  business: {
-                    locale: d.locale,
-                    timezone: d.timezone,
-                    currency: d.currency,
-                  },
-                  features: { flags: d.features },
-                },
-          );
-        }
-      })
-      .catch((err) => {
-        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-          clearToken();
-          navigate("/login");
-        }
-      });
+            );
+          }
+        })
+        .catch((err) => {
+          if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+            clearToken();
+            navigate("/login");
+          }
+        });
+    }
+    loadUi();
     api
       .me()
-      .then((d) => setMe(`${d.user.name} · ${d.roles.join(", ")}`))
+      .then((d) => {
+        setMe(`${d.user.name} · ${d.roles.join(", ")}`);
+        setStudio((d.studio ?? []).includes("studio.view"));
+      })
       .catch(() => undefined);
     api.tenantConfig().then(setConfig).catch(() => undefined);
+    window.addEventListener(METADATA_EVENT, loadUi);
+    return () => window.removeEventListener(METADATA_EVENT, loadUi);
   }, [navigate]);
 
   useEffect(() => {
@@ -118,10 +133,21 @@ function Shell() {
     currency: config?.business?.currency || "USD",
   };
 
+  if (location.pathname.startsWith("/studio")) {
+    return (
+      <TenantThemeContext.Provider value={theme}>
+        <Routes>
+          <Route path="/studio/*" element={<StudioApp />} />
+        </Routes>
+      </TenantThemeContext.Provider>
+    );
+  }
+
   return (
     <TenantThemeContext.Provider value={theme}>
     <div className="shell">
-      <aside className="nav">
+      <a className="skip-link" href="#main">Skip to content</a>
+      <aside className="nav" aria-label="Application">
         <div className="nav-brand">
           {config?.branding.logo ? <img src={config.branding.logo} alt="" className="logo" /> : null}
           <h1>{appName}</h1>
@@ -145,8 +171,15 @@ function Shell() {
           <NavLink to="/settings" className={({ isActive }) => (isActive ? "active" : "")}>
             Settings
           </NavLink>
+          {studio ? (
+            <NavLink to="/studio" className={({ isActive }) => (isActive ? "active" : "")}>
+              Studio
+            </NavLink>
+          ) : null}
         </div>
         <div className="nav-footer">
+          <GlobalSearch />
+          <NotificationBell />
           <div className="badge">{me || "Signed in"}</div>
           <button
             className="ghost"
@@ -159,7 +192,7 @@ function Shell() {
           </button>
         </div>
       </aside>
-      <main className="main">
+      <main id="main" className="main" tabIndex={-1}>
         <Routes>
           <Route path="/" element={<Dashboard entities={entities} config={config} />} />
           <Route path="/login" element={<Navigate to="/" replace />} />
@@ -168,6 +201,7 @@ function Shell() {
             element={<Settings config={config} onSaved={setConfig} />}
           />
           <Route path="/reports" element={<Reports />} />
+          <Route path="/p/:tenant/:form" element={<PublicForm />} />
           <Route path="/:slug" element={<EntityList entities={entities} />} />
           <Route path="/:slug/new" element={<EntityForm entities={entities} />} />
           <Route path="/:slug/:id" element={<EntityDetail entities={entities} />} />

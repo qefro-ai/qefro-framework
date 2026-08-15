@@ -1,0 +1,17 @@
+name: stock_entry
+entity: StockEntry
+initial: Draft
+states:
+  - name: Draft
+  - name: Submitted
+  - name: Cancelled
+    terminal: true
+transitions:
+  - name: submit
+    from: Draft
+    to: Submitted
+    allowed_roles: [Staff, Manager]
+  - name: cancel
+    from: Draft
+    to: Cancelled
+    allowed_roles: [Manager]

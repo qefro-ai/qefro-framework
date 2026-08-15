@@ -2,6 +2,7 @@ use crate::document::{ChildOf, DocumentConfig, NamingConfig, PrintFormat};
 use crate::error::{QefroError, QefroResult};
 use crate::field::{ChildTableDef, FieldDef, FieldType, RelationKind};
 use crate::ident::to_plural_slug;
+use crate::platform::{EntityActionDef, LinkDef, PublicFormDef};
 use crate::ui::{UiEntityMeta, UiFieldView, UI_SCHEMA_VERSION};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -53,6 +54,18 @@ pub struct EntityDef {
     pub print_formats: Vec<PrintFormat>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub child_tables: Vec<ChildTableDef>,
+    /// One row per tenant. Collection POST is rejected.
+    #[serde(default)]
+    pub singleton: bool,
+    /// When true, the generic UI and attachment API are enabled for records.
+    #[serde(default)]
+    pub attachments: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<EntityActionDef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<LinkDef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_form: Option<PublicFormDef>,
 }
 
 fn default_true() -> bool {
@@ -86,7 +99,45 @@ impl EntityDef {
             naming: None,
             print_formats: Vec::new(),
             child_tables: Vec::new(),
+            singleton: false,
+            attachments: false,
+            actions: Vec::new(),
+            links: Vec::new(),
+            public_form: None,
         }
+    }
+
+    /// One document per tenant.
+    pub fn single(name: impl Into<String>) -> Self {
+        let mut def = Self::new(name);
+        def.singleton = true;
+        def.standalone = true;
+        def
+    }
+
+    pub fn singleton(mut self) -> Self {
+        self.singleton = true;
+        self
+    }
+
+    pub fn attachments(mut self) -> Self {
+        self.attachments = true;
+        self
+    }
+
+    pub fn action(mut self, action: EntityActionDef) -> Self {
+        self.actions.push(action);
+        self
+    }
+
+    pub fn link(mut self, link: LinkDef) -> Self {
+        self.links.push(link);
+        self
+    }
+
+    pub fn public_form(mut self, form: PublicFormDef) -> Self {
+        self.public_form = Some(form);
+        self
     }
 
     pub fn table_name(mut self, table: impl Into<String>) -> Self {
@@ -440,6 +491,8 @@ impl EntityDef {
                     default_from: f.default_from.clone(),
                     computed: f.computed,
                     formula: f.formula.clone(),
+                    permission_level: f.permission_level,
+                    allow_on_submit: f.allow_on_submit,
                     child_entity: f.relation.as_ref().and_then(|r| {
                         if f.is_child_table() {
                             Some(r.target_entity.clone())
@@ -484,6 +537,11 @@ impl EntityDef {
             child_of: self.child_of.as_ref().map(|c| c.parent_entity.clone()),
             document: self.document.clone(),
             naming: self.naming.clone(),
+            singleton: self.singleton,
+            attachments: self.attachments,
+            actions: self.actions.clone(),
+            links: self.links.clone(),
+            public_form: self.public_form.clone(),
         }
     }
 

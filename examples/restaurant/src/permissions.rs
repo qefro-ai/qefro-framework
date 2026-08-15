@@ -1,4 +1,7 @@
-use qefro_permissions::{Action, PermissionGrant, ROLE_CUSTOMER, ROLE_MANAGER, ROLE_STAFF};
+use qefro_permissions::{
+    Action, FieldLevelGrant, PermissionGrant, ROLE_CUSTOMER, ROLE_HR, ROLE_MANAGER, ROLE_PUBLIC,
+    ROLE_STAFF,
+};
 
 pub fn grants() -> Vec<PermissionGrant> {
     let mut grants = Vec::new();
@@ -15,6 +18,7 @@ pub fn grants() -> Vec<PermissionGrant> {
         "Payment",
         "UiShowcase",
         "ShowcaseLine",
+        "RestaurantSettings",
     ];
     for entity in manager_entities {
         grants.push(PermissionGrant::crud(ROLE_MANAGER, entity));
@@ -50,5 +54,18 @@ pub fn grants() -> Vec<PermissionGrant> {
     grants.push(PermissionGrant::read(ROLE_CUSTOMER, "Order"));
     grants.push(PermissionGrant::read(ROLE_CUSTOMER, "MenuItem"));
     grants.push(PermissionGrant::read(ROLE_CUSTOMER, "MenuCategory"));
+    grants.push(PermissionGrant::new(
+        ROLE_PUBLIC,
+        "Reservation",
+        vec![Action::Create],
+    ));
+    grants.push(PermissionGrant::crud(ROLE_STAFF, "RestaurantSettings"));
     grants
+}
+
+pub fn field_levels() -> Vec<FieldLevelGrant> {
+    vec![
+        FieldLevelGrant::new(ROLE_MANAGER, "Customer", 1),
+        FieldLevelGrant::new(ROLE_HR, "Customer", 1),
+    ]
 }

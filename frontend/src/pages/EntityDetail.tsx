@@ -4,12 +4,14 @@ import {
   api,
   detailVisible,
   expandedLabel,
+  tokenHeader,
   type EntityAction,
   type UiEntity,
   type WorkflowAction,
 } from "../api";
 import { formatMoney, utcToDatetimeLocal } from "../metadata/timezone";
 import { useTenantTheme } from "../metadata/context";
+import { useRealtime } from "../realtime";
 
 export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const { slug, id } = useParams();
@@ -18,6 +20,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const [row, setRow] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState("");
   const [activity, setActivity] = useState<Array<Record<string, unknown>>>([]);
+  const [attachments, setAttachments] = useState<Array<Record<string, unknown>>>([]);
   const theme = useTenantTheme();
   const [tab, setTab] = useState("");
 
@@ -30,6 +33,12 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
         .audit(meta.entity, id)
         .then((d) => setActivity(d.items ?? []))
         .catch(() => setActivity([]));
+      if (meta.attachments) {
+        api
+          .attachments(slug, id)
+          .then((d) => setAttachments(d.items ?? []))
+          .catch(() => setAttachments([]));
+      }
     }
   }
 
@@ -37,6 +46,10 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
     load().catch((e) => setError(e.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, id]);
+
+  useRealtime({ entity: meta?.entity, recordId: id }, () => {
+    load().catch(() => undefined);
+  });
 
   if (!meta || !slug || !id) return <p>Unknown entity.</p>;
   if (!row && !error) return <p className="muted">Loading…</p>;
@@ -50,6 +63,13 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
     string,
     { slug: string; entity: string; items: Record<string, unknown>[]; total: number }
   >;
+  const links = ((row._links as Array<{
+    label: string;
+    entity: string;
+    slug: string;
+    relation: string;
+    total: number;
+  }>) ?? []).filter((l) => !related[l.relation]);
   const visible = meta.fields.filter(
     (f) =>
       detailVisible(f) &&
@@ -135,7 +155,8 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
               key={action.name}
               className={action.style === "danger" ? "danger" : action.style === "ghost" ? "ghost" : undefined}
               onClick={async () => {
-                if (action.requires_confirmation && !confirm(`${action.label || action.name}?`)) {
+                const message = action.confirmation_message || `${action.label || action.name}?`;
+                if ((action.requires_confirmation || action.confirmation_message) && !confirm(message)) {
                   return;
                 }
                 try {
@@ -211,6 +232,71 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
           </div>
         );
       })}
+      {meta.attachments ? (
+        <div className="panel">
+          <h3 style={{ padding: "0.85rem 0.85rem 0" }}>Attachments</h3>
+          {attachments.length === 0 ? <p className="empty">No files.</p> : null}
+          <ul>
+            {attachments.map((file) => (
+              <li key={String(file.id)}>
+                <a
+                  href={`/api/v1/attachments/${file.id}`}
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    const res = await fetch(`/api/v1/attachments/${file.id}`, { headers: tokenHeader() });
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = String(file.filename ?? "file");
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                >
+                  {String(file.filename ?? file.id)}
+                </a>{" "}
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={async () => {
+                    await api.deleteAttachment(String(file.id));
+                    await load();
+                  }}
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+          <label style={{ padding: "0.85rem" }}>
+            Attach file
+            <input
+              type="file"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                await api.uploadAttachment(slug, id, file);
+                e.target.value = "";
+                await load();
+              }}
+            />
+          </label>
+        </div>
+      ) : null}
+      {links.length > 0 ? (
+        <div className="panel related">
+          <h3 style={{ padding: "0.85rem 0.85rem 0" }}>Related</h3>
+          <ul>
+            {links.map((link) => (
+              <li key={`${link.slug}-${link.relation}`}>
+                <Link to={`/${link.slug}?${encodeURIComponent(link.relation)}=${id}`}>
+                  {link.label} ({link.total})
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {Object.entries(related).map(([name, rel]) => (
         <div key={name} className="related panel">
           <h3 style={{ padding: "0.85rem 0.85rem 0" }}>

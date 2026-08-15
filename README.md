@@ -1,8 +1,10 @@
 # Qefro Framework
 
-Rust-native, metadata-driven framework for multi-tenant business applications.
+Rust-native, metadata-driven framework for building secure, multi-tenant business applications with a shared database, API, UI, workflow, automation, and agent runtime.
 
 Define entities, workflows, permissions, and **business operations**. The runtime generates PostgreSQL schema, REST APIs, validation, audit logs, a generic UI, agent tools, events, and a Postgres job queue. Authorization always runs on the server. Agents never get a database connection.
+
+**V1.0** is the production-ready stable release. See [Getting started](docs/getting-started.md) and [V1 compatibility](docs/v1-compatibility.md).
 
 ## Install
 
@@ -48,6 +50,10 @@ cd frontend && npm install && npm run dev
 ```
 
 The UI reads `/api/v1/meta/ui`. Branding, navigation, terminology, widgets, form layouts, filters, and dashboards come from the authenticated tenant. There is no per-entity React page and no per-tenant frontend build. Define the entity once; Qefro generates schema, REST, validation, and the business UI.
+
+Authorized developers open **Qefro Studio** (`/studio`) to inspect and publish metadata through the same registries. See [Qefro Studio](docs/studio.md).
+
+V1.0 hardens the V0.9 platform (settings, field permissions, attachments, notifications, webhooks, CSV import, global search, realtime, public forms) on the same `EntityService` path. See [Architecture](docs/architecture.md).
 
 ## Build a fullstack app
 
@@ -131,6 +137,8 @@ qefro worker
 ```
 apps/restaurant            catalog manifest (runtime: examples/restaurant)
 apps/crm                   catalog manifest (runtime: examples/basic-crm)
+apps/inventory             V1.0 YAML benchmark (stock documents)
+apps/helpdesk              V1.0 YAML benchmark (tickets, public form)
 crates/qefro-core          metadata, validation, hooks, app catalog
 crates/qefro-db            PostgreSQL, SQL generation, entity service
 crates/qefro-auth          users, passwords, JWT sessions
@@ -200,7 +208,11 @@ Integration tests that need PostgreSQL skip when `DATABASE_URL` is unset. Fronte
 
 ## Docs
 
+- [Getting started](docs/getting-started.md)
+- [V1 compatibility](docs/v1-compatibility.md)
 - [Build a fullstack application](docs/fullstack.md)
+- [Qefro Studio](docs/studio.md)
+- [Studio publishing](docs/studio-publishing.md)
 - [Applications](docs/apps.md)
 - [App packaging](docs/app-packaging.md)
 - [App lifecycle](docs/app-lifecycle.md)
@@ -226,7 +238,23 @@ Integration tests that need PostgreSQL skip when `DATABASE_URL` is unset. Fronte
 - [Agents](docs/agents.md)
 - [Multi-tenancy](docs/multitenancy.md)
 - [Tenants](docs/tenants.md)
+- [Permissions](docs/permissions.md)
 - [Security](docs/security.md)
+- [Threat model](docs/threat-model.md)
+- [Connectors / SDK](docs/connectors.md)
+- [Licenses](docs/licenses.md)
+- [Release](docs/release.md)
+- [Singletons](docs/singletons.md)
+- [Field permissions](docs/field-permissions.md)
+- [Allow on submit](docs/allow-on-submit.md)
+- [Actions and links](docs/actions-links.md)
+- [Attachments](docs/attachments.md)
+- [Notifications](docs/notifications.md)
+- [Webhooks](docs/webhooks.md)
+- [CSV import](docs/imports.md)
+- [Search](docs/search.md)
+- [Realtime](docs/realtime.md)
+- [Public forms](docs/public-forms.md)
 - [Deployment](docs/deployment.md)
 - [Configuration](docs/configuration.md)
 - [API](docs/api.md)

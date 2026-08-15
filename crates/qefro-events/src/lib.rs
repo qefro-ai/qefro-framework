@@ -88,6 +88,15 @@ impl InProcessEventBus {
             .cloned()
             .collect()
     }
+
+    pub async fn subscribe_async(&self, name: &str, handler: Arc<dyn EventHandler>) {
+        let mut inner = self.inner.write().await;
+        inner
+            .handlers
+            .entry(name.to_string())
+            .or_default()
+            .push(handler);
+    }
 }
 
 #[async_trait]

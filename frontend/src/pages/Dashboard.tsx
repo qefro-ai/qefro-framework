@@ -4,6 +4,7 @@ import { api, type TenantConfig, type UiEntity } from "../api";
 import { Chart } from "../components/dashboards/Chart";
 import { formatMoney } from "../metadata/timezone";
 import { useTenantTheme } from "../metadata/context";
+import { useRealtime } from "../realtime";
 
 type Card = {
   title: string;
@@ -28,6 +29,7 @@ export default function Dashboard({
   const [cards, setCards] = useState<Card[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [tick, setTick] = useState(0);
   const theme = useTenantTheme();
 
   useEffect(() => {
@@ -48,7 +50,9 @@ export default function Dashboard({
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [config]);
+  }, [config, tick]);
+
+  useRealtime({}, () => setTick((n) => n + 1));
 
   function slugFor(entityName: string) {
     return entities.find((e) => e.entity === entityName)?.slug;

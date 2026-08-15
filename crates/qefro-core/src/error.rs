@@ -38,6 +38,19 @@ pub enum QefroError {
     RateLimited {
         message: String,
     },
+    Locked {
+        message: String,
+        fields: Vec<FieldError>,
+    },
+    AppNotEnabled {
+        message: String,
+    },
+    MigrationRequired {
+        message: String,
+    },
+    PayloadTooLarge {
+        message: String,
+    },
     Internal {
         message: String,
     },
@@ -133,17 +146,42 @@ impl QefroError {
         }
     }
 
+    pub fn locked(fields: Vec<FieldError>) -> Self {
+        Self::Locked {
+            message: "document is locked".into(),
+            fields,
+        }
+    }
+
+    pub fn app_not_enabled(message: impl Into<String>) -> Self {
+        Self::AppNotEnabled {
+            message: message.into(),
+        }
+    }
+
+    pub fn migration_required(message: impl Into<String>) -> Self {
+        Self::MigrationRequired {
+            message: message.into(),
+        }
+    }
+
+    pub fn payload_too_large(message: impl Into<String>) -> Self {
+        Self::PayloadTooLarge {
+            message: message.into(),
+        }
+    }
+
     pub fn status_code(&self) -> u16 {
         match self {
-            Self::NotFound { .. } => 404,
-            Self::Validation { .. } => 422,
+            Self::NotFound { .. } | Self::AppNotEnabled { .. } => 404,
+            Self::Validation { .. } | Self::Locked { .. } => 422,
             Self::Forbidden { .. } => 403,
             Self::Unauthorized { .. } => 401,
-            Self::Conflict { .. } => 409,
+            Self::Conflict { .. } | Self::Workflow { .. } | Self::Business { .. } => 409,
+            Self::MigrationRequired { .. } => 409,
             Self::BadRequest { .. } => 400,
-            Self::Workflow { .. } => 409,
-            Self::Business { .. } => 409,
             Self::RateLimited { .. } => 429,
+            Self::PayloadTooLarge { .. } => 413,
             Self::Database { .. } | Self::Internal { .. } => 500,
         }
     }
@@ -153,13 +191,17 @@ impl QefroError {
             Self::NotFound { .. } => "not_found",
             Self::Validation { .. } => "validation_failed",
             Self::Forbidden { .. } => "forbidden",
-            Self::Unauthorized { .. } => "unauthorized",
+            Self::Unauthorized { .. } => "unauthenticated",
             Self::Conflict { .. } => "conflict",
             Self::BadRequest { .. } => "bad_request",
-            Self::Workflow { .. } => "workflow_error",
+            Self::Workflow { .. } => "invalid_transition",
             Self::Business { .. } => "business_rule_failed",
             Self::RateLimited { .. } => "rate_limited",
-            Self::Database { .. } => "database_error",
+            Self::Locked { .. } => "locked",
+            Self::AppNotEnabled { .. } => "app_not_enabled",
+            Self::MigrationRequired { .. } => "migration_required",
+            Self::PayloadTooLarge { .. } => "payload_too_large",
+            Self::Database { .. } => "dependency_failed",
             Self::Internal { .. } => "internal_error",
         }
     }
@@ -179,6 +221,9 @@ impl QefroError {
             Self::Business { code, message } => {
                 serde_json::json!({ "code": code, "message": message })
             }
+            Self::Locked { fields, .. } | Self::Validation { fields, .. } => {
+                serde_json::json!({ "fields": fields })
+            }
             other => serde_json::to_value(other).unwrap_or(serde_json::json!({})),
         }
     }
@@ -195,9 +240,12 @@ impl fmt::Display for QefroError {
             | Self::Workflow { message }
             | Self::Business { message, .. }
             | Self::RateLimited { message }
+            | Self::AppNotEnabled { message }
+            | Self::MigrationRequired { message }
+            | Self::PayloadTooLarge { message }
             | Self::Database { message }
             | Self::Internal { message } => write!(f, "{message}"),
-            Self::Validation { message, .. } => write!(f, "{message}"),
+            Self::Validation { message, .. } | Self::Locked { message, .. } => write!(f, "{message}"),
         }
     }
 }

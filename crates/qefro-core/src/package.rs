@@ -44,6 +44,13 @@ pub struct PackageMeta {
     pub sha256: String,
     pub created_at: String,
     pub files: Vec<String>,
+    /// Runtime that built the package.
+    #[serde(default)]
+    pub framework_version: String,
+    #[serde(default)]
+    pub metadata_schema: u32,
+    #[serde(default)]
+    pub ui_schema: String,
 }
 
 pub fn assert_safe_relative(path: &Path) -> QefroResult<()> {
@@ -154,6 +161,9 @@ pub fn write_package(root: &Path, dest: &Path, name: &str, version: &str) -> Qef
         sha256: sha256.clone(),
         created_at: chrono::Utc::now().to_rfc3339(),
         files: files.iter().map(|(n, _)| n.clone()).collect(),
+        framework_version: crate::version::FRAMEWORK_VERSION.into(),
+        metadata_schema: crate::version::METADATA_SCHEMA_VERSION,
+        ui_schema: crate::ui::UI_SCHEMA_VERSION.into(),
     };
     let meta_json = serde_json::to_vec_pretty(&meta)
         .map_err(|e| QefroError::internal(e.to_string()))?;
@@ -213,6 +223,13 @@ pub fn inspect_package(path: &Path) -> QefroResult<(PackageMeta, Vec<(String, Ve
         }
         if entry.size() > MAX_FILE_BYTES {
             return Err(QefroError::bad_request(format!("file too large: {name}")));
+        }
+        let compressed = entry.compressed_size();
+        if compressed > 0 && entry.size() > compressed.saturating_mul(100) && entry.size() > 1_000_000 {
+            return Err(QefroError::bad_request(format!("refusing zip-bomb entry: {name}")));
+        }
+        if name != PACKAGE_META && !allowed_package_member(&name) {
+            return Err(QefroError::bad_request(format!("unexpected package file '{name}'")));
         }
         let mut buf = Vec::new();
         entry
@@ -277,6 +294,13 @@ pub fn extract_package(path: &Path, dest: &Path) -> QefroResult<PackageMeta> {
     Ok(meta)
 }
 
+fn allowed_package_member(name: &str) -> bool {
+    if PACK_FILES.iter().any(|f| *f == name) {
+        return true;
+    }
+    PACK_DIRS.iter().any(|d| name == *d || name.starts_with(&format!("{d}/")))
+}
+
 struct HashSetLite {
     inner: std::collections::HashSet<String>,
 }
@@ -307,10 +331,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_parent_paths() {
-        assert!(assert_safe_relative(Path::new("../../etc/passwd")).is_err());
-        assert!(assert_safe_relative(Path::new("/etc/passwd")).is_err());
-        assert!(assert_safe_relative(Path::new("entities/customer.yaml")).is_ok());
+    fn rejects_unexpected_package_path() {
+        assert!(!allowed_package_member("../../etc/passwd"));
+        assert!(!allowed_package_member("src/main.rs"));
+        assert!(allowed_package_member("entities/customer.yaml"));
+        assert!(allowed_package_member("app.toml"));
     }
 
     #[test]

@@ -23,7 +23,10 @@ sqlx.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-thiserror.workspace = true
+serde_yaml.workspace = true
+csv.workspace = true
+sha2.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

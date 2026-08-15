@@ -4,6 +4,7 @@ use crate::operation::{
     available_for_record, crud_operation_defs, execute_operation, operation_allowed,
     OperationRegistry,
 };
+use crate::outbox::Outbox;
 use crate::repository::{record_id, EntityRepository, Page};
 use qefro_core::{
     canonicalize_datetime, sanitize_html, validate_record, EntityRegistry, FieldError, FieldType,
@@ -34,6 +35,7 @@ pub struct EntityService {
     operations: Arc<OperationRegistry>,
     jobs: Arc<JobQueue>,
     job_handlers: Arc<JobRegistry>,
+    outbox: Outbox,
 }
 
 impl EntityService {
@@ -48,7 +50,8 @@ impl EntityService {
         Self {
             jobs: Arc::new(JobQueue::new(pool.clone())),
             repo: Arc::new(EntityRepository::new(pool.clone())),
-            audit: Arc::new(AuditLogger::new(pool)),
+            audit: Arc::new(AuditLogger::new(pool.clone())),
+            outbox: Outbox::new(pool),
             registry,
             permissions,
             workflows,
@@ -106,6 +109,14 @@ impl EntityService {
         self.job_handlers.clone()
     }
 
+    pub fn outbox(&self) -> &Outbox {
+        &self.outbox
+    }
+
+    pub async fn dispatch_outbox(&self) -> QefroResult<usize> {
+        self.outbox.dispatch_pending(&self.events, 100).await
+    }
+
     pub async fn execute(
         &self,
         ctx: &OpContext,
@@ -117,7 +128,7 @@ impl EntityService {
         let entity = self.registry.get(entity_name)?;
         self.ensure_app(ctx, &entity)?;
         reject_client_tenant(&input)?;
-        let (record, events) = execute_operation(
+        let (record, _events) = execute_operation(
             &self.repo,
             &self.registry,
             &self.permissions,
@@ -133,9 +144,7 @@ impl EntityService {
             input,
         )
         .await?;
-        for event in events {
-            self.events.publish(event).await?;
-        }
+        let _ = self.dispatch_outbox().await;
         self.present(ctx, &entity, record).await
     }
 
@@ -197,6 +206,7 @@ impl EntityService {
         let mut page = self.repo.list(&entity, ctx, &query).await?;
         for item in &mut page.items {
             coerce_numeric_json(&entity, item);
+            self.strip_forbidden_fields(ctx, &entity, item);
         }
         self.expand_many_to_one_batch(ctx, &entity, &mut page.items)
             .await?;
@@ -225,7 +235,16 @@ impl EntityService {
         self.ensure_app(ctx, &entity)?;
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Create)?;
+        if entity.singleton {
+            if self.repo.get_singleton(&entity, ctx).await?.is_some() {
+                return Err(QefroError::conflict(format!(
+                    "{} is a singleton; use PATCH /api/v1/settings/{}",
+                    entity.name, entity.slug
+                )));
+            }
+        }
         reject_client_tenant(&data)?;
+        self.reject_forbidden_writes(ctx, &entity, &data)?;
         let children = extract_children(&entity, &mut data);
         strip_computed(&entity, &mut data);
         prepare_record(&entity, &mut data, ctx);
@@ -292,28 +311,33 @@ impl EntityService {
                 return Err(e);
             }
         };
+        let event = DomainEvent::new(
+            format!("{}.created", snake(&entity.name)),
+            entity.name.clone(),
+            id,
+            ctx.tenant_id,
+            created.clone(),
+        )
+        .with_user(ctx.user_id);
+        if entity.audit {
+            if let Err(e) = self
+                .audit
+                .record_tx(&mut tx, ctx, &entity.name, Some(id), "create", None, Some(&created))
+                .await
+            {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
+        }
+        if let Err(e) = Outbox::enqueue_tx(&mut tx, &event).await {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
         tx.commit()
             .await
             .map_err(|e| QefroError::database(e.to_string()))?;
-
-        if entity.audit {
-            self.audit
-                .record(ctx, &entity.name, Some(id), "create", None, Some(&created))
-                .await?;
-        }
         self.hooks.after_create(ctx, &entity.name, &created).await?;
-        self.events
-            .publish(
-                DomainEvent::new(
-                    format!("{}.created", snake(&entity.name)),
-                    entity.name.clone(),
-                    id,
-                    ctx.tenant_id,
-                    created.clone(),
-                )
-                .with_user(ctx.user_id),
-            )
-            .await?;
+        let _ = self.dispatch_outbox().await;
         Ok(self.present(ctx, &entity, created).await?)
     }
 
@@ -329,6 +353,7 @@ impl EntityService {
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Update)?;
         reject_client_tenant(&patch)?;
+        self.reject_forbidden_writes(ctx, &entity, &patch)?;
         let children = extract_children(&entity, &mut patch);
         strip_computed(&entity, &mut patch);
         canonicalize_values(&entity, &mut patch, ctx);
@@ -340,9 +365,7 @@ impl EntityService {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             if doc.is_locked(status) {
-                return Err(QefroError::forbidden(
-                    "submitted documents cannot be edited; use an operation",
-                ));
+                self.reject_locked_writes(&entity, &patch, &children)?;
             }
         }
         if let Some(wf) = self.workflows.for_entity(&entity.name) {
@@ -395,13 +418,19 @@ impl EntityService {
                 return Err(e);
             }
         };
-        tx.commit()
-            .await
-            .map_err(|e| QefroError::database(e.to_string()))?;
-
+        let event = DomainEvent::new(
+            format!("{}.updated", snake(&entity.name)),
+            entity.name.clone(),
+            id,
+            ctx.tenant_id,
+            updated.clone(),
+        )
+        .with_user(ctx.user_id);
         if entity.audit {
-            self.audit
-                .record(
+            if let Err(e) = self
+                .audit
+                .record_tx(
+                    &mut tx,
                     ctx,
                     &entity.name,
                     Some(id),
@@ -409,21 +438,21 @@ impl EntityService {
                     Some(&current),
                     Some(&updated),
                 )
-                .await?;
+                .await
+            {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
         }
+        if let Err(e) = Outbox::enqueue_tx(&mut tx, &event).await {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+        tx.commit()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
         self.hooks.after_update(ctx, &entity.name, &updated).await?;
-        self.events
-            .publish(
-                DomainEvent::new(
-                    format!("{}.updated", snake(&entity.name)),
-                    entity.name.clone(),
-                    id,
-                    ctx.tenant_id,
-                    updated.clone(),
-                )
-                .with_user(ctx.user_id),
-            )
-            .await?;
+        let _ = self.dispatch_outbox().await;
         Ok(self.present(ctx, &entity, updated).await?)
     }
 
@@ -436,28 +465,49 @@ impl EntityService {
         self.hooks
             .before_delete(ctx, &entity.name, &current)
             .await?;
-        let deleted = self.repo.delete(&entity, ctx, id).await?;
+        let mut tx = self
+            .repo
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        let deleted = match self.repo.delete_tx(&mut tx, &entity, ctx, id).await {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
+        };
+        let event = DomainEvent::new(
+            format!("{}.deleted", snake(&entity.name)),
+            entity.name.clone(),
+            id,
+            ctx.tenant_id,
+            deleted.clone(),
+        )
+        .with_user(ctx.user_id);
+        if entity.audit {
+            if let Err(e) = self
+                .audit
+                .record_tx(&mut tx, ctx, &entity.name, Some(id), "delete", Some(&current), None)
+                .await
+            {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
+        }
+        if let Err(e) = Outbox::enqueue_tx(&mut tx, &event).await {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+        tx.commit()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
         if entity.soft_delete {
             let _ = self.soft_delete_children(ctx, &entity, id).await;
         }
-        if entity.audit {
-            self.audit
-                .record(ctx, &entity.name, Some(id), "delete", Some(&current), None)
-                .await?;
-        }
         self.hooks.after_delete(ctx, &entity.name, &deleted).await?;
-        self.events
-            .publish(
-                DomainEvent::new(
-                    format!("{}.deleted", snake(&entity.name)),
-                    entity.name.clone(),
-                    id,
-                    ctx.tenant_id,
-                    deleted.clone(),
-                )
-                .with_user(ctx.user_id),
-            )
-            .await?;
+        let _ = self.dispatch_outbox().await;
         Ok(deleted)
     }
 
@@ -528,6 +578,8 @@ impl EntityService {
         self.expand_child_tables(ctx, entity, &mut record).await?;
         self.attach_workflow(ctx, entity, &mut record);
         self.attach_actions(ctx, entity, &mut record);
+        self.attach_links(ctx, entity, &mut record).await?;
+        self.strip_forbidden_fields(ctx, entity, &mut record);
         Ok(record)
     }
 
@@ -589,11 +641,252 @@ impl EntityService {
         let actions: Vec<Value> = self
             .record_actions(ctx, &entity.name, record)
             .into_iter()
-            .map(|d| d.to_client_json())
+            .map(|mut d| {
+                if let Some(meta) = entity.actions.iter().find(|a| {
+                    a.name == d.name || a.operation == d.name || a.name == d.workflow_transition.clone().unwrap_or_default()
+                }) {
+                    if !meta.label.is_empty() {
+                        d.label = meta.label.clone();
+                    }
+                    d.icon = meta.icon.clone().or(d.icon);
+                    if let Some(conf) = &meta.confirmation {
+                        d.requires_confirmation = conf.required;
+                        if !conf.message.is_empty() {
+                            d.confirmation_message = Some(conf.message.clone());
+                        }
+                    }
+                    if !meta.roles.is_empty() && !ctx.is_admin() {
+                        if !meta.roles.iter().any(|r| ctx.has_role(r)) {
+                            return None;
+                        }
+                    }
+                }
+                Some(d.to_client_json())
+            })
+            .flatten()
             .collect();
         if let Some(obj) = record.as_object_mut() {
             obj.insert("_actions".into(), json!(actions));
         }
+    }
+
+    async fn attach_links(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        record: &mut Value,
+    ) -> QefroResult<()> {
+        let Some(id) = record.get("id").cloned() else {
+            return Ok(());
+        };
+        let mut links = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut defs = entity.links.clone();
+        for field in &entity.fields {
+            if let Some(rel) = &field.relation {
+                if rel.kind == qefro_core::RelationKind::OneToMany {
+                    if let Some(inverse) = &rel.inverse_field {
+                        if seen.insert(rel.target_entity.clone()) {
+                            defs.push(qefro_core::LinkDef::new(
+                                field.ui.label.clone(),
+                                rel.target_entity.clone(),
+                                inverse.clone(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        for link in defs {
+            if !seen.insert(format!("{}:{}", link.entity, link.relation)) {
+                continue;
+            }
+            let Ok(target) = self.registry.get(&link.entity) else {
+                continue;
+            };
+            if self.permissions.check(ctx, &target.name, Action::List).is_err() {
+                continue;
+            }
+            let mut query = qefro_search::Query::default();
+            query.page_size = 1;
+            query.filters.push(qefro_search::Filter::Eq {
+                field: link.relation.clone(),
+                value: id.clone(),
+            });
+            let total = self
+                .repo
+                .list(&target, ctx, &query)
+                .await
+                .map(|p| p.total)
+                .unwrap_or(0);
+            links.push(json!({
+                "label": link.label,
+                "entity": target.name,
+                "slug": target.slug,
+                "relation": link.relation,
+                "total": total,
+            }));
+        }
+        if let Some(obj) = record.as_object_mut() {
+            obj.insert("_links".into(), json!(links));
+        }
+        Ok(())
+    }
+
+    fn strip_forbidden_fields(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        record: &mut Value,
+    ) {
+        let Some(obj) = record.as_object_mut() else {
+            return;
+        };
+        for field in &entity.fields {
+            if field.permission_level == 0 {
+                continue;
+            }
+            if !self
+                .permissions
+                .can_read_field(ctx, &entity.name, field.permission_level)
+            {
+                obj.remove(&field.name);
+                if let Some(expanded) = obj.get_mut("_expanded").and_then(|v| v.as_object_mut()) {
+                    expanded.remove(&field.name);
+                }
+            }
+        }
+    }
+
+    fn reject_forbidden_writes(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        data: &Value,
+    ) -> QefroResult<()> {
+        let Some(obj) = data.as_object() else {
+            return Ok(());
+        };
+        let mut errors = Vec::new();
+        for key in obj.keys() {
+            if key.starts_with('_') {
+                continue;
+            }
+            let Some(field) = entity.get_field(key) else {
+                continue;
+            };
+            if field.system || field.computed {
+                continue;
+            }
+            if !self
+                .permissions
+                .can_write_field(ctx, &entity.name, field.permission_level)
+            {
+                errors.push(FieldError::new(
+                    key,
+                    "forbidden",
+                    format!("not allowed to write {}", field.label),
+                ));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(QefroError::forbidden(errors[0].message.clone()))
+        }
+    }
+
+    fn reject_locked_writes(
+        &self,
+        entity: &qefro_core::EntityDef,
+        patch: &Value,
+        children: &std::collections::HashMap<String, Vec<Value>>,
+    ) -> QefroResult<()> {
+        let mut errors = Vec::new();
+        if let Some(obj) = patch.as_object() {
+            for key in obj.keys() {
+                if key.starts_with('_') {
+                    continue;
+                }
+                let Some(field) = entity.get_field(key) else {
+                    continue;
+                };
+                if field.system || field.computed || field.allow_on_submit {
+                    continue;
+                }
+                errors.push(FieldError::new(
+                    key,
+                    "locked",
+                    format!("{} cannot be edited in a locked document state", field.label),
+                ));
+            }
+        }
+        for name in children.keys() {
+            let Some(field) = entity.get_field(name) else {
+                continue;
+            };
+            if field.allow_on_submit {
+                continue;
+            }
+            errors.push(FieldError::new(
+                name,
+                "locked",
+                format!("{} cannot be edited in a locked document state", field.label),
+            ));
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(QefroError::locked(errors))
+        }
+    }
+
+    pub async fn get_singleton(&self, ctx: &OpContext, entity_name: &str) -> QefroResult<Value> {
+        let entity = self.registry.get(entity_name)?;
+        self.ensure_app(ctx, &entity)?;
+        self.reject_worker_crud(ctx)?;
+        self.permissions.check(ctx, &entity.name, Action::Read)?;
+        if !entity.singleton {
+            return Err(QefroError::bad_request(format!(
+                "{} is not a singleton",
+                entity.name
+            )));
+        }
+        if let Some(record) = self.repo.get_singleton(&entity, ctx).await? {
+            return self.present(ctx, &entity, record).await;
+        }
+        self.create(ctx, entity_name, json!({})).await
+    }
+
+    pub async fn patch_singleton(
+        &self,
+        ctx: &OpContext,
+        entity_name: &str,
+        patch: Value,
+    ) -> QefroResult<Value> {
+        let entity = self.registry.get(entity_name)?;
+        self.ensure_app(ctx, &entity)?;
+        if !entity.singleton {
+            return Err(QefroError::bad_request(format!(
+                "{} is not a singleton",
+                entity.name
+            )));
+        }
+        let current = match self.repo.get_singleton(&entity, ctx).await? {
+            Some(row) => row,
+            None => self.create(ctx, entity_name, json!({})).await?,
+        };
+        let id = record_id(&current)?;
+        self.update(ctx, entity_name, id, patch).await
+    }
+
+    pub fn entity_by_slug(&self, slug: &str) -> QefroResult<qefro_core::EntityDef> {
+        self.registry
+            .list()
+            .into_iter()
+            .find(|e| e.slug == slug || e.name.eq_ignore_ascii_case(slug))
+            .map(|e| (*e).clone())
+            .ok_or_else(|| QefroError::not_found(format!("entity '{slug}' not found")))
     }
 
     fn workflow_json(&self, ctx: &OpContext, entity: &qefro_core::EntityDef, record: &Value) -> Value {

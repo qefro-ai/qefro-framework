@@ -71,15 +71,16 @@ pub struct CancelReservation;
 impl OperationHandler for CancelReservation {
     async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> QefroResult<Value> {
         let status = ctx.status().to_string();
-        let table_id = ctx.uuid_field("table_id")?;
         match status.as_str() {
             "Pending" => {
                 ctx.apply_transition("cancel")?;
             }
             "Confirmed" => {
                 ctx.apply_transition("cancel_confirmed")?;
-                ctx.update("DiningTable", table_id, json!({ "status": "available" }))
-                    .await?;
+                if let Ok(table_id) = ctx.uuid_field("table_id") {
+                    ctx.update("DiningTable", table_id, json!({ "status": "available" }))
+                        .await?;
+                }
             }
             _ => {
                 return Err(OperationCtx::fail(

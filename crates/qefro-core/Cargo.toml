@@ -25,3 +25,4 @@ semver.workspace = true
 zip.workspace = true
 sha2.workspace = true
 hex.workspace = true
+hmac.workspace = true

@@ -1,0 +1,23 @@
+name = "inventory"
+version = "1.0.0"
+label = "Inventory"
+description = "V1.0 benchmark: products, warehouses, stock entries, and balances"
+author = "Qefro"
+license = "MIT"
+api_version = "1"
+framework_version = ">=1.0,<2.0"
+source = "catalog"
+
+[dependencies]
+
+[[navigation]]
+label = "Products"
+entity = "Product"
+
+[[navigation]]
+label = "Warehouses"
+entity = "Warehouse"
+
+[[navigation]]
+label = "Stock entries"
+entity = "StockEntry"

@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, expandedLabel, listVisible, type UiEntity, type UiField } from "../api";
+import { api, ApiError, expandedLabel, formVisible, listVisible, type UiEntity, type UiField } from "../api";
 import { FilterBar } from "../components/filters/FilterBar";
+import { FormLayout } from "../components/forms/FormLayout";
 import { formatMoney } from "../metadata/timezone";
 import { useTenantTheme } from "../metadata/context";
+import { useRealtime } from "../realtime";
 
 export default function EntityList({ entities }: { entities: UiEntity[] }) {
   const { slug } = useParams();
@@ -18,6 +20,8 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [importOpen, setImportOpen] = useState(false);
+  const [tick, setTick] = useState(0);
   const theme = useTenantTheme();
 
   const filterable = useMemo(
@@ -26,7 +30,7 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
   );
 
   useEffect(() => {
-    if (!slug || !meta) return;
+    if (!slug || !meta || meta.singleton) return;
     const q = new URLSearchParams();
     if (search) q.set("search", search);
     q.set("sort", sort);
@@ -48,9 +52,14 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [slug, search, sort, page, params, meta]);
+  }, [slug, search, sort, page, params, meta, tick]);
+
+  useRealtime({ entity: meta?.entity, enabled: Boolean(meta && !meta.singleton) }, () => {
+    setTick((n) => n + 1);
+  });
 
   if (!meta) return <p>Unknown entity.</p>;
+  if (meta.singleton) return <SingletonSettings meta={meta} entities={entities} />;
   const cols = meta.fields.filter(listVisible);
   const pages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -87,10 +96,16 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
           <div className="badge">{meta.entity}</div>
           <h2>{meta.label_plural}</h2>
         </div>
-        <Link to={`/${meta.slug}/new`}>
-          <button>New {meta.label}</button>
-        </Link>
+        <div className="actions">
+          <button type="button" className="ghost" onClick={() => setImportOpen((v) => !v)}>
+            Import CSV
+          </button>
+          <Link to={`/${meta.slug}/new`}>
+            <button>New {meta.label}</button>
+          </Link>
+        </div>
       </div>
+      {importOpen ? <ImportPanel slug={meta.slug} onDone={() => setTick((n) => n + 1)} /> : null}
       {meta.searchable && (
         <div className="toolbar">
           <input
@@ -220,3 +235,116 @@ function fmtCell(
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
+
+function SingletonSettings({ meta, entities }: { meta: UiEntity; entities: UiEntity[] }) {
+  const fields = meta.fields.filter(formVisible).filter((f) => f.relation_kind !== "one_to_many");
+  const [values, setValues] = useState<Record<string, unknown>>({});
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api
+      .settings(meta.slug)
+      .then((row) => {
+        const next: Record<string, unknown> = {};
+        for (const field of fields) next[field.name] = row[field.name] ?? "";
+        setValues(next);
+      })
+      .catch((e) => setError(e.message));
+  }, [meta.slug]);
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    const body: Record<string, unknown> = {};
+    for (const field of fields) {
+      const raw = values[field.name];
+      if (raw === "" || raw == null) continue;
+      body[field.name] = raw;
+    }
+    try {
+      setSaving(true);
+      setError("");
+      await api.saveSettings(meta.slug, body);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Unable to save.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="page">
+      <div className="badge">Singleton</div>
+      <h2>{meta.label}</h2>
+      <form className="form form-wide" onSubmit={onSubmit}>
+        <FormLayout
+          fields={fields}
+          values={values}
+          entities={entities}
+          fieldErrors={{}}
+          onChange={(name, value) => setValues((prev) => ({ ...prev, [name]: value }))}
+        />
+        {error ? (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <button type="submit" disabled={saving}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function ImportPanel({ slug, onDone }: { slug: string; onDone: () => void }) {
+  const [csv, setCsv] = useState("");
+  const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  const [error, setError] = useState("");
+  const [running, setRunning] = useState(false);
+
+  async function runPreview() {
+    setError("");
+    setPreview(await api.importPreview(slug, csv));
+  }
+
+  async function runImport() {
+    setRunning(true);
+    try {
+      setPreview(await api.importRun(slug, csv));
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "import failed");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="panel" style={{ padding: "0.85rem" }}>
+      <h3>Import CSV</h3>
+      <textarea
+        rows={6}
+        value={csv}
+        onChange={(e) => setCsv(e.target.value)}
+        placeholder="Paste CSV with a header row"
+      />
+      {error ? <p className="error">{error}</p> : null}
+      {preview ? (
+        <p className="muted">
+          Rows: {String(preview.rows ?? preview.imported ?? 0)} · Valid: {String(preview.valid ?? "")} ·
+          Invalid: {String(preview.invalid ?? preview.failed ?? "")}
+        </p>
+      ) : null}
+      <div className="actions">
+        <button type="button" className="ghost" onClick={() => runPreview().catch((e) => setError(e.message))}>
+          Preview
+        </button>
+        <button type="button" disabled={running} onClick={() => void runImport()}>
+          {running ? "Importing…" : "Import"}
+        </button>
+      </div>
+    </div>
+  );
+}
+

@@ -6,8 +6,20 @@ use semver::{Version, VersionReq};
 /// Crate / runtime version. Apps declare `framework_version` against this.
 pub const FRAMEWORK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Entity / app metadata document schema. Independent of Cargo versions.
+pub const METADATA_SCHEMA_VERSION: u32 = 1;
+
+/// REST API major. Paths remain `/api/v1`.
+pub const API_VERSION: &str = "v1";
+
 /// App package API. Bump when the `.qefro` / `app.toml` shape is incompatible.
 pub const APP_API_VERSION: u32 = 1;
+
+/// Migration record format stored in `qefro_app_migrations`.
+pub const MIGRATION_FORMAT_VERSION: u32 = 1;
+
+/// Default `framework_version` for new apps. Compatible with this major.
+pub const FRAMEWORK_COMPAT_REQ: &str = ">=1.0,<2.0";
 
 pub fn parse_version(raw: &str) -> QefroResult<Version> {
     let trimmed = raw.trim().trim_start_matches('v');
@@ -64,6 +76,8 @@ mod tests {
         assert!(matches_req("0.7.0", ">=0.7").unwrap());
         assert!(matches_req("0.7.1", ">=0.7,<0.9").unwrap());
         assert!(!matches_req("0.6.0", ">=0.7").unwrap());
+        assert!(matches_req("1.0.0", FRAMEWORK_COMPAT_REQ).unwrap());
+        assert!(!matches_req("2.0.0", FRAMEWORK_COMPAT_REQ).unwrap());
         assert!(is_framework_dep("core"));
         assert!(!is_framework_dep("inventory"));
     }

@@ -4,14 +4,24 @@ use crate::field::FieldDef;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+
+#[derive(Debug, Default)]
+struct RegistryOverlay {
+    by_name: HashMap<String, Arc<EntityDef>>,
+    by_slug: HashMap<String, String>,
+}
 
 /// Process-wide registry of entity metadata. Lookups are keyed by name and slug.
+///
+/// Boot registrations are immutable. Studio publishes land in `overlay` so the
+/// same registry stays authoritative without a second metadata system.
 #[derive(Debug, Clone, Default)]
 pub struct EntityRegistry {
     by_name: HashMap<String, Arc<EntityDef>>,
     by_slug: HashMap<String, String>,
     by_table: HashMap<String, String>,
+    overlay: Arc<RwLock<RegistryOverlay>>,
 }
 
 impl EntityRegistry {
@@ -41,6 +51,9 @@ impl EntityRegistry {
     }
 
     pub fn get(&self, name: &str) -> QefroResult<Arc<EntityDef>> {
+        if let Some(def) = self.overlay_get(name) {
+            return Ok(def);
+        }
         self.by_name
             .get(name)
             .cloned()
@@ -57,15 +70,56 @@ impl EntityRegistry {
     }
 
     pub fn list(&self) -> Vec<Arc<EntityDef>> {
-        let mut items: Vec<_> = self.by_name.values().cloned().collect();
+        let mut map = self.by_name.clone();
+        if let Ok(overlay) = self.overlay.read() {
+            for (name, def) in &overlay.by_name {
+                map.insert(name.clone(), def.clone());
+            }
+        }
+        let mut items: Vec<_> = map.into_values().collect();
         items.sort_by(|a, b| a.name.cmp(&b.name));
         items
     }
 
     pub fn names(&self) -> Vec<String> {
-        let mut names: Vec<_> = self.by_name.keys().cloned().collect();
+        let mut names: Vec<_> = self.list().into_iter().map(|e| e.name.clone()).collect();
         names.sort();
         names
+    }
+
+    fn overlay_get(&self, name: &str) -> Option<Arc<EntityDef>> {
+        let overlay = self.overlay.read().ok()?;
+        overlay.by_name.get(name).cloned().or_else(|| {
+            overlay
+                .by_slug
+                .get(name)
+                .and_then(|n| overlay.by_name.get(n).cloned())
+        })
+    }
+
+    /// Replace or insert an entity in the live overlay. Boot source is unchanged.
+    pub fn overlay_put(&self, mut def: EntityDef) -> QefroResult<()> {
+        def.normalize();
+        def.validate_idents()?;
+        let mut overlay = self
+            .overlay
+            .write()
+            .map_err(|e| QefroError::internal(format!("registry overlay: {e}")))?;
+        overlay.by_slug.insert(def.slug.clone(), def.name.clone());
+        overlay.by_name.insert(def.name.clone(), Arc::new(def));
+        Ok(())
+    }
+
+    pub fn overlay_remove(&self, name: &str) {
+        if let Ok(mut overlay) = self.overlay.write() {
+            if let Some(def) = overlay.by_name.remove(name) {
+                overlay.by_slug.remove(&def.slug);
+            }
+        }
+    }
+
+    pub fn is_overlay(&self, name: &str) -> bool {
+        self.overlay_get(name).is_some()
     }
 
     pub fn load_dir(&mut self, dir: &Path) -> QefroResult<usize> {
@@ -204,7 +258,15 @@ mod tests {
         assert_eq!(reg.get("Customer").unwrap().name, "Customer");
         assert_eq!(reg.get("customers").unwrap().name, "Customer");
         assert!(reg.get("Order").is_err());
-            assert!(reg.register(EntityDef::new("Customer").build()).is_err());
+        assert!(reg.register(EntityDef::new("Customer").build()).is_err());
+        let updated = EntityDef::new("Customer")
+            .field(FieldDef::string("name").required().label("Guest"))
+            .build();
+        reg.overlay_put(updated).unwrap();
+        assert_eq!(
+            reg.get("Customer").unwrap().get_field("name").unwrap().label,
+            "Guest"
+        );
     }
 
     #[test]

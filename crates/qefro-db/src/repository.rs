@@ -62,6 +62,41 @@ impl EntityRepository {
         Ok(value)
     }
 
+    pub async fn get_singleton(
+        &self,
+        entity: &EntityDef,
+        ctx: &OpContext,
+    ) -> QefroResult<Option<Value>> {
+        let table = table_ident(entity)?;
+        let mut qb = QueryBuilder::<Postgres>::new("SELECT to_jsonb(t.*) FROM ");
+        qb.push(table);
+        qb.push(" t WHERE ");
+        qb.push(quote_ident("tenant_id")?);
+        qb.push(" = ");
+        qb.push_bind(ctx.tenant_id);
+        if entity.soft_delete {
+            qb.push(" AND ");
+            qb.push(quote_ident("deleted_at")?);
+            qb.push(" IS NULL");
+        }
+        qb.push(" ORDER BY created_at ASC LIMIT 1");
+        let row = qb
+            .build()
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        match row {
+            Some(row) => {
+                let value: Value = row
+                    .try_get(0)
+                    .map_err(|e| QefroError::database(e.to_string()))?;
+                enforce_tenant(entity, ctx, &value)?;
+                Ok(Some(value))
+            }
+            None => Ok(None),
+        }
+    }
+
     pub async fn list(
         &self,
         entity: &EntityDef,

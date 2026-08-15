@@ -394,7 +394,7 @@ fn cmd_new(name: &str, path: Option<&Path>) -> Result<()> {
     fs::write(
         root.join("app.toml"),
         format!(
-            "name = \"{name}\"\nversion = \"0.1.0\"\nlabel = \"{name}\"\ndescription = \"\"\napi_version = \"1\"\nframework_version = \">=0.7\"\n"
+            "name = \"{name}\"\nversion = \"0.1.0\"\nlabel = \"{name}\"\ndescription = \"\"\napi_version = \"1\"\nframework_version = \">=1.0,<2.0\"\n"
         ),
     )?;
     fs::write(
@@ -477,7 +477,7 @@ pub(crate) fn write_catalog_stub(root: &Path, name: &str) -> Result<()> {
     fs::write(
         root.join("app.toml"),
         format!(
-            "name = \"{name}\"\nversion = \"{version}\"\nlabel = \"{label}\"\ndescription = \"{description}\"\napi_version = \"1\"\nframework_version = \">=0.7\"\nsource = \"builtin\"\n"
+            "name = \"{name}\"\nversion = \"{version}\"\nlabel = \"{label}\"\ndescription = \"{description}\"\napi_version = \"1\"\nframework_version = \">=1.0,<2.0\"\nsource = \"builtin\"\n"
         ),
     )?;
     fs::write(

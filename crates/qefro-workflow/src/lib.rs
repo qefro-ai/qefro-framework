@@ -1,6 +1,7 @@
 use qefro_core::{OpContext, QefroError, QefroResult};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StateDef {
@@ -133,12 +134,74 @@ impl WorkflowDef {
         }
         t.allowed_roles.iter().any(|r| ctx.has_role(r))
     }
+
+    /// Structural checks used by Studio before publish. Does not execute transitions.
+    pub fn validate(&self) -> QefroResult<Vec<String>> {
+        let mut warnings = Vec::new();
+        let names: HashSet<&str> = self.states.iter().map(|s| s.name.as_str()).collect();
+        if !names.contains(self.initial.as_str()) {
+            return Err(QefroError::bad_request(format!(
+                "initial state '{}' is not defined",
+                self.initial
+            )));
+        }
+        let mut seen = HashSet::new();
+        for t in &self.transitions {
+            if !names.contains(t.from.as_str()) {
+                return Err(QefroError::bad_request(format!(
+                    "transition '{}' starts from unknown state '{}'",
+                    t.name, t.from
+                )));
+            }
+            if !names.contains(t.to.as_str()) {
+                return Err(QefroError::bad_request(format!(
+                    "transition '{}' targets unknown state '{}'",
+                    t.name, t.to
+                )));
+            }
+            let key = (t.from.clone(), t.name.clone());
+            if !seen.insert(key) {
+                return Err(QefroError::bad_request(format!(
+                    "duplicate transition '{}' from '{}'",
+                    t.name, t.from
+                )));
+            }
+            for role in &t.allowed_roles {
+                if !qefro_core::studio::known_role(role) {
+                    warnings.push(format!(
+                        "transition '{}' references unknown role '{role}'",
+                        t.name
+                    ));
+                }
+            }
+        }
+        let mut reachable = HashSet::new();
+        let mut stack = vec![self.initial.clone()];
+        while let Some(state) = stack.pop() {
+            if !reachable.insert(state.clone()) {
+                continue;
+            }
+            for t in self.transitions.iter().filter(|t| t.from == state) {
+                stack.push(t.to.clone());
+            }
+        }
+        for state in &self.states {
+            if !reachable.contains(&state.name) {
+                return Err(QefroError::bad_request(format!(
+                    "state '{}' is unreachable from '{}'",
+                    state.name, self.initial
+                )));
+            }
+        }
+        Ok(warnings)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct WorkflowRegistry {
     by_name: HashMap<String, WorkflowDef>,
     by_entity: HashMap<String, String>,
+    overlay: Arc<RwLock<HashMap<String, WorkflowDef>>>,
 }
 
 impl WorkflowRegistry {
@@ -151,16 +214,48 @@ impl WorkflowRegistry {
         self.by_name.insert(def.name.clone(), def);
     }
 
-    pub fn get(&self, name: &str) -> Option<&WorkflowDef> {
-        self.by_name.get(name)
+    pub fn overlay_put(&self, def: WorkflowDef) {
+        if let Ok(mut overlay) = self.overlay.write() {
+            overlay.insert(def.entity.clone(), def);
+        }
     }
 
-    pub fn for_entity(&self, entity: &str) -> Option<&WorkflowDef> {
-        self.by_entity.get(entity).and_then(|n| self.by_name.get(n))
+    pub fn get(&self, name: &str) -> Option<WorkflowDef> {
+        if let Ok(overlay) = self.overlay.read() {
+            if let Some(def) = overlay.values().find(|d| d.name == name) {
+                return Some(def.clone());
+            }
+        }
+        self.by_name.get(name).cloned()
     }
 
-    pub fn list(&self) -> Vec<&WorkflowDef> {
-        self.by_name.values().collect()
+    pub fn for_entity(&self, entity: &str) -> Option<WorkflowDef> {
+        if let Ok(overlay) = self.overlay.read() {
+            if let Some(def) = overlay.get(entity) {
+                return Some(def.clone());
+            }
+        }
+        self.by_entity
+            .get(entity)
+            .and_then(|n| self.by_name.get(n))
+            .cloned()
+    }
+
+    pub fn list(&self) -> Vec<WorkflowDef> {
+        let mut map = self.by_name.clone();
+        if let Ok(overlay) = self.overlay.read() {
+            for def in overlay.values() {
+                if let Some(old) = self.by_entity.get(&def.entity) {
+                    if old != &def.name {
+                        map.remove(old);
+                    }
+                }
+                map.insert(def.name.clone(), def.clone());
+            }
+        }
+        let mut items: Vec<_> = map.into_values().collect();
+        items.sort_by(|a, b| a.name.cmp(&b.name));
+        items
     }
 
     /// Apply a named transition. Does not persist — callers write the new
@@ -244,5 +339,39 @@ mod tests {
         assert!(reg
             .apply("Reservation", "Pending", "confirm", &customer)
             .is_err());
+    }
+
+    #[test]
+    fn validate_rejects_unreachable_and_duplicates() {
+        let ok = reservation_wf();
+        assert!(ok.validate().unwrap().is_empty());
+        let bad = WorkflowDef::new("order", "Order", "Draft")
+            .state(StateDef::new("Approved"))
+            .transition(TransitionDef::new("confirm", "Draft", "Confirmed"));
+        assert!(bad.validate().is_err());
+        let dup = WorkflowDef::new("order", "Order", "Draft")
+            .state(StateDef::new("Confirmed"))
+            .transition(TransitionDef::new("confirm", "Draft", "Confirmed"))
+            .transition(TransitionDef::new("confirm", "Draft", "Confirmed"));
+        assert!(dup.validate().is_err());
+    }
+
+    #[test]
+    fn overlay_replaces_live_workflow() {
+        let mut reg = WorkflowRegistry::new();
+        reg.register(reservation_wf());
+        let mut next = reservation_wf();
+        next = next.state(StateDef::new("Waitlisted"));
+        next.transitions.push(
+            TransitionDef::new("waitlist", "Pending", "Waitlisted").roles(&["Manager"]),
+        );
+        next.validate().unwrap();
+        reg.overlay_put(next);
+        let manager = OpContext::new(Uuid::nil(), Uuid::nil(), vec!["Manager".into()]);
+        assert_eq!(
+            reg.apply("Reservation", "Pending", "waitlist", &manager)
+                .unwrap(),
+            "Waitlisted"
+        );
     }
 }

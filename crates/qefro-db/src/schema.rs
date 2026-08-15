@@ -177,6 +177,104 @@ CREATE TABLE IF NOT EXISTS qefro_app_seeds (
     applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (tenant_id, app, kind)
 );
+
+CREATE TABLE IF NOT EXISTS qefro_studio_drafts (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    target TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL DEFAULT 'draft',
+    summary TEXT NOT NULL DEFAULT '',
+    created_by UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS qefro_studio_drafts_tenant_idx
+    ON qefro_studio_drafts (tenant_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS qefro_studio_versions (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    target TEXT NOT NULL,
+    version INT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    summary TEXT NOT NULL DEFAULT '',
+    created_by UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, kind, target, version)
+);
+
+CREATE INDEX IF NOT EXISTS qefro_studio_versions_target_idx
+    ON qefro_studio_versions (tenant_id, kind, target, version DESC);
+
+CREATE TABLE IF NOT EXISTS qefro_attachments (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    entity TEXT NOT NULL,
+    record_id UUID NOT NULL,
+    filename TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size BIGINT NOT NULL,
+    storage_key TEXT NOT NULL,
+    uploaded_by UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS qefro_attachments_record_idx
+    ON qefro_attachments (tenant_id, entity, record_id);
+
+CREATE TABLE IF NOT EXISTS qefro_notifications (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL DEFAULT '',
+    entity TEXT,
+    record_id UUID,
+    read_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS qefro_notifications_user_idx
+    ON qefro_notifications (tenant_id, user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS qefro_webhook_deliveries (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    webhook TEXT NOT NULL,
+    event TEXT NOT NULL,
+    event_id UUID NOT NULL,
+    target TEXT NOT NULL,
+    status_code INT,
+    success BOOLEAN NOT NULL DEFAULT false,
+    attempts INT NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS qefro_webhook_deliveries_idx
+    ON qefro_webhook_deliveries (tenant_id, webhook, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS qefro_webhook_deliveries_idemp
+    ON qefro_webhook_deliveries (tenant_id, webhook, event_id);
+
+ALTER TABLE qefro_app_migrations ADD COLUMN IF NOT EXISTS checksum TEXT;
+ALTER TABLE qefro_app_migrations ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'applied';
+ALTER TABLE qefro_app_migrations ADD COLUMN IF NOT EXISTS error TEXT;
+
+CREATE TABLE IF NOT EXISTS qefro_outbox (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    event_name TEXT NOT NULL,
+    entity TEXT NOT NULL,
+    entity_id UUID NOT NULL,
+    user_id UUID,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    published_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS qefro_outbox_pending_idx
+    ON qefro_outbox (created_at)
+    WHERE published_at IS NULL;
 "#;
 
 pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
@@ -221,6 +319,23 @@ pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
             "\nCREATE INDEX IF NOT EXISTS {}_tenant_idx ON {table} (\"tenant_id\");",
             entity.table
         ));
+        ddl.push_str(&format!(
+            "\nCREATE INDEX IF NOT EXISTS {}_created_idx ON {table} (\"tenant_id\", \"created_at\" DESC);",
+            entity.table
+        ));
+        if entity.singleton {
+            if entity.soft_delete {
+                ddl.push_str(&format!(
+                    "\nCREATE UNIQUE INDEX IF NOT EXISTS {}_singleton_uidx ON {table} (\"tenant_id\") WHERE \"deleted_at\" IS NULL;",
+                    entity.table
+                ));
+            } else {
+                ddl.push_str(&format!(
+                    "\nCREATE UNIQUE INDEX IF NOT EXISTS {}_singleton_uidx ON {table} (\"tenant_id\");",
+                    entity.table
+                ));
+            }
+        }
     }
     if let Some(child_of) = &entity.child_of {
         if let Some(fk) = entity.parent_fk(&child_of.parent_entity) {
@@ -267,6 +382,24 @@ pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
                     entity.table,
                     field.column_name()
                 ));
+            }
+        }
+        if field.searchable || field.name == "status" {
+            if !(field.indexed || field.unique) {
+                let col = quote_ident(&field.column_name())?;
+                if entity.tenant_owned {
+                    ddl.push_str(&format!(
+                        "\nCREATE INDEX IF NOT EXISTS {}_{}_search_idx ON {table} (\"tenant_id\", {col});",
+                        entity.table,
+                        field.column_name()
+                    ));
+                } else {
+                    ddl.push_str(&format!(
+                        "\nCREATE INDEX IF NOT EXISTS {}_{}_search_idx ON {table} ({col});",
+                        entity.table,
+                        field.column_name()
+                    ));
+                }
             }
         }
         if let Some(rel) = &field.relation {

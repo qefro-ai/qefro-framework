@@ -1,0 +1,15 @@
+- role: Staff
+  entity: Product
+  actions: [create, read, update, delete, list]
+- role: Staff
+  entity: Warehouse
+  actions: [create, read, update, delete, list]
+- role: Staff
+  entity: StockEntry
+  actions: [create, read, update, delete, list]
+- role: Staff
+  entity: StockEntryItem
+  actions: [create, read, update, delete, list]
+- role: Staff
+  entity: StockBalance
+  actions: [create, read, update, delete, list]

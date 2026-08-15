@@ -1,0 +1,10 @@
+name: helpdesk
+label: Helpdesk
+cards:
+  - title: Open tickets
+    entity: Ticket
+    metric: count
+    kind: metric
+    filters:
+      - field: status
+        value: Open

@@ -64,6 +64,8 @@ export type UiField = {
   default_from?: string;
   computed?: boolean;
   formula?: string;
+  permission_level?: number;
+  allow_on_submit?: boolean;
   child_entity?: string;
 };
 
@@ -89,6 +91,11 @@ export type UiEntity = {
     lock_states?: string[];
   };
   naming?: { pattern: string; field?: string };
+  singleton?: boolean;
+  attachments?: boolean;
+  actions?: Array<{ name: string; label?: string; confirmation?: { required?: boolean; message?: string } }>;
+  links?: Array<{ label: string; entity: string; relation: string }>;
+  public_form?: { enabled?: boolean; slug?: string; fields?: string[] };
 };
 
 export type TenantTheme = {

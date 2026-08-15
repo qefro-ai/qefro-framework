@@ -61,6 +61,7 @@ impl JobRegistry {
     }
 }
 
+#[derive(Clone)]
 pub struct JobQueue {
     pool: PgPool,
 }
@@ -226,6 +227,24 @@ impl JobQueue {
         .await
         .map_err(|e| QefroError::database(e.to_string()))?
         .ok_or_else(|| QefroError::not_found("job not found"))
+    }
+
+    /// After a crash, running jobs were claimed but not finished. Return them to pending.
+    pub async fn reclaim_running(&self) -> QefroResult<u64> {
+        let res = sqlx::query(
+            "UPDATE jobs SET status = 'pending', updated_at = now() WHERE status = 'running'",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok(res.rows_affected())
+    }
+
+    pub async fn pending_count(&self) -> QefroResult<i64> {
+        sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status IN ('pending', 'running')")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))
     }
 }
 

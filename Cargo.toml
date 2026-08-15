@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.7.0"
+version = "1.0.0"
 edition = "2021"
 license = "MIT"
 authors = ["Qefro"]
@@ -26,18 +26,18 @@ repository = "https://github.com/qefro-ai/qefro-framework"
 homepage = "https://github.com/qefro-ai/qefro-framework"
 
 [workspace.dependencies]
-qefro-core = { version = "0.7.0", path = "crates/qefro-core" }
-qefro-db = { version = "0.7.0", path = "crates/qefro-db" }
-qefro-api = { version = "0.7.0", path = "crates/qefro-api" }
-qefro-auth = { version = "0.7.0", path = "crates/qefro-auth" }
-qefro-permissions = { version = "0.7.0", path = "crates/qefro-permissions" }
-qefro-workflow = { version = "0.7.0", path = "crates/qefro-workflow" }
-qefro-tenant = { version = "0.7.0", path = "crates/qefro-tenant" }
-qefro-events = { version = "0.7.0", path = "crates/qefro-events" }
-qefro-search = { version = "0.7.0", path = "crates/qefro-search" }
-qefro-agent = { version = "0.7.0", path = "crates/qefro-agent" }
-qefro-restaurant = { version = "0.7.0", path = "examples/restaurant" }
-qefro-crm = { version = "0.7.0", path = "examples/basic-crm" }
+qefro-core = { version = "1.0.0", path = "crates/qefro-core" }
+qefro-db = { version = "1.0.0", path = "crates/qefro-db" }
+qefro-api = { version = "1.0.0", path = "crates/qefro-api" }
+qefro-auth = { version = "1.0.0", path = "crates/qefro-auth" }
+qefro-permissions = { version = "1.0.0", path = "crates/qefro-permissions" }
+qefro-workflow = { version = "1.0.0", path = "crates/qefro-workflow" }
+qefro-tenant = { version = "1.0.0", path = "crates/qefro-tenant" }
+qefro-events = { version = "1.0.0", path = "crates/qefro-events" }
+qefro-search = { version = "1.0.0", path = "crates/qefro-search" }
+qefro-agent = { version = "1.0.0", path = "crates/qefro-agent" }
+qefro-restaurant = { version = "1.0.0", path = "examples/restaurant" }
+qefro-crm = { version = "1.0.0", path = "examples/basic-crm" }
 toml = "0.8"
 semver = "1"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
@@ -68,6 +68,10 @@ futures = "0.3"
 http = "1"
 hex = "0.4"
 sha2 = "0.10"
+hmac = "0.12"
+csv = "1"
+tokio-stream = { version = "0.1", features = ["sync"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [profile.dev]
 debug = 1

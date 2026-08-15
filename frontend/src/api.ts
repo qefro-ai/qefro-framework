@@ -47,6 +47,8 @@ export type EntityAction = {
   entity?: string;
   style?: string;
   requires_confirmation?: boolean;
+  confirmation_message?: string;
+  icon?: string;
 };
 
 export type FieldError = { field: string; code?: string; message: string };
@@ -97,9 +99,12 @@ export const api = {
       body: JSON.stringify(body),
     }),
   me: () =>
-    request<{ user: { name: string; email: string }; roles: string[]; tenant_id: string }>(
-      "/api/v1/auth/me",
-    ),
+    request<{
+      user: { name: string; email: string };
+      roles: string[];
+      tenant_id: string;
+      studio?: string[];
+    }>("/api/v1/auth/me"),
   ui: () =>
     request<{
       entities: UiEntity[];
@@ -220,12 +225,153 @@ export const api = {
       rows: Array<Record<string, unknown>>;
       series?: Array<{ label: string; value: number }>;
     }>(`/api/v1/reports/${name}/run`, { method: "POST", body: JSON.stringify(body) }),
+  studioCaps: () =>
+    request<{ env: string; production: boolean; capabilities: string[]; roles: string[] }>(
+      "/api/v1/studio/capabilities",
+    ),
+  studioOverview: () => request<Record<string, unknown>>("/api/v1/studio/overview"),
+  studioApps: () => request<{ apps: Array<Record<string, unknown>> }>("/api/v1/studio/apps"),
+  studioApp: (name: string) => request<Record<string, unknown>>(`/api/v1/studio/apps/${name}`),
+  studioEntities: () =>
+    request<{ entities: Array<Record<string, unknown>> }>("/api/v1/studio/entities"),
+  studioEntity: (name: string) => request<Record<string, unknown>>(`/api/v1/studio/entities/${name}`),
+  studioWorkflow: (entity: string) =>
+    request<Record<string, unknown>>(`/api/v1/studio/workflows/${entity}`),
+  studioPermissions: (entity: string) =>
+    request<{
+      entity: string;
+      grants: Array<{ role: string; entity: string; actions: string[] }>;
+      field_levels?: Array<{ role: string; entity: string; level: number; read: boolean; write: boolean }>;
+      fields?: Array<{ name: string; label?: string; permission_level: number; allow_on_submit: boolean }>;
+    }>(`/api/v1/studio/permissions/${entity}`),
+  studioOperations: (entity: string) =>
+    request<{ operations: Array<Record<string, unknown>> }>(`/api/v1/studio/operations/${entity}`),
+  studioReports: () => request<{ reports: Array<Record<string, unknown>> }>("/api/v1/studio/reports"),
+  studioReport: (name: string) => request<Record<string, unknown>>(`/api/v1/studio/reports/${name}`),
+  studioDashboards: () =>
+    request<{ dashboards: Array<Record<string, unknown>> }>("/api/v1/studio/dashboards"),
+  studioDashboard: (name: string) =>
+    request<Record<string, unknown>>(`/api/v1/studio/dashboards/${name}`),
+  studioPrintFormats: () =>
+    request<{ print_formats: Array<Record<string, unknown>> }>("/api/v1/studio/print-formats"),
+  studioPrintFormat: (name: string) =>
+    request<Record<string, unknown>>(`/api/v1/studio/print-formats/${name}`),
+  studioPrintPreview: (name: string) =>
+    request<{ html: string }>(`/api/v1/studio/print-formats/${name}/preview`),
+  studioSearch: (q: string) =>
+    request<{ results: Array<{ kind: string; name: string; label?: string; entity?: string }> }>(
+      `/api/v1/studio/search?q=${encodeURIComponent(q)}`,
+    ),
+  studioValidate: (body: unknown) =>
+    request<{
+      ok: boolean;
+      impact: string;
+      migration_required: boolean;
+      warnings: string[];
+      diff: string[];
+    }>("/api/v1/studio/validate", { method: "POST", body: JSON.stringify(body) }),
+  studioPublish: (body: unknown) =>
+    request<Record<string, unknown>>("/api/v1/studio/publish", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  studioDrafts: () => request<{ drafts: Array<Record<string, unknown>> }>("/api/v1/studio/drafts"),
+  studioCreateDraft: (body: unknown) =>
+    request<{ draft: Record<string, unknown> }>("/api/v1/studio/drafts", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  studioVersions: (kind: string, target: string) =>
+    request<{ versions: Array<Record<string, unknown>> }>(
+      `/api/v1/studio/versions?kind=${encodeURIComponent(kind)}&target=${encodeURIComponent(target)}`,
+    ),
+  studioRollback: (body: unknown) =>
+    request<Record<string, unknown>>("/api/v1/studio/rollback", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  studioFormulaPreview: (formula: string, record: Record<string, unknown>) =>
+    request<{ result: number; preview: boolean }>("/api/v1/studio/formula/preview", {
+      method: "POST",
+      body: JSON.stringify({ formula, record }),
+    }),
+  studioTenant: () => request<Record<string, unknown>>("/api/v1/studio/tenant"),
+  search: (q: string) =>
+    request<{ results: Array<{ entity: string; slug: string; id: string; label: string; snippet: string }> }>(
+      `/api/v1/search?q=${encodeURIComponent(q)}`,
+    ),
+  settings: (slug: string) => request<Record<string, unknown>>(`/api/v1/settings/${slug}`),
+  saveSettings: (slug: string, body: unknown) =>
+    request<Record<string, unknown>>(`/api/v1/settings/${slug}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  notifications: () =>
+    request<{ items: Array<Record<string, unknown>>; unread: number }>("/api/v1/notifications"),
+  readNotification: (id: string) =>
+    request<void>(`/api/v1/notifications/${id}/read`, { method: "POST" }),
+  attachments: (slug: string, id: string) =>
+    request<{ items: Array<Record<string, unknown>> }>(`/api/v1/${slug}/${id}/attachments`),
+  deleteAttachment: (id: string) => request<void>(`/api/v1/attachments/${id}`, { method: "DELETE" }),
+  publicForm: (tenant: string, slug: string) =>
+    request<{
+      title: string;
+      description?: string;
+      success_message?: string;
+      fields: UiField[];
+    }>(`/api/v1/public/${tenant}/${slug}`),
+  submitPublicForm: (tenant: string, slug: string, body: unknown) =>
+    request<{ ok: boolean; message: string; reference: unknown; record: Record<string, unknown> }>(
+      `/api/v1/public/${tenant}/${slug}`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  studioNotifications: () =>
+    request<{ notifications: Array<Record<string, unknown>> }>("/api/v1/studio/notifications"),
+  studioWebhooks: () => request<{ webhooks: Array<Record<string, unknown>> }>("/api/v1/studio/webhooks"),
+  studioPublicForms: () =>
+    request<{ public_forms: Array<Record<string, unknown>> }>("/api/v1/studio/public-forms"),
+  importPreview: (slug: string, csv: string, mapping?: Array<{ column: string; field?: string | null; default?: unknown }>) =>
+    request<Record<string, unknown>>(`/api/v1/${slug}/import/preview`, {
+      method: "POST",
+      body: JSON.stringify({ csv, mapping: mapping ?? [] }),
+    }),
+  importRun: (
+    slug: string,
+    csv: string,
+    mapping?: Array<{ column: string; field?: string | null; default?: unknown }>,
+  ) =>
+    request<Record<string, unknown>>(`/api/v1/${slug}/import`, {
+      method: "POST",
+      body: JSON.stringify({ csv, mapping: mapping ?? [], batch_size: 100 }),
+    }),
+  uploadAttachment: async (slug: string, id: string, file: File) => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const body = new FormData();
+    body.append("file", file);
+    const res = await fetch(`/api/v1/${slug}/${id}/attachments`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(data.message || data.error || res.statusText, res.status);
+    return data as Record<string, unknown>;
+  },
+  webhookDeliveries: (name: string) =>
+    request<{ deliveries: Array<Record<string, unknown>> }>(`/api/v1/webhooks/${name}/deliveries`),
+  testWebhook: (name: string) =>
+    request<Record<string, unknown>>(`/api/v1/webhooks/${name}/test`, { method: "POST" }),
 };
 
 const AUTH_EVENT = "qefro-auth";
+export const METADATA_EVENT = "qefro-metadata";
 
 function notifyAuth() {
   window.dispatchEvent(new Event(AUTH_EVENT));
+}
+
+export function notifyMetadata() {
+  window.dispatchEvent(new Event(METADATA_EVENT));
 }
 
 export function saveToken(token: string) {

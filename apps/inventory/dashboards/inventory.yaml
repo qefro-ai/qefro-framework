@@ -1,0 +1,14 @@
+name: inventory
+label: Inventory
+cards:
+  - title: Products
+    entity: Product
+    metric: count
+    kind: metric
+  - title: Open stock entries
+    entity: StockEntry
+    metric: count
+    kind: metric
+    filters:
+      - field: status
+        value: Draft

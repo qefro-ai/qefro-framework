@@ -24,6 +24,10 @@ pub struct OperationDef {
     pub input_schema: Value,
     #[serde(default)]
     pub requires_confirmation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmation_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     #[serde(default = "default_style")]
     pub style: String,
     #[serde(default = "default_true")]
@@ -66,6 +70,8 @@ impl OperationDef {
             workflow_transition: None,
             input_schema: json!({ "type": "object", "properties": {} }),
             requires_confirmation: false,
+            confirmation_message: None,
+            icon: None,
             style: "primary".into(),
             audit: true,
             event: None,
@@ -135,6 +141,17 @@ impl OperationDef {
         self
     }
 
+    pub fn confirmation_message(mut self, message: impl Into<String>) -> Self {
+        self.requires_confirmation = true;
+        self.confirmation_message = Some(message.into());
+        self
+    }
+
+    pub fn icon(mut self, icon: impl Into<String>) -> Self {
+        self.icon = Some(icon.into());
+        self
+    }
+
     pub fn tool(mut self, name: impl Into<String>) -> Self {
         self.tool_name = name.into();
         self
@@ -168,6 +185,8 @@ impl OperationDef {
             "description": self.description,
             "permission": self.permission,
             "requires_confirmation": self.requires_confirmation,
+            "confirmation_message": self.confirmation_message,
+            "icon": self.icon,
             "style": self.style,
             "kind": self.kind,
             "tool_name": self.tool_name,

@@ -27,6 +27,26 @@ pub fn spec(state: &AppState) -> Value {
         }),
     );
     paths.insert(
+        "/metrics".into(),
+        json!({
+            "get": {
+                "tags": ["system"],
+                "summary": "Process metrics (no tenant PII)",
+                "responses": { "200": { "description": "OK" } }
+            }
+        }),
+    );
+    paths.insert(
+        "/api/v1/meta/version".into(),
+        json!({
+            "get": {
+                "tags": ["system"],
+                "summary": "Framework and schema versions",
+                "responses": { "200": { "description": "OK" } }
+            }
+        }),
+    );
+    paths.insert(
         "/api/v1/auth/register".into(),
         json!({
             "post": {
@@ -213,11 +233,8 @@ pub fn spec(state: &AppState) -> Value {
     );
 
     for entity in state.entities.registry().list() {
-        add_entity_paths(
-            &mut paths,
-            &entity,
-            state.entities.workflows().for_entity(&entity.name),
-        );
+        let workflow = state.entities.workflows().for_entity(&entity.name);
+        add_entity_paths(&mut paths, &entity, workflow.as_ref());
     }
 
     json!({

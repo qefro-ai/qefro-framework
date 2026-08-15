@@ -1,0 +1,17 @@
+name: ticket
+entity: Ticket
+initial: Open
+states:
+  - name: Open
+  - name: Assigned
+  - name: Resolved
+    terminal: true
+transitions:
+  - name: assign
+    from: Open
+    to: Assigned
+    allowed_roles: [Staff, Manager]
+  - name: resolve
+    from: Assigned
+    to: Resolved
+    allowed_roles: [Staff, Manager]

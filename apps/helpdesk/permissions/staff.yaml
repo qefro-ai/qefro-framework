@@ -1,0 +1,15 @@
+- role: Staff
+  entity: HdCustomer
+  actions: [create, read, update, delete, list]
+- role: Staff
+  entity: Ticket
+  actions: [create, read, update, delete, list]
+- role: Staff
+  entity: TicketMessage
+  actions: [create, read, update, delete, list]
+- role: Staff
+  entity: Assignment
+  actions: [create, read, update, delete, list]
+- role: Public
+  entity: Ticket
+  actions: [create]

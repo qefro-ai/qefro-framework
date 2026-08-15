@@ -20,7 +20,7 @@ Prefer a business operation when the transition also mutates related records:
 OperationDef::new("confirm", "Reservation").transition("confirm")
 ```
 
-The framework validates the named transition **before** the handler, inside the same transaction. If the handler does not change status, the framework applies the transition when persisting. Invalid transitions (`Pending → Completed`, `Completed → Pending`) fail with `workflow_error` and do not mutate related records.
+The framework validates the named transition **before** the handler, inside the same transaction. If the handler does not change status, the framework applies the transition when persisting. Invalid transitions (`Pending → Completed`, `Completed → Pending`) fail with `invalid_transition` (HTTP 409) and do not mutate related records.
 
 V0.2 `POST /api/v1/{slug}/{id}/transition` still works. If a matching business operation exists, that path delegates to `EntityService::execute` so table occupancy (and similar rules) cannot be skipped.
 

@@ -670,7 +670,7 @@ async fn lifecycle_workflow_rbac_isolation_audit_and_concurrency() {
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT, "{invalid}");
-    assert_eq!(invalid["error"], "workflow_error");
+    assert_eq!(invalid["error"], "invalid_transition");
 
     let (status, staff_ops) =
         json(clone_router(&router), get("/api/v1/operations", Some(staff))).await;

@@ -1,0 +1,19 @@
+name: HdCustomer
+label: Customer
+label_plural: Customers
+table: hd_customers
+slug: hd-customers
+soft_delete: true
+audit: true
+fields:
+  - name: name
+    type: string
+    required: true
+    searchable: true
+  - name: email
+    type: string
+    required: true
+    unique: true
+    searchable: true
+    validation:
+      email: true

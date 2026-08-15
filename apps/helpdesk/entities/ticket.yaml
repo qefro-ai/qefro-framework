@@ -1,0 +1,40 @@
+name: Ticket
+label: Ticket
+label_plural: Tickets
+table: hd_tickets
+slug: hd-tickets
+soft_delete: true
+audit: true
+workflow: ticket
+attachments: true
+public_form:
+  enabled: true
+  slug: ticket
+  title: Submit a ticket
+  fields: [subject, description, email]
+  success_message: Ticket received
+fields:
+  - name: subject
+    type: string
+    required: true
+    searchable: true
+  - name: description
+    type: text
+    required: true
+  - name: email
+    type: string
+    required: true
+    searchable: true
+    validation:
+      email: true
+  - name: status
+    type: enum
+    values: [Open, Assigned, Resolved]
+    required: true
+    default: Open
+  - name: customer_id
+    type: relation
+    nullable: true
+    relation:
+      target_entity: HdCustomer
+      kind: many_to_one

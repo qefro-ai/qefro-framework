@@ -1,0 +1,21 @@
+name: Product
+label: Product
+label_plural: Products
+table: inv_products
+slug: inv-products
+soft_delete: true
+audit: true
+fields:
+  - name: name
+    type: string
+    required: true
+    searchable: true
+  - name: sku
+    type: string
+    required: true
+    unique: true
+    searchable: true
+  - name: unit
+    type: string
+    required: true
+    default: Each

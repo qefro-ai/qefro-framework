@@ -17,6 +17,7 @@ pub enum FieldType {
     Integer,
     Decimal,
     Boolean,
+    #[serde(alias = "datetime")]
     DateTime,
     Date,
     Time,
@@ -138,6 +139,12 @@ pub struct FieldDef {
     pub computed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub formula: Option<String>,
+    /// 0 = normal, 1 = restricted, 2 = sensitive, 3 = highly sensitive.
+    #[serde(default)]
+    pub permission_level: u8,
+    /// Remains writable while the document is in a lock state.
+    #[serde(default)]
+    pub allow_on_submit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -232,6 +239,8 @@ impl FieldDef {
             system: false,
             computed: false,
             formula: None,
+            permission_level: 0,
+            allow_on_submit: false,
         }
     }
 
@@ -391,6 +400,16 @@ impl FieldDef {
 
     pub fn searchable(mut self) -> Self {
         self.searchable = true;
+        self
+    }
+
+    pub fn permission_level(mut self, level: u8) -> Self {
+        self.permission_level = level.min(3);
+        self
+    }
+
+    pub fn allow_on_submit(mut self) -> Self {
+        self.allow_on_submit = true;
         self
     }
 
@@ -705,6 +724,13 @@ mod tests {
     use super::*;
     use crate::ui::UiConfig;
     use serde_json::json;
+
+    #[test]
+    fn json_type_datetime_deserializes() {
+        let field: FieldDef =
+            serde_json::from_value(json!({"name": "rate", "type": "datetime"})).unwrap();
+        assert_eq!(field.field_type.as_str(), "datetime");
+    }
 
     #[test]
     fn field_builder_and_serde() {

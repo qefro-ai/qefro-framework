@@ -1,0 +1,8 @@
+name: tickets_by_status
+label: Tickets by status
+entity: Ticket
+fields: [status]
+group_by: [status]
+aggregations:
+  status: count
+chart: pie

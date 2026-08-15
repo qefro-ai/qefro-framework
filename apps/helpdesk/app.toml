@@ -1,0 +1,19 @@
+name = "helpdesk"
+version = "1.0.0"
+label = "Helpdesk"
+description = "V1.0 benchmark: tickets, messages, assignments, public intake"
+author = "Qefro"
+license = "MIT"
+api_version = "1"
+framework_version = ">=1.0,<2.0"
+source = "catalog"
+
+[dependencies]
+
+[[navigation]]
+label = "Customers"
+entity = "HdCustomer"
+
+[[navigation]]
+label = "Tickets"
+entity = "Ticket"

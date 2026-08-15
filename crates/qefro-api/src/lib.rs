@@ -2,10 +2,14 @@
 
 pub mod error;
 pub mod extract;
+pub mod metrics;
 pub mod openapi;
+pub mod platform;
+pub mod realtime;
 pub mod routes;
 pub mod runtime;
 pub mod state;
+pub mod studio;
 
 pub use qefro_core::{operation, OperationDef};
 pub use qefro_db::{

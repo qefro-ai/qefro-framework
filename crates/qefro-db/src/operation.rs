@@ -489,12 +489,12 @@ async fn execute_in_transaction(
                 .is_empty();
             let initial = workflows
                 .for_entity(&entity.name)
-                .map(|wf| wf.initial.as_str())
-                .unwrap_or("Draft");
+                .map(|wf| wf.initial)
+                .unwrap_or_else(|| "Draft".into());
             let status = record
                 .get("status")
                 .and_then(|v| v.as_str())
-                .unwrap_or(initial);
+                .unwrap_or(initial.as_str());
             if empty && status != initial {
                 let number = crate::numbering::allocate(
                     tx,
@@ -560,6 +560,8 @@ async fn execute_in_transaction(
     hooks
         .after_operation(ctx, &entity.name, &binding.def.name, &record)
         .await?;
+
+    crate::outbox::Outbox::enqueue_many_tx(tx, &events).await?;
 
     Ok((record, events))
 }

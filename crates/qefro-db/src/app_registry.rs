@@ -193,13 +193,24 @@ pub async fn record_lifecycle(
 
 pub async fn applied_migrations(pool: &PgPool, app: &str) -> QefroResult<Vec<String>> {
     let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT version, name FROM qefro_app_migrations WHERE app = $1",
+        "SELECT version, name FROM qefro_app_migrations WHERE app = $1 AND status = 'applied'",
     )
     .bind(app)
     .fetch_all(pool)
     .await
     .map_err(|e| QefroError::database(e.to_string()))?;
     Ok(rows.into_iter().map(|(v, n)| format!("{v}:{n}")).collect())
+}
+
+const MIGRATE_LOCK: i64 = 0x51EF_2001;
+
+fn migration_checksum(m: &AppMigration) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(m.id.as_bytes());
+    h.update(m.version.as_bytes());
+    h.update(m.sql.as_bytes());
+    hex::encode(h.finalize())
 }
 
 pub async fn apply_migration(
@@ -214,33 +225,108 @@ pub async fn apply_migration(
             migration.id
         )));
     }
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(MIGRATE_LOCK)
+        .execute(pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+    let result = apply_migration_locked(pool, app, migration).await;
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(MIGRATE_LOCK)
+        .execute(pool)
+        .await;
+    result
+}
+
+async fn apply_migration_locked(
+    pool: &PgPool,
+    app: &str,
+    migration: &AppMigration,
+) -> QefroResult<()> {
+    let checksum = migration_checksum(migration);
+    let existing: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT status, checksum FROM qefro_app_migrations WHERE app = $1 AND version = $2 AND name = $3",
+    )
+    .bind(app)
+    .bind(&migration.version)
+    .bind(&migration.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| QefroError::database(e.to_string()))?;
+    if let Some((status, prev)) = existing {
+        if status == "applied" {
+            return Ok(());
+        }
+        if let Some(prev) = prev {
+            if prev != checksum {
+                return Err(QefroError::conflict(format!(
+                    "migration '{}' failed previously with a different checksum; do not retry blindly",
+                    migration.id
+                )));
+            }
+        }
+    }
+
     let mut tx = pool
         .begin()
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
     if !migration.sql.trim().is_empty() {
-        sqlx::query(&migration.sql)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| QefroError::database(format!("migration {}: {e}", migration.id)))?;
+        if let Err(e) = sqlx::query(&migration.sql).execute(&mut *tx).await {
+            let _ = tx.rollback().await;
+            record_migration_failure(pool, app, migration, &checksum, &e.to_string()).await?;
+            return Err(QefroError::database(format!(
+                "migration {} failed; database left unchanged: {e}",
+                migration.id
+            )));
+        }
     }
     sqlx::query(
         r#"
-        INSERT INTO qefro_app_migrations (app, version, name, destructive, applied_at)
-        VALUES ($1, $2, $3, $4, now())
-        ON CONFLICT (app, version, name) DO NOTHING
+        INSERT INTO qefro_app_migrations (app, version, name, destructive, applied_at, checksum, status, error)
+        VALUES ($1, $2, $3, $4, now(), $5, 'applied', NULL)
+        ON CONFLICT (app, version, name) DO UPDATE
+          SET status = 'applied', checksum = EXCLUDED.checksum, error = NULL, applied_at = now()
         "#,
     )
     .bind(app)
     .bind(&migration.version)
     .bind(&migration.id)
     .bind(migration.looks_destructive())
+    .bind(&checksum)
     .execute(&mut *tx)
     .await
     .map_err(|e| QefroError::database(e.to_string()))?;
     tx.commit()
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
+    Ok(())
+}
+
+async fn record_migration_failure(
+    pool: &PgPool,
+    app: &str,
+    migration: &AppMigration,
+    checksum: &str,
+    error: &str,
+) -> QefroResult<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO qefro_app_migrations (app, version, name, destructive, applied_at, checksum, status, error)
+        VALUES ($1, $2, $3, $4, now(), $5, 'failed', $6)
+        ON CONFLICT (app, version, name) DO UPDATE
+          SET status = 'failed', checksum = EXCLUDED.checksum, error = EXCLUDED.error, applied_at = now()
+        "#,
+    )
+    .bind(app)
+    .bind(&migration.version)
+    .bind(&migration.id)
+    .bind(migration.looks_destructive())
+    .bind(checksum)
+    .bind(error)
+    .execute(pool)
+    .await
+    .map_err(|e| QefroError::database(e.to_string()))?;
     Ok(())
 }
 

@@ -2,6 +2,7 @@ use crate::document::{PrintFormat, ReportDef};
 use crate::entity::EntityDef;
 use crate::error::QefroResult;
 use crate::hook::{EntityHook, HookRegistry};
+use crate::platform::{NotificationDef, WebhookDef};
 use crate::registry::EntityRegistry;
 use crate::ui::DashboardDef;
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,8 @@ pub struct AppModule {
     pub dashboards: Vec<DashboardDef>,
     pub reports: Vec<ReportDef>,
     pub print_formats: Vec<PrintFormat>,
+    pub notifications: Vec<NotificationDef>,
+    pub webhooks: Vec<WebhookDef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -115,7 +118,7 @@ impl AppModule {
                 author: String::new(),
                 license: String::new(),
                 api_version: default_api_version(),
-                framework_version: ">=0.7".into(),
+                framework_version: crate::version::FRAMEWORK_COMPAT_REQ.into(),
                 source: "catalog".into(),
                 dependencies: BTreeMap::new(),
                 navigation: Vec::new(),
@@ -124,6 +127,8 @@ impl AppModule {
                 dashboards: Vec::new(),
                 reports: Vec::new(),
                 print_formats: Vec::new(),
+                notifications: Vec::new(),
+                webhooks: Vec::new(),
             },
         }
     }
@@ -228,6 +233,16 @@ impl AppModuleBuilder {
 
     pub fn print_format(mut self, format: PrintFormat) -> Self {
         self.module.print_formats.push(format);
+        self
+    }
+
+    pub fn notification(mut self, def: NotificationDef) -> Self {
+        self.module.notifications.push(def);
+        self
+    }
+
+    pub fn webhook(mut self, def: WebhookDef) -> Self {
+        self.module.webhooks.push(def);
         self
     }
 

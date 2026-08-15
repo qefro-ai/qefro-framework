@@ -3,6 +3,8 @@ use uuid::Uuid;
 
 /// Role assigned to background job execution. Not Admin. Not a user principal.
 pub const ROLE_WORKER: &str = "Worker";
+/// Anonymous public-form principal. Never Admin.
+pub const ROLE_PUBLIC: &str = "Public";
 
 /// Server-side operation context. Tenant identity is taken from the
 /// authenticated session, never from an untrusted client field.
@@ -54,6 +56,17 @@ impl OpContext {
         let mut ctx = Self::new(tenant_id, user_id, vec![ROLE_WORKER.into()]);
         ctx.request_id = Uuid::new_v4();
         ctx
+    }
+
+    /// Restricted public-form context. Not Admin. Cannot switch tenant.
+    pub fn public(tenant_id: Uuid) -> Self {
+        Self::new(tenant_id, Uuid::nil(), vec![ROLE_PUBLIC.into()])
+    }
+
+    pub fn is_public(&self) -> bool {
+        self.roles
+            .iter()
+            .any(|r| r.eq_ignore_ascii_case(ROLE_PUBLIC))
     }
 
     pub fn is_admin(&self) -> bool {

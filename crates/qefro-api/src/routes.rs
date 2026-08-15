@@ -7,7 +7,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use qefro_auth::AuthToken;
-use qefro_core::{AppManifest, QefroError, TenantConfig};
+use qefro_core::{AppManifest, QefroError, RateLimiter, TenantConfig};
 use qefro_db::BlobMeta;
 use qefro_search::parse_query;
 use qefro_tenant::Tenant;
@@ -20,6 +20,8 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
+        .route("/metrics", get(metrics))
+        .route("/api/v1/meta/version", get(meta_version))
         .route("/api/v1/auth/register", post(register))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/logout", post(logout))
@@ -35,6 +37,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/meta/modules", get(meta_modules))
         .route("/api/v1/meta/dashboards", get(meta_dashboards))
         .route("/api/v1/meta/reports", get(meta_reports))
+        .nest("/api/v1/studio", crate::studio::router())
         .route("/api/openapi.json", get(openapi))
         .route("/docs", get(docs))
         .route("/api/v1/audit", get(list_audit))
@@ -43,6 +46,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/agent/tools", get(list_tools))
         .route("/api/v1/agent/tools/{name}/invoke", post(invoke_tool))
         .route("/api/v1/events", get(list_events))
+        .merge(crate::platform::public_router())
+        .merge(crate::platform::router())
         .route("/api/v1/tenants/me/config", get(get_tenant_config).patch(patch_tenant_config))
         .route("/api/v1/tenant", get(get_tenant).patch(patch_tenant))
         .route("/api/v1/tenant/branding", get(get_branding).patch(patch_branding))
@@ -72,14 +77,45 @@ pub fn router(state: AppState) -> Router {
 }
 
 async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
+    Json(json!({
+        "status": "ok",
+        "framework": qefro_core::FRAMEWORK_VERSION,
+    }))
 }
 
 async fn ready(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     qefro_db::pool::ping(state.entities.pool())
         .await
         .map_err(|_| QefroError::internal("not ready"))?;
-    Ok(Json(json!({ "status": "ready" })))
+    Ok(Json(json!({
+        "status": "ready",
+        "database": true,
+    })))
+}
+
+async fn meta_version() -> Json<Value> {
+    Json(json!({
+        "framework": qefro_core::FRAMEWORK_VERSION,
+        "metadata_schema": qefro_core::METADATA_SCHEMA_VERSION,
+        "ui_schema": qefro_core::UI_SCHEMA_VERSION,
+        "api": qefro_core::API_VERSION,
+        "app_package": qefro_core::APP_API_VERSION,
+        "migration_format": qefro_core::MIGRATION_FORMAT_VERSION,
+    }))
+}
+
+async fn metrics(State(state): State<AppState>) -> Json<Value> {
+    let (http_requests, http_errors, http_latency_ms_total) = crate::metrics::http_snapshot();
+    let jobs_pending = state.entities.job_queue().pending_count().await.unwrap_or(0);
+    let outbox_pending = state.entities.outbox().pending_count().await.unwrap_or(0);
+    Json(json!({
+        "http_requests": http_requests,
+        "http_errors": http_errors,
+        "http_latency_ms_total": http_latency_ms_total,
+        "jobs_pending": jobs_pending,
+        "outbox_pending": outbox_pending,
+        "sse_subscribers": state.realtime.subscriber_count(),
+    }))
 }
 
 #[derive(Deserialize)]
@@ -119,6 +155,9 @@ async fn login(
     State(state): State<AppState>,
     Json(body): Json<LoginBody>,
 ) -> Result<Json<AuthToken>, ApiError> {
+    if !state.login_limiter.allow(&format!("login:{}", body.email.to_ascii_lowercase())) {
+        return Err(QefroError::rate_limited("too many login attempts").into());
+    }
     let token = state
         .auth
         .login(&body.email, &body.password, body.tenant_slug.as_deref())
@@ -144,6 +183,7 @@ async fn me(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<Value
         "locale": ctx.locale,
         "plan": ctx.plan,
         "request_id": ctx.request_id,
+        "studio": qefro_core::studio_capabilities(&ctx.roles, &state.env),
     })))
 }
 
@@ -283,10 +323,9 @@ async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<
         "terminology": config.ui_config.terminology,
         "default_dashboard": config.ui_config.default_dashboard,
         "reports": state
-            .reports
-            .iter()
+            .reports_live()
+            .into_iter()
             .filter(|r| ctx.allows_app(r.module.as_deref()))
-            .cloned()
             .collect::<Vec<_>>(),
     })))
 }
@@ -402,7 +441,8 @@ fn reject_reserved(slug: &str) -> Result<(), ApiError> {
     const RESERVED: &[&str] = &[
         "auth", "meta", "tenants", "tenant", "agent", "audit", "health", "ready", "events", "docs",
         "tools", "dashboards", "settings", "users", "operations", "jobs",
-        "files", "saved-filters", "reports", "print",
+        "files", "saved-filters", "reports", "print", "studio",
+        "search", "notifications", "webhooks", "attachments", "realtime", "public",
     ];
     if RESERVED.contains(&slug) {
         Err(QefroError::not_found(format!("entity '{slug}' not found")).into())
@@ -543,10 +583,9 @@ async fn get_workflow_state(
 
 async fn meta_dashboards(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
     let dashboards: Vec<_> = state
-        .dashboards
-        .iter()
+        .dashboards_live()
+        .into_iter()
         .filter(|d| ctx.allows_app(d.module.as_deref()))
-        .cloned()
         .collect();
     Json(json!({ "dashboards": dashboards }))
 }
@@ -557,8 +596,8 @@ async fn get_dashboard(
     Path(name): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let dash = state
-        .dashboards
-        .iter()
+        .dashboards_live()
+        .into_iter()
         .find(|d| d.name == name)
         .ok_or_else(|| QefroError::not_found(format!("dashboard '{name}' not found")))?;
     if !ctx.allows_app(dash.module.as_deref()) {
@@ -578,10 +617,9 @@ async fn get_dashboard(
 
 async fn meta_reports(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
     let reports: Vec<_> = state
-        .reports
-        .iter()
+        .reports_live()
+        .into_iter()
         .filter(|r| ctx.allows_app(r.module.as_deref()))
-        .cloned()
         .collect();
     Json(json!({ "reports": reports }))
 }
@@ -592,8 +630,8 @@ async fn get_report(
     Path(name): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let report = state
-        .reports
-        .iter()
+        .reports_live()
+        .into_iter()
         .find(|r| r.name == name)
         .ok_or_else(|| QefroError::not_found(format!("report '{name}' not found")))?;
     if !ctx.allows_app(report.module.as_deref()) {
@@ -609,10 +647,9 @@ async fn run_report(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
     let report = state
-        .reports
-        .iter()
+        .reports_live()
+        .into_iter()
         .find(|r| r.name == name)
-        .cloned()
         .ok_or_else(|| QefroError::not_found(format!("report '{name}' not found")))?;
     if !ctx.allows_app(report.module.as_deref()) {
         return Err(QefroError::not_found(format!("report '{name}' not found")).into());

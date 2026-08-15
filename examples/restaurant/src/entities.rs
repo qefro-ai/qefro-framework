@@ -1,5 +1,6 @@
 use qefro_core::{
-    ChildTableDef, DocumentConfig, EntityDef, FieldDef, NamingConfig, PrintFormat, UiConfig,
+    ChildTableDef, DocumentConfig, EntityActionDef, EntityDef, FieldDef, LinkDef, NamingConfig,
+    PrintFormat, PublicFormDef, UiConfig,
 };
 use serde_json::json;
 
@@ -25,7 +26,7 @@ pub fn customer() -> EntityDef {
                 .filterable(),
         )
         .field(FieldDef::string("phone").nullable().phone().searchable())
-        .field(FieldDef::text("notes").nullable().list(false))
+        .field(FieldDef::text("notes").nullable().list(false).permission_level(1))
         .field(FieldDef::one_to_many("reservations", "Reservation", "customer_id"))
         .field(FieldDef::one_to_many("orders", "Order", "customer_id"))
         .build()
@@ -58,6 +59,27 @@ pub fn restaurant() -> EntityDef {
         )
         .field(FieldDef::one_to_many("branches", "Branch", "restaurant_id"))
         .field(FieldDef::one_to_many("menu_categories", "MenuCategory", "restaurant_id"))
+        .build()
+}
+
+pub fn restaurant_settings() -> EntityDef {
+    EntityDef::single("RestaurantSettings")
+        .label("Restaurant Settings")
+        .label_plural("Restaurant Settings")
+        .table_name("restaurant_settings")
+        .slug_name("restaurant-settings")
+        .field(FieldDef::string("restaurant_name").searchable().nullable())
+        .field(
+            FieldDef::string("timezone")
+                .nullable()
+                .default_from("tenant_timezone"),
+        )
+        .field(
+            FieldDef::string("currency")
+                .nullable()
+                .default_from("tenant_currency"),
+        )
+        .field(FieldDef::decimal("default_tax").nullable().with_currency())
         .build()
 }
 
@@ -165,16 +187,32 @@ pub fn reservation() -> EntityDef {
         .label_plural("Reservations")
         .table_name("reservations")
         .workflow("reservation")
+        .attachments()
+        .action(EntityActionDef::new("confirm").label("Confirm"))
+        .action(EntityActionDef::new("cancel").label("Cancel").confirm("Cancel this reservation?"))
+        .link(LinkDef::new("Orders", "Order", "reservation_id"))
+        .public_form(
+            PublicFormDef::new("book-table")
+                .title("Book a table")
+                .fields(&[
+                    "guest_name",
+                    "guest_phone",
+                    "reservation_date",
+                    "reservation_time",
+                    "party_size",
+                ])
+                .success_message("Reservation received. We'll contact you shortly."),
+        )
         .field(
             FieldDef::relation("customer_id", "Customer")
-                .required()
+                .nullable()
                 .label("Customer")
                 .section("Booking Details")
                 .filterable(),
         )
         .field(
             FieldDef::relation("table_id", "DiningTable")
-                .required()
+                .nullable()
                 .label("Table")
                 .section("Booking Details"),
         )
@@ -199,6 +237,21 @@ pub fn reservation() -> EntityDef {
                 .min(1.0)
                 .max(50.0)
                 .label("Guests")
+                .section("Booking Details"),
+        )
+        .field(
+            FieldDef::string("guest_name")
+                .nullable()
+                .searchable()
+                .label("Name")
+                .section("Booking Details"),
+        )
+        .field(
+            FieldDef::string("guest_phone")
+                .nullable()
+                .phone()
+                .searchable()
+                .label("Phone")
                 .section("Booking Details"),
         )
         .field(
@@ -234,6 +287,7 @@ pub fn order() -> EntityDef {
         .label_plural("Orders")
         .table_name("orders")
         .workflow("order")
+        .attachments()
         .document(
             DocumentConfig::new()
                 .submit()
@@ -319,6 +373,13 @@ pub fn order() -> EntityDef {
         )
         .field(FieldDef::currency("total").computed("grand_total"))
         .field(FieldDef::text("notes").nullable().list(false))
+        .field(
+            FieldDef::text("delivery_note")
+                .nullable()
+                .list(false)
+                .allow_on_submit()
+                .label("Delivery Note"),
+        )
         .field(FieldDef::one_to_many("payments", "Payment", "order_id"))
         .build()
 }

@@ -14,10 +14,16 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
   const [loading, setLoading] = useState(Boolean(id));
   const [saving, setSaving] = useState(false);
 
-  const fields = useMemo(
+  const baseFields = useMemo(
     () => (meta?.fields.filter(formVisible) ?? []).filter((f) => f.relation_kind !== "one_to_many"),
     [meta],
   );
+  const fields = useMemo(() => {
+    const status = String(values.status ?? "");
+    const locked = Boolean(status && meta?.document?.lock_states?.includes(status));
+    if (!locked) return baseFields;
+    return baseFields.map((f) => (f.allow_on_submit ? f : { ...f, readonly: true }));
+  }, [baseFields, meta, values.status]);
 
   useEffect(() => {
     if (id && slug) {
@@ -26,7 +32,7 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
         .get(slug, id)
         .then((row) => {
           const next: Record<string, unknown> = {};
-          for (const field of fields) {
+          for (const field of baseFields) {
             next[field.name] = row[field.name] ?? "";
           }
           setValues(next);
@@ -37,16 +43,18 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
       setValues({});
       setLoading(false);
     }
-  }, [id, slug, fields]);
+  }, [id, slug, baseFields]);
 
   if (!meta || !slug) return <p>Unknown entity.</p>;
   if (loading) return <p className="muted">Loading {meta.label.toLowerCase()}…</p>;
   const entitySlug = slug;
+  const isSingleton = Boolean(meta.singleton);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     const body: Record<string, unknown> = {};
     for (const field of fields) {
+      if (field.readonly || field.computed) continue;
       const raw = values[field.name];
       if (raw === "" || raw == null) {
         if (!id && !field.required) continue;
@@ -59,8 +67,12 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
       setFieldErrors({});
       setSaving(true);
       if (id) {
-        await api.update(entitySlug, id, body);
+        if (isSingleton) await api.saveSettings(entitySlug, body);
+        else await api.update(entitySlug, id, body);
         navigate(`/${entitySlug}/${id}`);
+      } else if (isSingleton) {
+        const saved = await api.saveSettings(entitySlug, body);
+        navigate(`/${entitySlug}/${saved.id ?? ""}`);
       } else {
         const created = await api.create(entitySlug, body);
         navigate(`/${entitySlug}/${created.id}`);

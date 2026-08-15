@@ -49,8 +49,11 @@ docker compose up --build
 
 Health:
 
-- `GET /health` — process is up (no infrastructure details)
+- `GET /health` — process is up
 - `GET /ready` — database ping
+- `GET /metrics` — process counters (no tenant PII)
+
+`qefro serve` and `qefro worker` stop on SIGTERM after finishing the current job. Claimed jobs that were left `running` are reclaimed to `pending` on worker start.
 
 ## Migration procedure
 
@@ -61,15 +64,22 @@ Health:
 
 Development may keep `QEFRO_AUTO_MIGRATE=true` so `qefro dev` applies schema on boot. Production must not silently mutate schema from the HTTP process.
 
-## Backups
+## Backups and disaster recovery
 
-Qefro does not ship a backup product. Recommended practice:
+Qefro does not ship a backup product. Snapshotting the application server is not sufficient.
 
-- **PostgreSQL**: nightly `pg_dump` (or WAL-G / provider PITR) of the whole cluster. Restore onto a scratch instance and run `qefro migrate` + a smoke test before you need it.
-- **Migration safety**: take a dump immediately before `qefro migrate`. Schema apply is deterministic DDL (`IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`); it is not a substitute for a restore drill.
-- **Encryption**: enable storage-level encryption on the database volume; TLS for clients. Application rows are not field-encrypted.
-- **Tenant recovery**: tenants share tables. Recovering one tenant from a full dump requires extracting that `tenant_id` from every tenant-owned table (including `tenant_settings`, `jobs`, `audit_logs`). Prefer PITR of the cluster over hand-built per-tenant dumps unless you have practiced the extract.
-- **Blobs**: copy `QEFRO_STORAGE_PATH` (per-tenant subdirectories) with the database dump so logos and attachments stay consistent.
+| What | How |
+| --- | --- |
+| Database | PostgreSQL `pg_dump` (or WAL-G / provider PITR). Restore onto a scratch instance, run `qefro migrate`, smoke-test. |
+| Configuration | Environment / secrets manager (`DATABASE_URL`, `JWT_SECRET`, SMTP, webhook secrets). |
+| App definitions | Installed `.qefro` packages plus git of YAML/Rust apps. |
+| Tenant files | Copy `QEFRO_STORAGE_PATH` (per-tenant directories) with the dump. |
+
+**Verify:** restore a dump monthly; confirm login, a record, an attachment, and `qefro doctor`.
+
+**Migrations:** take a dump immediately before `qefro migrate`. Failed migrations are recorded as `failed` and are never silently marked successful. Do not blindly retry a destructive migration with a changed checksum.
+
+PostgreSQL advisory locking (`pg_advisory_lock`) ensures only one migrate process applies app SQL at a time.
 
 ## Storage
 

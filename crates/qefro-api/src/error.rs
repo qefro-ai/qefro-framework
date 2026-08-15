@@ -15,7 +15,7 @@ pub fn error_response(err: QefroError) -> Response {
         "message": err.public_message(),
         "details": err.public_details(),
     });
-    if let QefroError::Validation { fields, .. } = &err {
+    if let QefroError::Validation { fields, .. } | QefroError::Locked { fields, .. } = &err {
         body["fields"] = json!(fields);
         body["nested"] = nest_field_errors(fields);
     }

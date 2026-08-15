@@ -209,3 +209,20 @@ fn walk_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> QefroResult<()
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::validate::validate_bundle;
+
+    #[test]
+    fn v1_benchmark_apps_load() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for name in ["inventory", "helpdesk"] {
+            let path = root.join("apps").join(name);
+            let bundle = AppBundle::load(&path).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let report = validate_bundle(&bundle, &[]);
+            assert!(report.ok(), "{name}: {}", report.errors.join("; "));
+        }
+    }
+}
