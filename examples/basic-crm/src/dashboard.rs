@@ -1,0 +1,9 @@
+use qefro_core::{DashboardCard, DashboardDef};
+
+pub fn ops() -> DashboardDef {
+    DashboardDef::new("crm-ops", "CRM operations")
+        .card(DashboardCard::count("Customers", "CrmCustomer"))
+        .card(DashboardCard::count("New leads", "Lead").filter("status", "New"))
+        .card(DashboardCard::count("Open opportunities", "Opportunity").filter("status", "Open"))
+        .card(DashboardCard::sum("Pipeline", "Opportunity", "amount").filter("status", "Open"))
+}

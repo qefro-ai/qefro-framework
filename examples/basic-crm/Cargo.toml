@@ -1,0 +1,23 @@
+[package]
+name = "qefro-crm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal CRM example built on Qefro Framework"
+
+[[bin]]
+name = "qefro-crm"
+path = "src/main.rs"
+
+[dependencies]
+qefro-core.workspace = true
+qefro-api.workspace = true
+qefro-permissions.workspace = true
+qefro-workflow.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+uuid.workspace = true

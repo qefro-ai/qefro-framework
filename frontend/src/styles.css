@@ -1,0 +1,68 @@
+:root {
+  color-scheme: light;
+  --bg: #f4f1ea;
+  --panel: #fffcf7;
+  --ink: #1c1916;
+  --muted: #6b645b;
+  --line: #ddd4c6;
+  --accent: #9a3412;
+  --accent-ink: #fff7ed;
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--ink); }
+
+a { color: inherit; text-decoration: none; }
+button, input, select, textarea {
+  font: inherit;
+}
+button {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 0;
+  padding: 0.45rem 0.8rem;
+  cursor: pointer;
+}
+button.ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+button.danger {
+  background: #7f1d1d;
+  color: #fff7ed;
+}
+input, select, textarea {
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.shell { display: grid; grid-template-columns: 240px 1fr; min-height: 100%; }
+.nav {
+  border-right: 1px solid var(--line);
+  padding: 1.25rem;
+  background: var(--panel);
+}
+.nav h1 { font-size: 1.1rem; margin: 0 0 1rem; letter-spacing: 0.04em; }
+.nav a { display: block; padding: 0.35rem 0; color: var(--muted); }
+.nav a.active, .nav a:hover { color: var(--ink); }
+.logo { max-width: 120px; margin-bottom: 0.75rem; }
+.main { padding: 1.5rem 2rem; }
+.row { display: flex; gap: 0.75rem; align-items: center; justify-content: space-between; }
+table { width: 100%; border-collapse: collapse; background: var(--panel); }
+th, td { text-align: left; padding: 0.55rem 0.7rem; border-bottom: 1px solid var(--line); font-size: 0.95rem; }
+.form { max-width: 640px; display: grid; gap: 0.85rem; }
+fieldset { border: 1px solid var(--line); padding: 0.85rem; display: grid; gap: 0.85rem; }
+.muted { color: var(--muted); }
+.error { color: #9f1239; display: block; }
+.login { max-width: 420px; margin: 12vh auto; background: var(--panel); padding: 2rem; border: 1px solid var(--line); }
+.badge { font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.85rem; margin-top: 1rem; }
+.card { background: var(--panel); border: 1px solid var(--line); padding: 1rem; display: block; }
+.card-value { font-size: 1.8rem; margin-top: 0.35rem; }
+.filters { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem; }
+.filters label { min-width: 140px; }

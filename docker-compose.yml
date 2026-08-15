@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: qefro
+      POSTGRES_PASSWORD: qefro
+      POSTGRES_DB: qefro
+    ports:
+      - "5432:5432"
+    volumes:
+      - qefro-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qefro"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  qefro-pg:

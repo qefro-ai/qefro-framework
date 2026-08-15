@@ -1,0 +1,40 @@
+[package]
+name = "qefro-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HTTP API, OpenAPI, and runtime composition for Qefro Framework"
+
+[dependencies]
+qefro-core.workspace = true
+qefro-db.workspace = true
+qefro-auth.workspace = true
+qefro-permissions.workspace = true
+qefro-workflow.workspace = true
+qefro-tenant.workspace = true
+qefro-events.workspace = true
+qefro-search.workspace = true
+qefro-agent.workspace = true
+tokio.workspace = true
+axum.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+anyhow.workspace = true
+http.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+tower = { workspace = true, features = ["util"] }
+http-body-util = "0.1"
+qefro-core.workspace = true
+qefro-permissions.workspace = true
+qefro-workflow.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+

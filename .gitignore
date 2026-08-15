@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+.DS_Store
+.env
+.env.local
+node_modules
+frontend/dist
+frontend/.vite
+*.log
+.idea
+.vscode
+.qefro

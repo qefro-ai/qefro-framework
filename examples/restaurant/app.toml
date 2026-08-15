@@ -1,0 +1,5 @@
+name = "restaurant"
+version = "0.2.0"
+label = "Restaurant"
+description = "Tables, reservations, menus, orders, and payments"
+depends_on = ["qefro-framework"]

@@ -1,0 +1,5 @@
+name = "crm"
+version = "0.2.0"
+label = "CRM"
+description = "Leads, contacts, opportunities, and activities"
+depends_on = ["qefro-framework"]

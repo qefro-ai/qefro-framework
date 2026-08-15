@@ -1,0 +1,202 @@
+use async_trait::async_trait;
+use chrono::{DateTime, Duration, Utc};
+use qefro_core::{OpContext, QefroError, QefroResult};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sqlx::{PgPool, Postgres, Transaction};
+use std::collections::HashMap;
+use std::sync::Arc;
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct JobRecord {
+    pub id: Uuid,
+    pub tenant_id: Uuid,
+    pub user_id: Option<Uuid>,
+    pub name: String,
+    pub payload: Value,
+    pub status: String,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub run_at: DateTime<Utc>,
+    pub last_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[async_trait]
+pub trait JobHandler: Send + Sync {
+    async fn run(&self, ctx: &OpContext, payload: &Value) -> QefroResult<()>;
+}
+
+#[derive(Clone, Default)]
+pub struct JobRegistry {
+    handlers: HashMap<String, Arc<dyn JobHandler>>,
+}
+
+impl JobRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn register(&mut self, name: impl Into<String>, handler: Arc<dyn JobHandler>) {
+        self.handlers.insert(name.into(), handler);
+    }
+
+    pub fn get(&self, name: &str) -> Option<Arc<dyn JobHandler>> {
+        self.handlers.get(name).cloned()
+    }
+}
+
+pub struct JobQueue {
+    pool: PgPool,
+}
+
+impl JobQueue {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    pub async fn enqueue_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        ctx: &OpContext,
+        name: &str,
+        payload: Value,
+    ) -> QefroResult<Uuid> {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            r#"
+            INSERT INTO jobs (
+                id, tenant_id, user_id, name, payload, status, attempts, max_attempts,
+                run_at, created_at, updated_at
+            ) VALUES ($1,$2,$3,$4,$5,'pending',0,5, now(), now(), now())
+            "#,
+        )
+        .bind(id)
+        .bind(ctx.tenant_id)
+        .bind(ctx.user_id)
+        .bind(name)
+        .bind(payload)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok(id)
+    }
+
+    pub async fn enqueue(&self, ctx: &OpContext, name: &str, payload: Value) -> QefroResult<Uuid> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        let id = self.enqueue_tx(&mut tx, ctx, name, payload).await?;
+        tx.commit()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok(id)
+    }
+
+    async fn claim_one(&self) -> QefroResult<Option<JobRecord>> {
+        let rec = sqlx::query_as::<_, JobRecord>(
+            r#"
+            UPDATE jobs SET status = 'running', updated_at = now()
+            WHERE id = (
+                SELECT id FROM jobs
+                WHERE status = 'pending' AND run_at <= now()
+                ORDER BY run_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING id, tenant_id, user_id, name, payload, status, attempts,
+                      max_attempts, run_at, last_error, created_at, updated_at
+            "#,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok(rec)
+    }
+
+    pub async fn process_one(&self, registry: &JobRegistry) -> QefroResult<bool> {
+        let Some(job) = self.claim_one().await? else {
+            return Ok(false);
+        };
+        let ctx = OpContext::new(
+            job.tenant_id,
+            job.user_id.unwrap_or(Uuid::nil()),
+            vec!["System".into()],
+        );
+        let result = if let Some(handler) = registry.get(&job.name) {
+            handler.run(&ctx, &job.payload).await
+        } else {
+            tracing::warn!(job = %job.name, "no job handler registered");
+            Ok(())
+        };
+        match result {
+            Ok(()) => {
+                sqlx::query("UPDATE jobs SET status = 'succeeded', updated_at = now() WHERE id = $1")
+                    .bind(job.id)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| QefroError::database(e.to_string()))?;
+            }
+            Err(err) => {
+                let attempts = job.attempts + 1;
+                let (status, run_at) = if attempts >= job.max_attempts {
+                    ("failed", job.run_at)
+                } else {
+                    let backoff = 2i64.pow(attempts as u32).min(300);
+                    ("pending", Utc::now() + Duration::seconds(backoff))
+                };
+                sqlx::query(
+                    r#"
+                    UPDATE jobs
+                    SET status = $2, attempts = $3, run_at = $4, last_error = $5, updated_at = now()
+                    WHERE id = $1
+                    "#,
+                )
+                .bind(job.id)
+                .bind(status)
+                .bind(attempts)
+                .bind(run_at)
+                .bind(err.to_string())
+                .execute(&self.pool)
+                .await
+                .map_err(|e| QefroError::database(e.to_string()))?;
+            }
+        }
+        Ok(true)
+    }
+
+    pub async fn get(&self, tenant_id: Uuid, id: Uuid) -> QefroResult<JobRecord> {
+        sqlx::query_as::<_, JobRecord>(
+            r#"
+            SELECT id, tenant_id, user_id, name, payload, status, attempts,
+                   max_attempts, run_at, last_error, created_at, updated_at
+            FROM jobs WHERE id = $1 AND tenant_id = $2
+            "#,
+        )
+        .bind(id)
+        .bind(tenant_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?
+        .ok_or_else(|| QefroError::not_found("job not found"))
+    }
+}
+
+/// Logs a tenant-aware notification. Applications replace this with email/SMS.
+pub struct LogNotificationJob;
+
+#[async_trait]
+impl JobHandler for LogNotificationJob {
+    async fn run(&self, ctx: &OpContext, payload: &Value) -> QefroResult<()> {
+        tracing::info!(
+            tenant_id = %ctx.tenant_id,
+            job_payload_keys = payload.as_object().map(|o| o.len()).unwrap_or(0),
+            "notification job"
+        );
+        Ok(())
+    }
+}

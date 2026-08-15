@@ -1,0 +1,23 @@
+name: Customer
+label: Customer
+label_plural: Customers
+table: customers
+soft_delete: true
+audit: true
+fields:
+  - name: name
+    type: string
+    required: true
+    searchable: true
+    validation:
+      max_length: 200
+  - name: email
+    type: string
+    required: true
+    unique: true
+    searchable: true
+    validation:
+      email: true
+  - name: phone
+    type: string
+    nullable: true

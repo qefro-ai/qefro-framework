@@ -1,0 +1,22 @@
+[package]
+name = "qefro-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Authentication, sessions, and membership for Qefro Framework"
+
+[dependencies]
+qefro-core.workspace = true
+qefro-tenant.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+sqlx.workspace = true
+jsonwebtoken.workspace = true
+argon2.workspace = true
+password-hash.workspace = true
+rand.workspace = true
+tracing.workspace = true
+sha2.workspace = true
+hex.workspace = true

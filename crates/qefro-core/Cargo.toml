@@ -1,0 +1,17 @@
+[package]
+name = "qefro-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core metadata, entity, and validation types for Qefro Framework"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+regex.workspace = true
+tracing.workspace = true

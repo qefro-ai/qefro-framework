@@ -1,0 +1,66 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/qefro-core",
+    "crates/qefro-db",
+    "crates/qefro-api",
+    "crates/qefro-auth",
+    "crates/qefro-permissions",
+    "crates/qefro-workflow",
+    "crates/qefro-tenant",
+    "crates/qefro-events",
+    "crates/qefro-search",
+    "crates/qefro-agent",
+    "crates/qefro-cli",
+    "examples/basic-crm",
+    "examples/restaurant",
+]
+
+[workspace.package]
+version = "0.3.0"
+edition = "2021"
+license = "MIT"
+authors = ["Qefro"]
+description = "Rust-native, metadata-driven framework for multi-tenant business applications"
+repository = "https://github.com/qefro/qefro-framework"
+
+[workspace.dependencies]
+qefro-core = { path = "crates/qefro-core" }
+qefro-db = { path = "crates/qefro-db" }
+qefro-api = { path = "crates/qefro-api" }
+qefro-auth = { path = "crates/qefro-auth" }
+qefro-permissions = { path = "crates/qefro-permissions" }
+qefro-workflow = { path = "crates/qefro-workflow" }
+qefro-tenant = { path = "crates/qefro-tenant" }
+qefro-events = { path = "crates/qefro-events" }
+qefro-search = { path = "crates/qefro-search" }
+qefro-agent = { path = "crates/qefro-agent" }
+
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["macros", "json"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json", "migrate"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+async-trait = "0.1"
+jsonwebtoken = "9"
+argon2 = "0.5"
+password-hash = "0.5"
+rand = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+regex = "1"
+futures = "0.3"
+http = "1"
+hex = "0.4"
+sha2 = "0.10"
+
+[profile.dev]
+debug = 1

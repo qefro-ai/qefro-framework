@@ -1,0 +1,30 @@
+[package]
+name = "qefro-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Command-line interface for Qefro Framework"
+
+[[bin]]
+name = "qefro"
+path = "src/main.rs"
+
+[dependencies]
+qefro-core.workspace = true
+qefro-api.workspace = true
+qefro-db.workspace = true
+qefro-permissions.workspace = true
+qefro-workflow.workspace = true
+qefro-search.workspace = true
+qefro-restaurant = { path = "../../examples/restaurant" }
+qefro-crm = { path = "../../examples/basic-crm" }
+tokio.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+sqlx.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

@@ -1,0 +1,28 @@
+[package]
+name = "qefro-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PostgreSQL access, schema generation, and entity CRUD for Qefro Framework"
+
+[dependencies]
+qefro-core.workspace = true
+qefro-events.workspace = true
+qefro-permissions.workspace = true
+qefro-workflow.workspace = true
+qefro-search.workspace = true
+qefro-tenant.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+sqlx.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+qefro-core.workspace = true
+

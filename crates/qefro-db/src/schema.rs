@@ -1,0 +1,301 @@
+use qefro_core::{
+    quote_ident, EntityDef, EntityRegistry, FieldType, QefroError, QefroResult, RelationKind,
+};
+use sqlx::PgPool;
+
+const SYSTEM_DDL: &str = r#"
+CREATE TABLE IF NOT EXISTS tenants (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS user_tenants (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    roles TEXT[] NOT NULL DEFAULT ARRAY['Staff']::TEXT[],
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, tenant_id)
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions(user_id);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id UUID,
+    entity TEXT NOT NULL,
+    entity_id UUID,
+    action TEXT NOT NULL,
+    old_values JSONB,
+    new_values JSONB,
+    request_id UUID,
+    ip TEXT,
+    user_agent TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS audit_logs_tenant_idx ON audit_logs(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS audit_logs_entity_idx ON audit_logs(tenant_id, entity, entity_id);
+
+CREATE TABLE IF NOT EXISTS tenant_settings (
+    tenant_id UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+    branding JSONB NOT NULL DEFAULT '{}'::jsonb,
+    ui_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    enabled_apps TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    business_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id UUID,
+    name TEXT NOT NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INT NOT NULL DEFAULT 0,
+    max_attempts INT NOT NULL DEFAULT 5,
+    run_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS jobs_poll_idx ON jobs (status, run_at);
+CREATE INDEX IF NOT EXISTS jobs_tenant_idx ON jobs (tenant_id, created_at DESC);
+"#;
+
+pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
+    entity.validate_idents()?;
+    let table = quote_ident(&entity.table)?;
+    let mut cols = vec!["\"id\" UUID PRIMARY KEY".to_string()];
+    if entity.tenant_owned {
+        cols.push("\"tenant_id\" UUID NOT NULL REFERENCES tenants(id)".to_string());
+    }
+    cols.push("\"created_at\" TIMESTAMPTZ NOT NULL DEFAULT now()".to_string());
+    cols.push("\"updated_at\" TIMESTAMPTZ NOT NULL DEFAULT now()".to_string());
+    cols.push("\"created_by\" UUID".to_string());
+    cols.push("\"updated_by\" UUID".to_string());
+    if entity.soft_delete {
+        cols.push("\"deleted_at\" TIMESTAMPTZ".to_string());
+    }
+
+    for field in entity.stored_fields() {
+        let col = quote_ident(&field.column_name())?;
+        let mut sql_ty = field.field_type.sql_type().to_string();
+        if !field.nullable {
+            sql_ty.push_str(" NOT NULL");
+        }
+        if let FieldType::Enum { values } = &field.field_type {
+            let list = values
+                .iter()
+                .map(|v| format!("'{}'", v.replace('\'', "''")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            sql_ty.push_str(&format!(" CHECK ({col} IN ({list}))"));
+        }
+        cols.push(format!("{col} {sql_ty}"));
+    }
+
+    let mut ddl = format!(
+        "CREATE TABLE IF NOT EXISTS {table} (\n    {}\n);",
+        cols.join(",\n    ")
+    );
+
+    if entity.tenant_owned {
+        ddl.push_str(&format!(
+            "\nCREATE INDEX IF NOT EXISTS {}_tenant_idx ON {table} (\"tenant_id\");",
+            entity.table
+        ));
+    }
+    if entity.soft_delete {
+        ddl.push_str(&format!(
+            "\nCREATE INDEX IF NOT EXISTS {}_deleted_idx ON {table} (\"deleted_at\");",
+            entity.table
+        ));
+    }
+    for field in entity.stored_fields() {
+        if field.indexed || field.unique {
+            let col = quote_ident(&field.column_name())?;
+            if field.unique && entity.tenant_owned {
+                if entity.soft_delete {
+                    ddl.push_str(&format!(
+                        "\nCREATE UNIQUE INDEX IF NOT EXISTS {}_{}_uidx ON {table} (\"tenant_id\", {col}) WHERE \"deleted_at\" IS NULL;",
+                        entity.table,
+                        field.column_name()
+                    ));
+                } else {
+                    ddl.push_str(&format!(
+                        "\nCREATE UNIQUE INDEX IF NOT EXISTS {}_{}_uidx ON {table} (\"tenant_id\", {col});",
+                        entity.table,
+                        field.column_name()
+                    ));
+                }
+            } else if field.unique {
+                ddl.push_str(&format!(
+                    "\nCREATE UNIQUE INDEX IF NOT EXISTS {}_{}_uidx ON {table} ({col});",
+                    entity.table,
+                    field.column_name()
+                ));
+            } else {
+                ddl.push_str(&format!(
+                    "\nCREATE INDEX IF NOT EXISTS {}_{}_idx ON {table} ({col});",
+                    entity.table,
+                    field.column_name()
+                ));
+            }
+        }
+        if let Some(rel) = &field.relation {
+            if rel.kind == RelationKind::ManyToOne {
+                // FK is added after all tables exist.
+            }
+        }
+    }
+    Ok(ddl)
+}
+
+pub async fn apply_schema(pool: &PgPool, registry: &EntityRegistry) -> QefroResult<()> {
+    for stmt in split_sql(SYSTEM_DDL) {
+        sqlx::query(stmt)
+            .execute(pool)
+            .await
+            .map_err(|e| QefroError::database(format!("system schema: {e}")))?;
+    }
+
+    for entity in registry.list() {
+        let ddl = entity_ddl(&entity)?;
+        for stmt in split_sql(&ddl) {
+            sqlx::query(stmt)
+                .execute(pool)
+                .await
+                .map_err(|e| QefroError::database(format!("schema {}: {e}", entity.name)))?;
+        }
+    }
+
+    apply_foreign_keys(pool, registry).await?;
+    apply_junction_tables(pool, registry).await?;
+    Ok(())
+}
+
+async fn apply_foreign_keys(pool: &PgPool, registry: &EntityRegistry) -> QefroResult<()> {
+    for entity in registry.list() {
+        for field in entity.stored_fields() {
+            let Some(rel) = &field.relation else { continue };
+            if rel.kind != RelationKind::ManyToOne {
+                continue;
+            }
+            let target = match registry.try_get(&rel.target_entity) {
+                Some(t) => t,
+                None => continue,
+            };
+            let table = quote_ident(&entity.table)?;
+            let col = quote_ident(&field.column_name())?;
+            let target_table = quote_ident(&target.table)?;
+            let constraint = format!("fk_{}_{}", entity.table, field.column_name());
+            crate::schema::ident_check(&constraint)?;
+            let sql = format!(
+                "ALTER TABLE {table} DROP CONSTRAINT IF EXISTS \"{constraint}\"; \
+                 ALTER TABLE {table} ADD CONSTRAINT \"{constraint}\" FOREIGN KEY ({col}) REFERENCES {target_table} (\"id\");"
+            );
+            // DROP + ADD in one round-trip can fail on first run; do separately.
+            let drop = format!("ALTER TABLE {table} DROP CONSTRAINT IF EXISTS \"{constraint}\"");
+            let add = format!(
+                "ALTER TABLE {table} ADD CONSTRAINT \"{constraint}\" FOREIGN KEY ({col}) REFERENCES {target_table} (\"id\")"
+            );
+            sqlx::query(&drop)
+                .execute(pool)
+                .await
+                .map_err(|e| QefroError::database(e.to_string()))?;
+            if let Err(e) = sqlx::query(&add).execute(pool).await {
+                tracing::debug!(error = %e, table = %entity.table, "fk already present or skipped");
+                let _ = sql;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn apply_junction_tables(pool: &PgPool, registry: &EntityRegistry) -> QefroResult<()> {
+    for entity in registry.list() {
+        for field in &entity.fields {
+            let Some(rel) = &field.relation else { continue };
+            if rel.kind != RelationKind::ManyToMany {
+                continue;
+            }
+            let table_name = junction_table_name(&entity.table, &field.column_name());
+            ident_check(&table_name)?;
+            let table = quote_ident(&table_name)?;
+            let ddl = format!(
+                r#"CREATE TABLE IF NOT EXISTS {table} (
+                    "tenant_id" UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                    "left_id" UUID NOT NULL,
+                    "right_id" UUID NOT NULL,
+                    PRIMARY KEY ("tenant_id", "left_id", "right_id")
+                );
+                CREATE INDEX IF NOT EXISTS {table_name}_right_idx ON {table} ("tenant_id", "right_id");"#
+            );
+            for stmt in split_sql(&ddl) {
+                sqlx::query(stmt)
+                    .execute(pool)
+                    .await
+                    .map_err(|e| QefroError::database(e.to_string()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub fn junction_table_name(left_table: &str, field: &str) -> String {
+    format!("{left_table}_{field}")
+}
+
+fn split_sql(ddl: &str) -> Vec<&str> {
+    ddl.split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+pub(crate) fn ident_check(name: &str) -> QefroResult<()> {
+    qefro_core::ident::assert_safe_ident(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use qefro_core::{EntityDef, FieldDef};
+
+    #[test]
+    fn ddl_uses_quoted_idents_and_binds_no_user_data() {
+        let def = EntityDef::new("Customer")
+            .field(FieldDef::string("name").required())
+            .field(FieldDef::string("email").unique().email())
+            .build();
+        let ddl = entity_ddl(&def).unwrap();
+        assert!(ddl.contains("CREATE TABLE IF NOT EXISTS \"customers\""));
+        assert!(ddl.contains("\"tenant_id\""));
+        assert!(ddl.contains("\"email\""));
+        assert!(!ddl.contains("DROP TABLE tenants"));
+    }
+}
