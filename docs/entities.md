@@ -38,7 +38,17 @@ List/get expand many-to-one in `_expanded` with a batched `IN` query.
 
 ## UI field flags
 
-`label`, `description`, `placeholder`, `hidden`, `readonly`, `required`, `list_visible` / `list`, `form_visible` / `form`, `searchable`, `sortable`, `filterable`, `width`, `widget`, `section`, `order`.
+`label`, `description`, `placeholder`, `help` / `help_text`, `hidden`, `disabled`, `readonly`, `required`, `list_visible` / `list`, `form_visible` / `form`, `detail_visible` / `detail`, `searchable`, `sortable`, `filterable`, `width`, `widget`, `widget_options`, `section`, `tab`, `order`, `visible_when`, `readonly_when`.
+
+Data types: `string`, `text`, `integer`, `decimal`, `boolean`, `date`, `time`, `datetime`, `uuid`, `enum`, `json`, `relation`. Convenience builders `email()`, `phone()`, `url()`, `color()`, `currency()`, `percentage()` keep the storage type and set validation + widget.
+
+```rust
+FieldDef::date("reservation_date").required().ui(UiConfig::date())
+FieldDef::datetime("appointment_at").ui(UiConfig::datetime().tenant_timezone())
+FieldDef::decimal("price").currency()
+FieldDef::string("brand_color").color()
+FieldDef::relation("customer", "Customer").required()
+```
 
 ## Inspect
 

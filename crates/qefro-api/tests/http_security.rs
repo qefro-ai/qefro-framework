@@ -467,6 +467,7 @@ async fn ui_metadata_includes_visibility_and_workflow() {
         .iter()
         .find(|f| f["name"] == "title")
         .unwrap();
+    assert_eq!(ui["schema_version"], "1");
     assert_eq!(title["list_visible"], true);
     assert_eq!(title["form_visible"], true);
     assert_eq!(note["workflow"], "note");

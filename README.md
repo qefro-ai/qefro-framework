@@ -25,7 +25,7 @@ Open the generic UI:
 cd frontend && npm install && npm run dev
 ```
 
-The UI reads `/api/v1/meta/ui`. Branding, navigation, terminology, and dashboards come from the authenticated tenant. There is no per-entity React page and no per-tenant frontend build.
+The UI reads `/api/v1/meta/ui`. Branding, navigation, terminology, widgets, form layouts, filters, and dashboards come from the authenticated tenant. There is no per-entity React page and no per-tenant frontend build. Define the entity once; Qefro generates schema, REST, validation, and the business UI.
 
 ## Create an application
 
@@ -120,14 +120,17 @@ frontend                   generic metadata UI
 ## Defining an entity
 
 ```rust
-EntityDef::new("Customer")
-    .field(FieldDef::string("name").required().searchable())
-    .field(FieldDef::string("email").required().email().unique())
-    .field(FieldDef::string("phone").nullable())
-    .build()
+EntityDef::new("Reservation")
+    .field(FieldDef::relation("customer", "Customer").required())
+    .field(FieldDef::date("reservation_date").required().ui(UiConfig::date()))
+    .field(FieldDef::time("reservation_time").required())
+    .field(FieldDef::integer("guests").required())
+    .field(FieldDef::enum_("status", vec!["Pending", "Confirmed", "Cancelled"]))
+    .field(FieldDef::datetime("created_at").ui(UiConfig::datetime().tenant_timezone()))
+    .build();
 ```
 
-That definition produces `/customers`, `/customers/new`, `/customers/:id`, `/customers/:id/edit`, REST, validation, audit, and agent tools.
+That definition produces PostgreSQL, REST, validation, generic list/form/detail UI, date/time/relation widgets, filters, and workflow actions — without a custom React page.
 
 YAML is supported via `EntityDef::from_yaml` / `EntityRegistry::load_dir`.
 
@@ -149,7 +152,7 @@ cargo test --workspace
 DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro cargo test --workspace -- --test-threads=1
 ```
 
-Integration tests that need PostgreSQL skip when `DATABASE_URL` is unset. V0.4 verification covers V0.3 operations plus tenant branding isolation, application entitlements, feature flags, worker policy, and a two-tenant SaaS scenario (restaurant vs CRM on one runtime).
+Integration tests that need PostgreSQL skip when `DATABASE_URL` is unset. Frontend widget tests: `cd frontend && npm test`.
 
 ## Docs
 
@@ -161,6 +164,10 @@ Integration tests that need PostgreSQL skip when `DATABASE_URL` is unset. V0.4 v
 - [Events](docs/events.md)
 - [Jobs](docs/jobs.md)
 - [UI](docs/ui.md)
+- [UI widgets](docs/ui-widgets.md)
+- [Forms](docs/forms.md)
+- [Layouts](docs/layouts.md)
+- [Dashboards](docs/dashboards.md)
 - [Agents](docs/agents.md)
 - [Multi-tenancy](docs/multitenancy.md)
 - [Tenants](docs/tenants.md)

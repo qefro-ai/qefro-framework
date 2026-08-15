@@ -3,10 +3,10 @@ use crate::state::AppState;
 use anyhow::Context;
 use qefro_agent::ToolRegistry;
 use qefro_auth::AuthService;
-use qefro_core::{AppManifest, AppModule, EntityRegistry, HookRegistry, OperationDef};
+use qefro_core::{AppManifest, AppModule, EntityRegistry, HookRegistry, LocalBlobStore, OperationDef};
 use qefro_db::{
-    apply_schema, connect, EntityService, JobHandler, JobQueue, JobRegistry, LogNotificationJob,
-    OperationHandler, OperationRegistry,
+    apply_schema, connect, BlobMetaStore, EntityService, JobHandler, JobQueue, JobRegistry,
+    LogNotificationJob, OperationHandler, OperationRegistry, SavedFilterStore,
 };
 use qefro_events::InProcessEventBus;
 use qefro_permissions::{PermissionGrant, PermissionRegistry};
@@ -337,8 +337,12 @@ impl QefroRuntime {
             pool.clone(),
             self.config.jwt_secret.clone(),
         ));
-        let tenants = Arc::new(TenantService::new(pool));
+        let tenants = Arc::new(TenantService::new(pool.clone()));
         let installed_apps: Vec<String> = manifests.iter().map(|m| m.name.clone()).collect();
+        let blob_store: Arc<dyn qefro_core::BlobStore> =
+            Arc::new(LocalBlobStore::new(&self.config.storage_path));
+        let blobs = Arc::new(BlobMetaStore::new(pool.clone()));
+        let saved_filters = Arc::new(SavedFilterStore::new(pool));
 
         let state = AppState {
             entities,
@@ -350,6 +354,9 @@ impl QefroRuntime {
             entitlements: qefro_core::Entitlements::new(),
             rate_limiter: Arc::new(qefro_core::MemoryRateLimiter::default()),
             installed_apps,
+            blob_store,
+            blobs,
+            saved_filters,
         };
 
         let cors = CorsLayer::new()

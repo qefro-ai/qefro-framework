@@ -1,7 +1,7 @@
 use qefro_agent::ToolRegistry;
 use qefro_auth::AuthService;
-use qefro_core::{AppManifest, DashboardDef, Entitlements, MemoryRateLimiter};
-use qefro_db::EntityService;
+use qefro_core::{AppManifest, BlobStore, DashboardDef, Entitlements, MemoryRateLimiter};
+use qefro_db::{BlobMetaStore, EntityService, SavedFilterStore};
 use qefro_tenant::TenantService;
 use std::sync::Arc;
 
@@ -16,4 +16,7 @@ pub struct AppState {
     pub entitlements: Entitlements,
     pub rate_limiter: Arc<MemoryRateLimiter>,
     pub installed_apps: Vec<String>,
+    pub blob_store: Arc<dyn BlobStore>,
+    pub blobs: Arc<BlobMetaStore>,
+    pub saved_filters: Arc<SavedFilterStore>,
 }

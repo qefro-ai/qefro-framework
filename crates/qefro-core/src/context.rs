@@ -26,6 +26,8 @@ pub struct OpContext {
     #[serde(default)]
     pub locale: String,
     #[serde(default)]
+    pub currency: String,
+    #[serde(default)]
     pub plan: Option<String>,
 }
 
@@ -43,6 +45,7 @@ impl OpContext {
             features: Default::default(),
             timezone: "UTC".into(),
             locale: "en-US".into(),
+            currency: "USD".into(),
             plan: None,
         }
     }
@@ -88,6 +91,7 @@ impl OpContext {
         self.features = config.features.flags.clone();
         self.timezone = config.business.timezone.clone();
         self.locale = config.business.locale.clone();
+        self.currency = config.business.currency.clone();
         self.plan = config.plan.clone();
     }
 }

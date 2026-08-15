@@ -11,7 +11,7 @@ use qefro_workflow::WorkflowDef;
 
 pub fn module() -> AppModule {
     AppModule::new("restaurant")
-        .version("0.4.0")
+        .version("0.5.0")
         .label("Restaurant")
         .description("Tables, reservations, menus, orders, and payments")
         .entity(entities::customer())
@@ -24,6 +24,7 @@ pub fn module() -> AppModule {
         .entity(entities::order())
         .entity(entities::order_item())
         .entity(entities::payment())
+        .entity(entities::ui_showcase())
         .dashboard(dashboard::ops())
         .build()
 }
@@ -45,4 +46,33 @@ pub fn installed() -> InstalledApp {
         app = app.permission(grant);
     }
     operations::register(app)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn showcase_metadata_covers_the_widget_set() {
+        let entity = crate::entities::ui_showcase();
+        let ui = entity.to_ui_meta();
+        assert_eq!(ui.schema_version, "1");
+        let widget = |name: &str| {
+            ui.fields
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap()
+                .widget
+                .as_str()
+        };
+        assert_eq!(widget("price"), "currency");
+        assert_eq!(widget("discount"), "percentage");
+        assert_eq!(widget("birth_date"), "date");
+        assert_eq!(widget("appointment_time"), "time");
+        assert_eq!(widget("appointment_at"), "datetime");
+        assert_eq!(widget("brand_color"), "color");
+        assert_eq!(widget("customer_id"), "relation");
+        assert_eq!(widget("rich_description"), "rich_text");
+        assert_eq!(widget("image"), "image");
+        assert_eq!(widget("attachment"), "file");
+        assert!(ui.tabs.contains(&"Details".into()));
+    }
 }

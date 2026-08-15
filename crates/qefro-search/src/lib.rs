@@ -6,12 +6,18 @@ use serde_json::Value;
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Filter {
     Eq { field: String, value: Value },
+    Neq { field: String, value: Value },
     Contains { field: String, value: String },
+    StartsWith { field: String, value: String },
     Gt { field: String, value: Value },
     Gte { field: String, value: Value },
     Lt { field: String, value: Value },
     Lte { field: String, value: Value },
+    Between { field: String, from: Value, to: Value },
     In { field: String, values: Vec<Value> },
+    NotIn { field: String, values: Vec<Value> },
+    Empty { field: String },
+    NotEmpty { field: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,12 +103,18 @@ impl Filter {
     pub fn field_name(&self) -> &str {
         match self {
             Self::Eq { field, .. }
+            | Self::Neq { field, .. }
             | Self::Contains { field, .. }
+            | Self::StartsWith { field, .. }
             | Self::Gt { field, .. }
             | Self::Gte { field, .. }
             | Self::Lt { field, .. }
             | Self::Lte { field, .. }
-            | Self::In { field, .. } => field,
+            | Self::Between { field, .. }
+            | Self::In { field, .. }
+            | Self::NotIn { field, .. }
+            | Self::Empty { field }
+            | Self::NotEmpty { field } => field,
         }
     }
 }
@@ -191,7 +203,15 @@ fn parse_filter(entity: &EntityDef, key: &str, value: &str) -> QefroResult<Optio
             field: field.into(),
             value: json_value,
         },
+        "neq" | "ne" | "not_equals" | "not-equals" => Filter::Neq {
+            field: field.into(),
+            value: json_value,
+        },
         "contains" | "like" | "ilike" => Filter::Contains {
+            field: field.into(),
+            value: value.to_string(),
+        },
+        "starts_with" | "startswith" | "starts" => Filter::StartsWith {
             field: field.into(),
             value: value.to_string(),
         },
@@ -211,12 +231,35 @@ fn parse_filter(entity: &EntityDef, key: &str, value: &str) -> QefroResult<Optio
             field: field.into(),
             value: json_value,
         },
+        "between" => {
+            let mut parts = value.splitn(2, ',');
+            let from = coerce_value(entity, field, parts.next().unwrap_or(""))?;
+            let to = coerce_value(entity, field, parts.next().unwrap_or(""))?;
+            Filter::Between {
+                field: field.into(),
+                from,
+                to,
+            }
+        }
         "in" => Filter::In {
             field: field.into(),
             values: value
                 .split(',')
                 .map(|s| coerce_value(entity, field, s.trim()))
                 .collect::<QefroResult<Vec<_>>>()?,
+        },
+        "nin" | "not_in" | "notin" => Filter::NotIn {
+            field: field.into(),
+            values: value
+                .split(',')
+                .map(|s| coerce_value(entity, field, s.trim()))
+                .collect::<QefroResult<Vec<_>>>()?,
+        },
+        "empty" | "is_empty" => Filter::Empty {
+            field: field.into(),
+        },
+        "nempty" | "not_empty" | "is_not_empty" => Filter::NotEmpty {
+            field: field.into(),
         },
         _ => {
             return Err(QefroError::bad_request(format!(
@@ -246,6 +289,9 @@ fn coerce_value(entity: &EntityDef, field: &str, raw: &str) -> QefroResult<Value
                 .unwrap_or(Value::String(raw.into()))
         }
         Some(FieldType::Boolean) => Value::Bool(matches!(raw, "true" | "1" | "yes")),
+        Some(FieldType::Time) | Some(FieldType::Date) | Some(FieldType::DateTime) => {
+            Value::String(raw.to_string())
+        }
         _ => Value::String(raw.to_string()),
     };
     Ok(value)
@@ -287,6 +333,21 @@ mod tests {
         let entity = customer();
         let raw = vec![("sort".into(), "password_hash".into())];
         assert!(parse_query(&entity, &raw).is_err());
+    }
+
+    #[test]
+    fn extra_filter_operators_are_parameterized() {
+        let entity = customer();
+        let raw = vec![
+            ("name.starts_with".into(), "Ah".into()),
+            ("status.neq".into(), "pending".into()),
+            ("email.empty".into(), "1".into()),
+        ];
+        let q = parse_query(&entity, &raw).unwrap();
+        assert_eq!(q.filters.len(), 3);
+        assert!(matches!(&q.filters[0], Filter::StartsWith { .. }));
+        assert!(matches!(&q.filters[1], Filter::Neq { .. }));
+        assert!(matches!(&q.filters[2], Filter::Empty { .. }));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use crate::error::{FieldError, QefroResult};
 use crate::field::{FieldDef, FieldType};
+use chrono::DateTime;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,9 +19,20 @@ pub struct ValidationRules {
     pub regex: Option<String>,
     #[serde(default)]
     pub email: bool,
+    #[serde(default)]
+    pub phone: bool,
+    #[serde(default)]
+    pub url: bool,
+    #[serde(default)]
+    pub color: bool,
 }
 
 const EMAIL_RE: &str = r"(?i)^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$";
+const PHONE_RE: &str = r"^\+?[0-9][0-9\s\-()]{6,20}$";
+const URL_RE: &str = r"(?i)^https?://[^\s]+$";
+const COLOR_RE: &str = r"(?i)^#([0-9A-F]{3}|[0-9A-F]{6}|[0-9A-F]{8})$|^rgb(a)?\(";
+const TIME_RE: &str = r"^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$";
+const DATE_RE: &str = r"^\d{4}-\d{2}-\d{2}$";
 
 /// Validate a JSON object against entity field metadata. Unique checks are
 /// performed later by the database layer because they require I/O.
@@ -94,6 +106,51 @@ fn validate_value(field: &FieldDef, value: &Value) -> Vec<FieldError> {
                 &field.name,
                 "email",
                 "invalid email address",
+            ));
+        }
+        if rules.phone && !Regex::new(PHONE_RE).expect("phone regex").is_match(s) {
+            errors.push(FieldError::new(
+                &field.name,
+                "phone",
+                "invalid phone number",
+            ));
+        }
+        if rules.url && !Regex::new(URL_RE).expect("url regex").is_match(s) {
+            errors.push(FieldError::new(&field.name, "url", "invalid URL"));
+        }
+        if rules.color && !Regex::new(COLOR_RE).expect("color regex").is_match(s) {
+            errors.push(FieldError::new(
+                &field.name,
+                "color",
+                "invalid color (use #RGB, #RRGGBB, or rgb())",
+            ));
+        }
+        if matches!(field.field_type, FieldType::Date)
+            && !Regex::new(DATE_RE).expect("date regex").is_match(s)
+        {
+            errors.push(FieldError::new(
+                &field.name,
+                "date",
+                "expected date YYYY-MM-DD",
+            ));
+        }
+        if matches!(field.field_type, FieldType::Time)
+            && !Regex::new(TIME_RE).expect("time regex").is_match(s)
+        {
+            errors.push(FieldError::new(
+                &field.name,
+                "time",
+                "expected time HH:MM or HH:MM:SS",
+            ));
+        }
+        if matches!(field.field_type, FieldType::DateTime)
+            && DateTime::parse_from_rfc3339(s).is_err()
+            && crate::timezone::canonicalize_datetime(s, "UTC").is_none()
+        {
+            errors.push(FieldError::new(
+                &field.name,
+                "datetime",
+                "expected RFC3339 datetime",
             ));
         }
         if let Some(pattern) = &rules.regex {

@@ -1,4 +1,4 @@
-use qefro_core::{EntityDef, FieldDef};
+use qefro_core::{EntityDef, FieldDef, UiConfig};
 use serde_json::json;
 
 pub fn crm_customer() -> EntityDef {
@@ -45,6 +45,25 @@ pub fn lead() -> EntityDef {
             .default_value(json!("New"))
             .filterable(),
         )
+        .field(
+            FieldDef::decimal("expected_value")
+                .nullable()
+                .min(0.0)
+                .currency()
+                .label("Expected value"),
+        )
+        .field(
+            FieldDef::date("follow_up_date")
+                .nullable()
+                .ui(UiConfig::date())
+                .filterable()
+                .label("Follow-up date"),
+        )
+        .field(
+            FieldDef::relation("contact_id", "Contact")
+                .nullable()
+                .label("Contact"),
+        )
         .build()
 }
 
@@ -89,8 +108,20 @@ pub fn opportunity() -> EntityDef {
                 .nullable()
                 .label("Contact"),
         )
-        .field(FieldDef::decimal("amount").nullable().min(0.0))
-        .field(FieldDef::date("close_date").nullable().filterable())
+        .field(FieldDef::decimal("amount").nullable().min(0.0).currency().label("Value"))
+        .field(
+            FieldDef::decimal("probability")
+                .nullable()
+                .percentage()
+                .label("Probability"),
+        )
+        .field(
+            FieldDef::date("close_date")
+                .nullable()
+                .filterable()
+                .ui(UiConfig::date())
+                .label("Expected close"),
+        )
         .field(
             FieldDef::enum_values("status", vec!["Open", "Qualified", "Won", "Lost"])
                 .required()

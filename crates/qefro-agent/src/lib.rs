@@ -423,9 +423,18 @@ fn input_schema(entity: &EntityDef, partial: bool) -> Value {
 }
 
 fn json_schema_for_field(field: &qefro_core::FieldDef) -> Value {
-    match &field.field_type {
-        FieldType::String | FieldType::Text | FieldType::Date | FieldType::DateTime => {
+    let mut schema = match &field.field_type {
+        FieldType::String | FieldType::Text => {
             json!({ "type": "string", "description": field.label })
+        }
+        FieldType::Date => {
+            json!({ "type": "string", "format": "date", "description": field.label })
+        }
+        FieldType::Time => {
+            json!({ "type": "string", "format": "time", "description": field.label })
+        }
+        FieldType::DateTime => {
+            json!({ "type": "string", "format": "date-time", "description": field.label })
         }
         FieldType::Integer => json!({ "type": "integer", "description": field.label }),
         FieldType::Decimal => json!({ "type": "number", "description": field.label }),
@@ -439,7 +448,20 @@ fn json_schema_for_field(field: &qefro_core::FieldDef) -> Value {
             "description": field.label
         }),
         FieldType::Json => json!({ "description": field.label }),
+    };
+    if let Value::Object(map) = &mut schema {
+        map.insert("x-widget".into(), json!(field.ui.widget));
+        if field.ui.widget == "currency" {
+            map.insert(
+                "x-currency".into(),
+                json!(field.ui.widget_options.currency),
+            );
+        }
+        if let Some(rel) = &field.relation {
+            map.insert("x-relation".into(), json!(rel.target_entity));
+        }
     }
+    schema
 }
 
 #[cfg(test)]

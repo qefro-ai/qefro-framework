@@ -17,7 +17,9 @@ pub mod metering;
 pub mod operation;
 pub mod rate_limit;
 pub mod registry;
+pub mod sanitize;
 pub mod storage;
+pub mod timezone;
 pub mod ui;
 pub mod validation;
 
@@ -38,15 +40,18 @@ pub use hook::{EntityHook, HookRegistry, NoopHook};
 pub use ident::{quote_ident, slugify, snake_case, suggest_similar, to_plural_slug};
 pub use operation::{operation, OperationDef};
 pub use registry::EntityRegistry;
+pub use sanitize::sanitize_html;
+pub use timezone::{canonicalize_datetime, local_to_utc, utc_to_local};
 pub use ui::{
     DashboardCard, DashboardDef, TenantBranding, TenantBusinessConfig, TenantConfig,
-    TenantFeatures, TenantUiConfig, UiEntityMeta, UiFieldMeta, UiWidget,
+    TenantFeatures, TenantUiConfig, UiConfig, UiEntityMeta, UiFieldMeta, UiWhen, UiWidget,
+    WidgetOptions, UI_SCHEMA_VERSION,
 };
 pub use validation::{validate_record, ValidationRules};
 
 pub mod prelude {
     pub use crate::{
         AppModule, AppModuleBuilder, EntityDef, EntityRegistry, FieldDef, FieldType, OpContext,
-        QefroError, QefroResult, RelationDef, RelationKind, ValidationRules,
+        QefroError, QefroResult, RelationDef, RelationKind, UiConfig, ValidationRules,
     };
 }

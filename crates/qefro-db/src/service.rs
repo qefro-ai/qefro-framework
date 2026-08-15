@@ -6,9 +6,10 @@ use crate::operation::{
 };
 use crate::repository::{record_id, EntityRepository, Page};
 use qefro_core::{
-    validate_record, EntityRegistry, FieldError, HookRegistry, OpContext, OperationDef, QefroError,
-    QefroResult,
+    canonicalize_datetime, sanitize_html, validate_record, EntityRegistry, FieldError, FieldType,
+    HookRegistry, OpContext, OperationDef, QefroError, QefroResult,
 };
+use chrono::Utc;
 use qefro_events::{DomainEvent, EventBus, InProcessEventBus};
 use qefro_permissions::{Action, PermissionRegistry};
 use qefro_search::Query;
@@ -222,7 +223,7 @@ impl EntityService {
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Create)?;
         reject_client_tenant(&data)?;
-        apply_defaults(&entity, &mut data);
+        prepare_record(&entity, &mut data, ctx);
         if let Some(wf) = self.workflows.for_entity(&entity.name) {
             if data.get(&wf.field).and_then(|v| v.as_str()).is_none() {
                 if let Some(obj) = data.as_object_mut() {
@@ -270,6 +271,8 @@ impl EntityService {
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Update)?;
         reject_client_tenant(&patch)?;
+        canonicalize_values(&entity, &mut patch, ctx);
+        sanitize_values(&entity, &mut patch);
         let current = self.repo.get(&entity, ctx, id).await?;
         if let Some(wf) = self.workflows.for_entity(&entity.name) {
             if let Some(obj) = patch.as_object_mut() {
@@ -692,6 +695,50 @@ impl EntityService {
             .collect();
         raw.push(("page_size".into(), "1".into()));
         let query = parse_query(&entity, &raw)?;
+        let kind = if card.kind.is_empty() {
+            "metric"
+        } else {
+            card.kind.as_str()
+        };
+        if matches!(kind, "chart" | "status_breakdown") {
+            let group_by = card.group_by.as_deref().ok_or_else(|| {
+                QefroError::bad_request("chart cards require group_by")
+            })?;
+            let series = self
+                .repo
+                .aggregate_group(&entity, ctx, &query, group_by)
+                .await?;
+            let value: f64 = series
+                .iter()
+                .filter_map(|row| row.get("value").and_then(|v| v.as_f64()))
+                .sum();
+            return Ok(json!({
+                "title": card.title,
+                "entity": card.entity,
+                "metric": card.metric,
+                "kind": kind,
+                "chart": card.chart,
+                "group_by": group_by,
+                "series": series,
+                "value": value,
+            }));
+        }
+        if matches!(kind, "list" | "table" | "activity") {
+            let limit = card.limit.unwrap_or(8).clamp(1, 50);
+            raw.pop();
+            raw.push(("page_size".into(), limit.to_string()));
+            let query = parse_query(&entity, &raw)?;
+            let page = self.list(ctx, &entity.name, query).await?;
+            return Ok(json!({
+                "title": card.title,
+                "entity": card.entity,
+                "metric": card.metric,
+                "kind": kind,
+                "items": page.items,
+                "total": page.total,
+                "value": page.total,
+            }));
+        }
         let value = self
             .repo
             .aggregate(&entity, ctx, &query, &card.metric, card.field.as_deref())
@@ -700,6 +747,7 @@ impl EntityService {
             "title": card.title,
             "entity": card.entity,
             "metric": card.metric,
+            "kind": "metric",
             "value": value,
         }))
     }
@@ -723,15 +771,86 @@ impl EntityService {
     }
 }
 
-fn apply_defaults(entity: &qefro_core::EntityDef, data: &mut Value) {
+fn prepare_record(entity: &qefro_core::EntityDef, data: &mut Value, ctx: &OpContext) {
+    apply_defaults(entity, data, ctx);
+    canonicalize_values(entity, data, ctx);
+    sanitize_values(entity, data);
+}
+
+fn apply_defaults(entity: &qefro_core::EntityDef, data: &mut Value, ctx: &OpContext) {
     let Some(obj) = data.as_object_mut() else {
         return;
     };
     for field in entity.stored_fields() {
-        if !obj.contains_key(&field.name) {
-            if let Some(default) = &field.default {
-                obj.insert(field.name.clone(), default.clone());
+        let missing = match obj.get(&field.name) {
+            None => true,
+            Some(Value::Null) => true,
+            Some(Value::String(s)) if s.is_empty() => true,
+            _ => false,
+        };
+        if !missing {
+            continue;
+        }
+        if let Some(source) = &field.default_from {
+            let value = match source.as_str() {
+                "current_user" => json!(ctx.user_id.to_string()),
+                "current_date" => json!(Utc::now().date_naive().to_string()),
+                "current_datetime" => json!(Utc::now().to_rfc3339()),
+                "tenant_timezone" => json!(ctx.timezone.clone()),
+                "tenant_currency" => json!(ctx.currency.clone()),
+                _ => continue,
+            };
+            obj.insert(field.name.clone(), value);
+        } else if let Some(default) = &field.default {
+            obj.insert(field.name.clone(), default.clone());
+        }
+    }
+}
+
+fn canonicalize_values(entity: &qefro_core::EntityDef, data: &mut Value, ctx: &OpContext) {
+    let Some(obj) = data.as_object_mut() else {
+        return;
+    };
+    for field in entity.stored_fields() {
+        let Some(Value::String(raw)) = obj.get(&field.name) else {
+            continue;
+        };
+        let raw = raw.clone();
+        match field.field_type {
+            FieldType::DateTime => {
+                let tz = field
+                    .ui
+                    .widget_options
+                    .timezone
+                    .as_deref()
+                    .filter(|tz| *tz != "utc")
+                    .map(|_| ctx.timezone.as_str())
+                    .unwrap_or("UTC");
+                if let Some(dt) = canonicalize_datetime(&raw, tz) {
+                    obj.insert(field.name.clone(), json!(dt.to_rfc3339()));
+                }
             }
+            FieldType::Time => {
+                if raw.len() == 5 {
+                    obj.insert(field.name.clone(), json!(format!("{raw}:00")));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn sanitize_values(entity: &qefro_core::EntityDef, data: &mut Value) {
+    let Some(obj) = data.as_object_mut() else {
+        return;
+    };
+    for field in entity.stored_fields() {
+        if !field.is_rich_text() {
+            continue;
+        }
+        if let Some(Value::String(html)) = obj.get(&field.name) {
+            let clean = sanitize_html(html);
+            obj.insert(field.name.clone(), json!(clean));
         }
     }
 }

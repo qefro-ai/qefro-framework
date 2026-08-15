@@ -77,6 +77,14 @@ pub fn push_bind_owned(
                     qb.push_bind(s.clone());
                 }
             },
+            Some(FieldType::Time) => {
+                let normalized = if s.len() == 5 {
+                    format!("{s}:00")
+                } else {
+                    s.clone()
+                };
+                qb.push_bind(normalized);
+            },
             Some(FieldType::Boolean) => {
                 qb.push_bind(matches!(s.as_str(), "true" | "1" | "yes"));
             }
@@ -171,10 +179,20 @@ fn apply_filter(
             qb.push(" = ");
             push_bind_owned(qb, field, value);
         }
+        Filter::Neq { value, .. } => {
+            qb.push(col);
+            qb.push(" <> ");
+            push_bind_owned(qb, field, value);
+        }
         Filter::Contains { value, .. } => {
             qb.push(col);
             qb.push(" ILIKE ");
             qb.push_bind(format!("%{value}%"));
+        }
+        Filter::StartsWith { value, .. } => {
+            qb.push(col);
+            qb.push(" ILIKE ");
+            qb.push_bind(format!("{value}%"));
         }
         Filter::Gt { value, .. } => {
             qb.push(col);
@@ -196,6 +214,13 @@ fn apply_filter(
             qb.push(" <= ");
             push_bind_owned(qb, field, value);
         }
+        Filter::Between { from, to, .. } => {
+            qb.push(col);
+            qb.push(" BETWEEN ");
+            push_bind_owned(qb, field, from);
+            qb.push(" AND ");
+            push_bind_owned(qb, field, to);
+        }
         Filter::In { values, .. } => {
             qb.push(col);
             qb.push(" IN (");
@@ -206,6 +231,31 @@ fn apply_filter(
                 push_bind_owned(qb, field, v);
             }
             qb.push(")");
+        }
+        Filter::NotIn { values, .. } => {
+            qb.push(col);
+            qb.push(" NOT IN (");
+            for (i, v) in values.iter().enumerate() {
+                if i > 0 {
+                    qb.push(", ");
+                }
+                push_bind_owned(qb, field, v);
+            }
+            qb.push(")");
+        }
+        Filter::Empty { .. } => {
+            qb.push("(");
+            qb.push(col.clone());
+            qb.push(" IS NULL OR ");
+            qb.push(col);
+            qb.push("::text = '')");
+        }
+        Filter::NotEmpty { .. } => {
+            qb.push("(");
+            qb.push(col.clone());
+            qb.push(" IS NOT NULL AND ");
+            qb.push(col);
+            qb.push("::text <> '')");
         }
     }
     Ok(())

@@ -101,7 +101,7 @@ export default function Settings({
   }
 
   return (
-    <div>
+    <div className="page">
       <div className="badge">Tenant</div>
       <h2>Workspace settings</h2>
       <p className="muted">
@@ -109,6 +109,8 @@ export default function Settings({
         enforces enabled apps and permissions — hiding a nav item is not a security control.
       </p>
       <form className="form" onSubmit={onSubmit}>
+        <fieldset>
+          <legend>Branding</legend>
         <label>
           Company name
           <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
@@ -137,6 +139,9 @@ export default function Settings({
           Favicon URL
           <input value={favicon} onChange={(e) => setFavicon(e.target.value)} />
         </label>
+        </fieldset>
+        <fieldset>
+          <legend>Navigation and apps</legend>
         <label>
           Navigation (entity slugs, comma-separated)
           <input
@@ -153,6 +158,9 @@ export default function Settings({
             placeholder="restaurant, crm"
           />
         </label>
+        </fieldset>
+        <fieldset>
+          <legend>Locale</legend>
         <label>
           Timezone
           <input value={timezone} onChange={(e) => setTimezone(e.target.value)} placeholder="UTC" />
@@ -178,9 +186,10 @@ export default function Settings({
             rows={4}
           />
         </label>
+        </fieldset>
         {error && <p className="error">{error}</p>}
-        {ok && <p className="muted">{ok}</p>}
-        <button type="submit">Save</button>
+        {ok && <p className="ok">{ok}</p>}
+        <button type="submit">Save settings</button>
       </form>
     </div>
   );

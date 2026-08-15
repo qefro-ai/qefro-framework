@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, formVisible, type UiEntity, type UiField } from "../api";
-import { renderWidget } from "../widgets";
+import { FormLayout } from "../components/forms/FormLayout";
 
 export default function EntityForm({ entities }: { entities: UiEntity[] }) {
   const { slug, id } = useParams();
@@ -10,6 +10,8 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(Boolean(id));
+  const [saving, setSaving] = useState(false);
 
   const fields = useMemo(
     () => (meta?.fields.filter(formVisible) ?? []).filter((f) => f.relation_kind !== "one_to_many"),
@@ -18,19 +20,26 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
 
   useEffect(() => {
     if (id && slug) {
-      api.get(slug, id).then((row) => {
-        const next: Record<string, unknown> = {};
-        for (const field of fields) {
-          next[field.name] = row[field.name] ?? "";
-        }
-        setValues(next);
-      });
+      setLoading(true);
+      api
+        .get(slug, id)
+        .then((row) => {
+          const next: Record<string, unknown> = {};
+          for (const field of fields) {
+            next[field.name] = row[field.name] ?? "";
+          }
+          setValues(next);
+        })
+        .catch((e) => setError(e.message))
+        .finally(() => setLoading(false));
     } else {
       setValues({});
+      setLoading(false);
     }
   }, [id, slug, fields]);
 
   if (!meta || !slug) return <p>Unknown entity.</p>;
+  if (loading) return <p className="muted">Loading {meta.label.toLowerCase()}…</p>;
   const entitySlug = slug;
 
   async function onSubmit(e: FormEvent) {
@@ -47,6 +56,7 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
     try {
       setError("");
       setFieldErrors({});
+      setSaving(true);
       if (id) {
         await api.update(entitySlug, id, body);
         navigate(`/${entitySlug}/${id}`);
@@ -61,54 +71,38 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
         for (const fe of err.fields) next[fe.field] = fe.message;
         setFieldErrors(next);
       } else {
-        setError("failed");
+        setError("Unable to save.");
       }
+    } finally {
+      setSaving(false);
     }
   }
 
-  const sections = groupBySection(fields);
-
   return (
-    <div>
+    <div className="page">
+      <div className="badge">{meta.entity}</div>
       <h2>
         {id ? "Edit" : "New"} {meta.label}
       </h2>
-      <form className="form" onSubmit={onSubmit}>
-        {sections.map(([section, sectionFields]) => (
-          <fieldset key={section || "default"}>
-            {section ? <legend>{section}</legend> : null}
-            {sectionFields.map((field) => (
-              <label key={field.name}>
-                {field.label}
-                {field.required ? " *" : ""}
-                {renderWidget({
-                  field,
-                  value: values[field.name],
-                  entities,
-                  onChange: (value) => setValues({ ...values, [field.name]: value }),
-                })}
-                {field.description && <span className="muted">{field.description}</span>}
-                {fieldErrors[field.name] && <span className="error">{fieldErrors[field.name]}</span>}
-              </label>
-            ))}
-          </fieldset>
-        ))}
-        {error && <p className="error">{error}</p>}
-        <button type="submit">Save</button>
+      <form className="form form-wide" onSubmit={onSubmit}>
+        <FormLayout
+          fields={fields}
+          values={values}
+          entities={entities}
+          fieldErrors={fieldErrors}
+          onChange={(name, value) => setValues((prev) => ({ ...prev, [name]: value }))}
+        />
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        <button type="submit" disabled={saving}>
+          {saving ? "Saving…" : "Save"}
+        </button>
       </form>
     </div>
   );
-}
-
-function groupBySection(fields: UiField[]): Array<[string, UiField[]]> {
-  const map = new Map<string, UiField[]>();
-  for (const field of fields) {
-    const key = field.section ?? "";
-    const list = map.get(key) ?? [];
-    list.push(field);
-    map.set(key, list);
-  }
-  return Array.from(map.entries());
 }
 
 function coerce(field: UiField, raw: unknown): unknown {

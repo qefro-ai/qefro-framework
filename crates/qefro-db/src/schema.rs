@@ -92,6 +92,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS jobs_idemp_uidx
 
 ALTER TABLE tenant_settings ADD COLUMN IF NOT EXISTS feature_flags JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE tenant_settings ADD COLUMN IF NOT EXISTS plan TEXT;
+
+CREATE TABLE IF NOT EXISTS saved_filters (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    entity TEXT NOT NULL,
+    name TEXT NOT NULL,
+    query JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS saved_filters_scope_idx ON saved_filters (tenant_id, user_id, entity);
+
+CREATE TABLE IF NOT EXISTS blobs (
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    key TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size BIGINT NOT NULL,
+    created_by UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, key)
+);
 "#;
 
 pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
@@ -193,7 +216,18 @@ pub async fn apply_schema(pool: &PgPool, registry: &EntityRegistry) -> QefroResu
 
     for entity in registry.list() {
         let ddl = entity_ddl(&entity)?;
-        for stmt in split_sql(&ddl) {
+        let stmts = split_sql(&ddl);
+        if let Some(create) = stmts.first() {
+            sqlx::query(create)
+                .execute(pool)
+                .await
+                .map_err(|e| QefroError::database(format!("schema {}: {e}", entity.name)))?;
+        }
+    }
+    apply_missing_columns(pool, registry).await?;
+    for entity in registry.list() {
+        let ddl = entity_ddl(&entity)?;
+        for stmt in split_sql(&ddl).into_iter().skip(1) {
             sqlx::query(stmt)
                 .execute(pool)
                 .await
@@ -204,6 +238,24 @@ pub async fn apply_schema(pool: &PgPool, registry: &EntityRegistry) -> QefroResu
     apply_foreign_keys(pool, registry).await?;
     apply_junction_tables(pool, registry).await?;
     apply_enum_checks(pool, registry).await?;
+    Ok(())
+}
+
+async fn apply_missing_columns(pool: &PgPool, registry: &EntityRegistry) -> QefroResult<()> {
+    for entity in registry.list() {
+        let table = quote_ident(&entity.table)?;
+        for field in entity.stored_fields() {
+            let col = quote_ident(&field.column_name())?;
+            let sql = format!(
+                "ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {}",
+                field.field_type.sql_type()
+            );
+            sqlx::query(&sql)
+                .execute(pool)
+                .await
+                .map_err(|e| QefroError::database(format!("add column {}.{}: {e}", entity.name, field.name)))?;
+        }
+    }
     Ok(())
 }
 

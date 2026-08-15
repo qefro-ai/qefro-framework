@@ -25,36 +25,46 @@ export default function Login() {
         });
         saveToken(res.access_token);
       }
-      navigate("/");
+      navigate("/", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed");
     }
   }
 
   return (
-    <div className="login">
-      <h1>Sign in</h1>
-      <p className="muted">Sign in to your workspace. The application UI is generated from tenant metadata.</p>
-      <form className="form" onSubmit={onSubmit}>
-        {mode === "register" && (
-          <>
-            <label>Name<input name="name" required /></label>
-            <label>Tenant name<input name="tenant_name" required /></label>
-            <label>Tenant slug<input name="tenant_slug" required /></label>
-          </>
-        )}
-        <label>Email<input name="email" type="email" required /></label>
-        <label>Password<input name="password" type="password" required minLength={8} /></label>
-        {error && <p className="error">{error}</p>}
-        <button type="submit">{mode === "login" ? "Sign in" : "Create tenant"}</button>
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => setMode(mode === "login" ? "register" : "login")}
-        >
-          {mode === "login" ? "Need an account?" : "Have an account?"}
-        </button>
-      </form>
+    <div className="login-screen">
+      <div className="login">
+        <p className="badge">Workspace</p>
+        <h1>{mode === "login" ? "Welcome back" : "Create a workspace"}</h1>
+        <p className="muted">
+          {mode === "login"
+            ? "Sign in to open your tenant’s application."
+            : "Register a tenant. Branding and apps can be configured after you sign in."}
+        </p>
+        <form className="form" onSubmit={onSubmit}>
+          {mode === "register" && (
+            <>
+              <label>Your name<input name="name" required /></label>
+              <label>Company / tenant name<input name="tenant_name" required /></label>
+              <label>Tenant slug<input name="tenant_slug" required placeholder="acme" /></label>
+            </>
+          )}
+          <label>Email<input name="email" type="email" required autoComplete="email" /></label>
+          <label>
+            Password
+            <input name="password" type="password" required minLength={8} autoComplete="current-password" />
+          </label>
+          {error && <p className="error">{error}</p>}
+          <button type="submit">{mode === "login" ? "Sign in" : "Create tenant"}</button>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => setMode(mode === "login" ? "register" : "login")}
+          >
+            {mode === "login" ? "Need an account?" : "Have an account?"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

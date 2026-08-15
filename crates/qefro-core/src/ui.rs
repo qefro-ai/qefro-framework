@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
+/// Known widget names. Custom applications may register additional names
+/// as strings without changing this enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UiWidget {
@@ -7,12 +10,25 @@ pub enum UiWidget {
     Text,
     Textarea,
     Number,
+    Currency,
+    Percentage,
     Checkbox,
+    Switch,
+    Radio,
     Select,
+    Multiselect,
     Date,
+    Time,
     DateTime,
+    Color,
     Email,
+    Phone,
+    Url,
     Relation,
+    Tags,
+    RichText,
+    File,
+    Image,
     Json,
     Boolean,
 }
@@ -23,14 +39,103 @@ impl UiWidget {
             Self::Text => "text",
             Self::Textarea => "textarea",
             Self::Number => "number",
-            Self::Checkbox | Self::Boolean => "boolean",
+            Self::Currency => "currency",
+            Self::Percentage => "percentage",
+            Self::Checkbox => "checkbox",
+            Self::Switch => "switch",
+            Self::Radio => "radio",
             Self::Select => "select",
+            Self::Multiselect => "multiselect",
             Self::Date => "date",
+            Self::Time => "time",
             Self::DateTime => "datetime",
+            Self::Color => "color",
             Self::Email => "email",
+            Self::Phone => "phone",
+            Self::Url => "url",
             Self::Relation => "relation",
+            Self::Tags => "tags",
+            Self::RichText => "rich_text",
+            Self::File => "file",
+            Self::Image => "image",
             Self::Json => "json",
+            Self::Boolean => "checkbox",
         }
+    }
+}
+
+/// Presentation options. Independent of the field's storage type.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct WidgetOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precision: Option<u32>,
+    /// `tenant`, `utc`, or an IANA timezone name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hour12: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minute_step: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_selections: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accept: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_fields: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collapsed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_create: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub columns: Option<u32>,
+}
+
+/// Presentation-only condition. Server validation still applies when hidden.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiWhen {
+    pub field: String,
+    pub equals: Value,
+}
+
+impl UiWhen {
+    pub fn new(field: impl Into<String>, equals: impl Into<Value>) -> Self {
+        Self {
+            field: field.into(),
+            equals: equals.into(),
+        }
+    }
+
+    pub fn matches(&self, record: &Value) -> bool {
+        record
+            .get(&self.field)
+            .map(|v| values_equal(v, &self.equals))
+            .unwrap_or(false)
+    }
+}
+
+fn values_equal(left: &Value, right: &Value) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left, right) {
+        (Value::String(a), other) => a == &other.to_string().trim_matches('"').to_string()
+            || other.as_str() == Some(a),
+        (other, Value::String(b)) => other.as_str() == Some(b),
+        _ => false,
     }
 }
 
@@ -40,12 +145,17 @@ pub struct UiFieldMeta {
     pub label: String,
     #[serde(default)]
     pub description: Option<String>,
+    /// Widget registry key. Not a database type. Custom names are allowed.
+    #[serde(default = "default_widget")]
+    pub widget: String,
     #[serde(default)]
-    pub widget: UiWidget,
+    pub widget_options: WidgetOptions,
     #[serde(default = "default_true", alias = "list_visible")]
     pub list: bool,
     #[serde(default = "default_true", alias = "form_visible")]
     pub form: bool,
+    #[serde(default = "default_true", alias = "detail_visible")]
+    pub detail: bool,
     #[serde(default)]
     pub filter: bool,
     #[serde(default)]
@@ -53,21 +163,33 @@ pub struct UiFieldMeta {
     #[serde(default)]
     pub readonly: bool,
     #[serde(default)]
+    pub disabled: bool,
+    #[serde(default)]
     pub hidden: bool,
     #[serde(default)]
     pub placeholder: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "help_text")]
     pub help: Option<String>,
     #[serde(default)]
     pub section: Option<String>,
     #[serde(default)]
+    pub tab: Option<String>,
+    #[serde(default)]
     pub width: Option<String>,
     #[serde(default)]
     pub order: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_when: Option<UiWhen>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readonly_when: Option<UiWhen>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_widget() -> String {
+    "text".into()
 }
 
 impl Default for UiFieldMeta {
@@ -75,24 +197,168 @@ impl Default for UiFieldMeta {
         Self {
             label: String::new(),
             description: None,
-            widget: UiWidget::Text,
+            widget: default_widget(),
+            widget_options: WidgetOptions::default(),
             list: true,
             form: true,
+            detail: true,
             filter: false,
             sortable: false,
             readonly: false,
+            disabled: false,
             hidden: false,
             placeholder: None,
             help: None,
             section: None,
+            tab: None,
             width: None,
             order: 0,
+            visible_when: None,
+            readonly_when: None,
         }
     }
 }
 
+impl UiFieldMeta {
+    pub fn widget(name: impl Into<String>) -> Self {
+        Self {
+            widget: name.into(),
+            ..Default::default()
+        }
+    }
+
+    pub fn tenant_timezone(mut self) -> Self {
+        self.widget_options.timezone = Some("tenant".into());
+        self
+    }
+
+    pub fn utc_timezone(mut self) -> Self {
+        self.widget_options.timezone = Some("utc".into());
+        self
+    }
+
+    pub fn currency_code(mut self, code: impl Into<String>) -> Self {
+        self.widget_options.currency = Some(code.into());
+        self
+    }
+
+    pub fn precision(mut self, digits: u32) -> Self {
+        self.widget_options.precision = Some(digits);
+        self
+    }
+
+    pub fn display_field(mut self, name: impl Into<String>) -> Self {
+        self.widget_options.display_field = Some(name.into());
+        self
+    }
+
+    pub fn minute_step(mut self, step: u32) -> Self {
+        self.widget_options.minute_step = Some(step);
+        self
+    }
+
+    pub fn max_size(mut self, bytes: u64) -> Self {
+        self.widget_options.max_size = Some(bytes);
+        self
+    }
+
+    pub fn accept(mut self, types: Vec<impl Into<String>>) -> Self {
+        self.widget_options.accept = Some(types.into_iter().map(Into::into).collect());
+        self
+    }
+}
+
+/// Ergonomic constructors used in entity definitions.
+///
+/// ```ignore
+/// FieldDef::datetime("created_at").ui(UiConfig::datetime().tenant_timezone())
+/// FieldDef::string("brand_color").ui(UiConfig::color())
+/// FieldDef::decimal("price").ui(UiConfig::currency().precision(2))
+/// ```
+pub struct UiConfig;
+
+impl UiConfig {
+    pub fn text() -> UiFieldMeta {
+        UiFieldMeta::widget("text")
+    }
+    pub fn textarea() -> UiFieldMeta {
+        UiFieldMeta::widget("textarea")
+    }
+    pub fn number() -> UiFieldMeta {
+        UiFieldMeta::widget("number")
+    }
+    pub fn currency() -> UiFieldMeta {
+        UiFieldMeta::widget("currency")
+    }
+    pub fn percentage() -> UiFieldMeta {
+        UiFieldMeta::widget("percentage")
+    }
+    pub fn date() -> UiFieldMeta {
+        UiFieldMeta::widget("date")
+    }
+    pub fn time() -> UiFieldMeta {
+        UiFieldMeta::widget("time")
+    }
+    pub fn datetime() -> UiFieldMeta {
+        UiFieldMeta::widget("datetime")
+    }
+    pub fn color() -> UiFieldMeta {
+        UiFieldMeta::widget("color")
+    }
+    pub fn select() -> UiFieldMeta {
+        UiFieldMeta::widget("select")
+    }
+    pub fn multiselect() -> UiFieldMeta {
+        UiFieldMeta::widget("multiselect")
+    }
+    pub fn relation() -> UiFieldMeta {
+        UiFieldMeta::widget("relation")
+    }
+    pub fn checkbox() -> UiFieldMeta {
+        UiFieldMeta::widget("checkbox")
+    }
+    pub fn switch() -> UiFieldMeta {
+        UiFieldMeta::widget("switch")
+    }
+    pub fn radio() -> UiFieldMeta {
+        UiFieldMeta::widget("radio")
+    }
+    pub fn tags() -> UiFieldMeta {
+        UiFieldMeta::widget("tags")
+    }
+    pub fn phone() -> UiFieldMeta {
+        UiFieldMeta::widget("phone")
+    }
+    pub fn email() -> UiFieldMeta {
+        UiFieldMeta::widget("email")
+    }
+    pub fn url() -> UiFieldMeta {
+        UiFieldMeta::widget("url")
+    }
+    pub fn rich_text() -> UiFieldMeta {
+        UiFieldMeta::widget("rich_text")
+    }
+    pub fn file() -> UiFieldMeta {
+        UiFieldMeta::widget("file")
+    }
+    pub fn image() -> UiFieldMeta {
+        UiFieldMeta::widget("image")
+    }
+    pub fn json() -> UiFieldMeta {
+        UiFieldMeta::widget("json")
+    }
+    /// Application-specific widget registered on the frontend.
+    pub fn named(name: impl Into<String>) -> UiFieldMeta {
+        UiFieldMeta::widget(name)
+    }
+}
+
+pub const UI_SCHEMA_VERSION: &str = "1";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiEntityMeta {
+    #[serde(default = "schema_version")]
+    pub schema_version: String,
     pub entity: String,
     pub label: String,
     pub label_plural: String,
@@ -104,6 +370,14 @@ pub struct UiEntityMeta {
     pub display_field: String,
     pub module: Option<String>,
     pub fields: Vec<UiFieldView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tabs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<String>,
+}
+
+fn schema_version() -> String {
+    UI_SCHEMA_VERSION.into()
 }
 
 impl UiEntityMeta {
@@ -133,16 +407,27 @@ pub struct UiFieldView {
     pub list_visible: bool,
     pub form: bool,
     pub form_visible: bool,
+    pub detail: bool,
+    pub detail_visible: bool,
     pub filter: bool,
     pub filterable: bool,
     pub searchable: bool,
     pub sortable: bool,
     pub hidden: bool,
-    pub widget: UiWidget,
+    pub disabled: bool,
+    pub widget: String,
+    #[serde(default, skip_serializing_if = "widget_options_empty")]
+    pub widget_options: WidgetOptions,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub placeholder: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub help: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub help_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tab: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub width: Option<String>,
     pub order: i32,
@@ -155,18 +440,47 @@ pub struct UiFieldView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inverse_field: Option<String>,
     pub readonly: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visible_when: Option<UiWhen>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readonly_when: Option<UiWhen>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_from: Option<String>,
+}
+
+fn widget_options_empty(opts: &WidgetOptions) -> bool {
+    opts == &WidgetOptions::default()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardCard {
     pub title: String,
     pub entity: String,
-    /// `count` or `sum`
+    /// `count` or `sum` (legacy metric). Charts use `group_by`.
+    #[serde(default = "default_metric")]
     pub metric: String,
+    /// `metric`, `table`, `chart`, `list`, `status_breakdown`, `activity`.
+    #[serde(default = "default_card_kind")]
+    pub kind: String,
+    /// `bar`, `line`, `pie`, `donut`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chart: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_by: Option<String>,
     #[serde(default)]
     pub field: Option<String>,
     #[serde(default)]
     pub filters: Vec<DashboardFilter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+fn default_metric() -> String {
+    "count".into()
+}
+
+fn default_card_kind() -> String {
+    "metric".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,8 +526,12 @@ impl DashboardCard {
             title: title.into(),
             entity: entity.into(),
             metric: "count".into(),
+            kind: "metric".into(),
+            chart: None,
+            group_by: None,
             field: None,
             filters: Vec::new(),
+            limit: None,
         }
     }
 
@@ -222,9 +540,70 @@ impl DashboardCard {
             title: title.into(),
             entity: entity.into(),
             metric: "sum".into(),
+            kind: "metric".into(),
+            chart: None,
+            group_by: None,
             field: Some(field.into()),
             filters: Vec::new(),
+            limit: None,
         }
+    }
+
+    pub fn chart(
+        title: impl Into<String>,
+        entity: impl Into<String>,
+        chart: impl Into<String>,
+        group_by: impl Into<String>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            entity: entity.into(),
+            metric: "count".into(),
+            kind: "chart".into(),
+            chart: Some(chart.into()),
+            group_by: Some(group_by.into()),
+            field: None,
+            filters: Vec::new(),
+            limit: None,
+        }
+    }
+
+    pub fn status_breakdown(
+        title: impl Into<String>,
+        entity: impl Into<String>,
+        field: impl Into<String>,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            entity: entity.into(),
+            metric: "count".into(),
+            kind: "status_breakdown".into(),
+            chart: Some("donut".into()),
+            group_by: Some(field.into()),
+            field: None,
+            filters: Vec::new(),
+            limit: None,
+        }
+    }
+
+    pub fn recent(title: impl Into<String>, entity: impl Into<String>, limit: u32) -> Self {
+        Self {
+            title: title.into(),
+            entity: entity.into(),
+            metric: "count".into(),
+            kind: "list".into(),
+            chart: None,
+            group_by: None,
+            field: None,
+            filters: Vec::new(),
+            limit: Some(limit),
+        }
+    }
+
+    pub fn table(title: impl Into<String>, entity: impl Into<String>, limit: u32) -> Self {
+        let mut card = Self::recent(title, entity, limit);
+        card.kind = "table".into();
+        card
     }
 
     pub fn filter(mut self, field: impl Into<String>, value: impl Into<String>) -> Self {
@@ -338,4 +717,25 @@ pub struct TenantConfig {
     pub features: TenantFeatures,
     #[serde(default)]
     pub plan: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn visible_when_is_presentation_only() {
+        let when = UiWhen::new("status", json!("Cancelled"));
+        assert!(when.matches(&json!({"status": "Cancelled"})));
+        assert!(!when.matches(&json!({"status": "Pending"})));
+    }
+
+    #[test]
+    fn widget_is_a_string_so_apps_can_register_custom_names() {
+        let meta = UiConfig::named("table-status");
+        assert_eq!(meta.widget, "table-status");
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["widget"], "table-status");
+    }
 }

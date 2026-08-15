@@ -1,43 +1,8 @@
+import type { UiEntity, UiField, WidgetOptions, UiWhen } from "./metadata/types";
+
+export type { UiEntity, UiField, WidgetOptions, UiWhen };
+
 const TOKEN_KEY = "qefro_token";
-
-export type UiField = {
-  name: string;
-  type: string;
-  label: string;
-  description?: string;
-  required: boolean;
-  list: boolean;
-  list_visible?: boolean;
-  form: boolean;
-  form_visible?: boolean;
-  filter: boolean;
-  filterable?: boolean;
-  searchable: boolean;
-  sortable?: boolean;
-  hidden?: boolean;
-  widget: string;
-  placeholder?: string;
-  section?: string;
-  width?: string;
-  order?: number;
-  enum_values?: string[];
-  relation?: string;
-  relation_kind?: string;
-  inverse_field?: string;
-  readonly: boolean;
-};
-
-export type UiEntity = {
-  entity: string;
-  label: string;
-  label_plural: string;
-  slug: string;
-  searchable: boolean;
-  workflow?: string;
-  display_field?: string;
-  module?: string;
-  fields: UiField[];
-};
 
 export type TenantConfig = {
   branding: {
@@ -99,6 +64,11 @@ export class ApiError extends Error {
 
 export type Expanded = { id: string; label: string; slug: string; entity: string };
 
+export function tokenHeader(): Record<string, string> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem(TOKEN_KEY);
   const headers = new Headers(init.headers);
@@ -158,7 +128,17 @@ export const api = {
     request<{
       name: string;
       label: string;
-      cards: Array<{ title: string; entity: string; metric: string; value: number }>;
+      cards: Array<{
+        title: string;
+        entity: string;
+        metric: string;
+        kind?: string;
+        chart?: string;
+        value: number;
+        series?: Array<{ label: string; value: number }>;
+        items?: Record<string, unknown>[];
+        total?: number;
+      }>;
     }>(`/api/v1/dashboards/${name}`),
   list: (slug: string, params: URLSearchParams) =>
     request<{ items: Record<string, unknown>[]; total: number; page: number; page_size: number }>(
@@ -185,18 +165,78 @@ export const api = {
     }),
   workflow: (slug: string, id: string) =>
     request<{ current: string; transitions: WorkflowAction[] }>(`/api/v1/${slug}/${id}/workflow`),
+  audit: (entity: string, entityId: string) =>
+    request<{ items: Array<Record<string, unknown>> }>(
+      `/api/v1/audit?entity=${encodeURIComponent(entity)}&entity_id=${encodeURIComponent(entityId)}`,
+    ),
+  upload: (file: File, kind: "file" | "image" = "file", onProgress?: (n: number) => void) =>
+    new Promise<{ key: string; url: string; filename: string; content_type: string; size: number }>(
+      (resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `/api/v1/files?kind=${kind}`);
+        const headers = tokenHeader();
+        for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+        };
+        xhr.onload = () => {
+          try {
+            const data = JSON.parse(xhr.responseText || "{}");
+            if (xhr.status >= 400) {
+              reject(new ApiError(data.message || xhr.statusText, xhr.status));
+            } else {
+              resolve(data);
+            }
+          } catch (err) {
+            reject(err);
+          }
+        };
+        xhr.onerror = () => reject(new ApiError("upload failed", 0));
+        const body = new FormData();
+        body.append("file", file);
+        xhr.send(body);
+      },
+    ),
+  savedFilters: (entity: string) =>
+    request<{ items: Array<{ id: string; name: string; query: Record<string, unknown> }> }>(
+      `/api/v1/saved-filters?entity=${encodeURIComponent(entity)}`,
+    ),
+  saveFilter: (entity: string, name: string, query: unknown) =>
+    request(`/api/v1/saved-filters`, {
+      method: "POST",
+      body: JSON.stringify({ entity, name, query }),
+    }),
+  deleteSavedFilter: (id: string) =>
+    request<void>(`/api/v1/saved-filters/${id}`, { method: "DELETE" }),
 };
+
+const AUTH_EVENT = "qefro-auth";
+
+function notifyAuth() {
+  window.dispatchEvent(new Event(AUTH_EVENT));
+}
 
 export function saveToken(token: string) {
   localStorage.setItem(TOKEN_KEY, token);
+  notifyAuth();
 }
 
 export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
+  notifyAuth();
 }
 
 export function hasToken() {
   return Boolean(localStorage.getItem(TOKEN_KEY));
+}
+
+export function onAuthChange(handler: () => void) {
+  window.addEventListener(AUTH_EVENT, handler);
+  window.addEventListener("storage", handler);
+  return () => {
+    window.removeEventListener(AUTH_EVENT, handler);
+    window.removeEventListener("storage", handler);
+  };
 }
 
 export function listVisible(field: UiField) {
@@ -204,7 +244,11 @@ export function listVisible(field: UiField) {
 }
 
 export function formVisible(field: UiField) {
-  return (field.form_visible ?? field.form) && !field.hidden && !field.readonly;
+  return (field.form_visible ?? field.form) && !field.hidden;
+}
+
+export function detailVisible(field: UiField) {
+  return (field.detail_visible ?? field.detail ?? true) && !field.hidden;
 }
 
 export function expandedLabel(row: Record<string, unknown>, field: string): string | null {

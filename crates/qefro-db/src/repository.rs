@@ -5,7 +5,7 @@ use chrono::Utc;
 use qefro_core::{quote_ident, EntityDef, OpContext, QefroError, QefroResult};
 use qefro_search::Query;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use sqlx::{PgPool, Postgres, QueryBuilder, Row};
 use uuid::Uuid;
 
@@ -146,6 +146,40 @@ impl EntityRepository {
             .fetch_one(&self.pool)
             .await
             .map_err(|e| QefroError::database(e.to_string()))
+    }
+
+    pub async fn aggregate_group(
+        &self,
+        entity: &EntityDef,
+        ctx: &OpContext,
+        query: &Query,
+        group_by: &str,
+    ) -> QefroResult<Vec<Value>> {
+        let table = table_ident(entity)?;
+        let col = column_ident(entity, group_by)?;
+        let tenant = entity.tenant_owned.then_some(ctx.tenant_id);
+        let mut qb = QueryBuilder::<Postgres>::new("SELECT ");
+        qb.push(col.clone());
+        qb.push("::text AS key, COUNT(*)::float8 AS value FROM ");
+        qb.push(&table);
+        apply_filters(&mut qb, entity, tenant, query)?;
+        qb.push(" GROUP BY ");
+        qb.push(col);
+        qb.push(" ORDER BY value DESC LIMIT 24");
+        let rows: Vec<(Option<String>, f64)> = qb
+            .build_query_as()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|(key, value)| {
+                json!({
+                    "label": key.unwrap_or_else(|| "(empty)".into()),
+                    "value": value,
+                })
+            })
+            .collect())
     }
 
     pub async fn insert(

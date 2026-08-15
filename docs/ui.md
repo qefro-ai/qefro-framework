@@ -1,6 +1,6 @@
 # UI
 
-The backend exposes UI metadata at `GET /api/v1/meta/ui`. The React app in `frontend/` is a generic renderer. It does not hardcode entity names.
+The backend exposes UI metadata at `GET /api/v1/meta/ui`. The payload is versioned (`schema_version: "1"`). The React app in `frontend/` is a generic renderer. It does not hardcode entity names.
 
 ## Routes
 
@@ -15,15 +15,11 @@ From `EntityDef::new("Customer")`:
 
 Reserved paths: `/`, `/login`, `/settings`. Dashboard cards come from `GET /api/v1/meta/dashboards` and `GET /api/v1/dashboards/{name}`.
 
-## Widgets
+## Widget registry
 
-The widget registry currently includes:
+`field.widget` is a string. The frontend looks it up in `registerWidget`. Data type and widget are separate: `decimal` + `currency`, `string` + `color`. See [ui-widgets.md](ui-widgets.md), [forms.md](forms.md), and [layouts.md](layouts.md).
 
-`text`, `textarea`, `email`, `number`, `boolean`, `date`, `datetime`, `select`, `relation`
-
-Additional widgets can be registered with `registerWidget`.
-
-Relation fields render a searchable picker against the target entity's list API. The list view shows `_expanded.{field}.label` instead of a UUID.
+Relation fields render a searchable, paginated picker against the target entity's list API (tenant-scoped). The list view shows `_expanded.{field}.label` instead of a UUID.
 
 ## Workflow and operation actions
 
@@ -33,10 +29,10 @@ The server re-checks authentication, tenant, permission, workflow, and business 
 
 ## Tenant branding
 
-The generic frontend loads `/api/v1/meta/ui` and `/api/v1/tenant`. Company name, colors, logo, favicon, navigation, terminology, locale, enabled apps, and the selected dashboard come from tenant configuration. There is one frontend. Disabled applications are omitted by the server, not merely hidden in CSS.
+The generic frontend loads `/api/v1/meta/ui` and `/api/v1/tenant`. Company name, colors, logo, favicon, navigation, terminology, locale, timezone, currency, enabled apps, and the selected dashboard come from tenant configuration. CSS variables (`--accent`, `--primary`) theme the shared components. There is one frontend. Disabled applications are omitted by the server, not merely hidden in CSS.
 
 `GET/PATCH /api/v1/tenants/me/config` and `/api/v1/tenant/*` store that configuration. PATCH is Admin-only. This is not a visual page builder.
 
 ## Restaurant vs CRM
 
-The same Dashboard page renders restaurant or CRM cards depending on which applications the tenant has enabled. No restaurant-specific or CRM-specific frontend architecture.
+The same Dashboard, list, form, and detail pages render restaurant or CRM metadata. No restaurant-specific or CRM-specific frontend architecture. `UiShowcase` in the restaurant app exercises the full widget set without custom React pages.

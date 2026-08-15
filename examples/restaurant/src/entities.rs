@@ -1,4 +1,4 @@
-use qefro_core::{EntityDef, FieldDef};
+use qefro_core::{EntityDef, FieldDef, UiConfig};
 use serde_json::json;
 
 pub fn customer() -> EntityDef {
@@ -22,7 +22,7 @@ pub fn customer() -> EntityDef {
                 .searchable()
                 .filterable(),
         )
-        .field(FieldDef::string("phone").nullable().searchable())
+        .field(FieldDef::string("phone").nullable().phone().searchable())
         .field(FieldDef::text("notes").nullable().list(false))
         .field(FieldDef::one_to_many("reservations", "Reservation", "customer_id"))
         .field(FieldDef::one_to_many("orders", "Order", "customer_id"))
@@ -38,9 +38,22 @@ pub fn restaurant() -> EntityDef {
         .field(
             FieldDef::string("timezone")
                 .required()
-                .default_value(json!("UTC")),
+                .default_from("tenant_timezone"),
         )
-        .field(FieldDef::string("phone").nullable())
+        .field(FieldDef::string("phone").nullable().phone())
+        .field(
+            FieldDef::string("brand_color")
+                .nullable()
+                .ui(UiConfig::color())
+                .section("Branding"),
+        )
+        .field(
+            FieldDef::string("logo")
+                .nullable()
+                .ui(UiConfig::image())
+                .list(false)
+                .section("Branding"),
+        )
         .field(FieldDef::one_to_many("branches", "Branch", "restaurant_id"))
         .field(FieldDef::one_to_many("menu_categories", "MenuCategory", "restaurant_id"))
         .build()
@@ -128,7 +141,13 @@ pub fn menu_item() -> EntityDef {
                 .required()
                 .label("Category"),
         )
-        .field(FieldDef::decimal("price").required().min(0.0))
+        .field(FieldDef::decimal("price").required().min(0.0).currency())
+        .field(
+            FieldDef::string("image")
+                .nullable()
+                .ui(UiConfig::image())
+                .list(false),
+        )
         .field(
             FieldDef::boolean("available")
                 .required()
@@ -145,33 +164,64 @@ pub fn reservation() -> EntityDef {
         .table_name("reservations")
         .workflow("reservation")
         .field(
-            FieldDef::many_to_one("customer_id", "Customer")
+            FieldDef::relation("customer_id", "Customer")
                 .required()
-                .label("Customer"),
+                .label("Customer")
+                .section("Booking Details")
+                .filterable(),
         )
         .field(
-            FieldDef::many_to_one("table_id", "DiningTable")
+            FieldDef::relation("table_id", "DiningTable")
                 .required()
-                .label("Table"),
+                .label("Table")
+                .section("Booking Details"),
         )
-        .field(FieldDef::date("reservation_date").required().filterable())
-        .field(FieldDef::string("reservation_time").required())
+        .field(
+            FieldDef::date("reservation_date")
+                .required()
+                .filterable()
+                .sortable()
+                .ui(UiConfig::date())
+                .section("Booking Details")
+                .default_from("current_date"),
+        )
+        .field(
+            FieldDef::time("reservation_time")
+                .required()
+                .ui(UiConfig::time().minute_step(15))
+                .section("Booking Details"),
+        )
         .field(
             FieldDef::integer("party_size")
                 .required()
                 .min(1.0)
-                .max(50.0),
+                .max(50.0)
+                .label("Guests")
+                .section("Booking Details"),
         )
         .field(
-            FieldDef::enum_values(
+            FieldDef::enum_(
                 "status",
                 vec!["Pending", "Confirmed", "Seated", "Completed", "Cancelled"],
             )
             .required()
             .default_value(json!("Pending"))
-            .filterable(),
+            .filterable()
+            .section("Booking Details"),
         )
-        .field(FieldDef::text("notes").nullable().list(false))
+        .field(
+            FieldDef::text("notes")
+                .nullable()
+                .list(false)
+                .section("Additional Information"),
+        )
+        .field(
+            FieldDef::text("cancellation_reason")
+                .nullable()
+                .list(false)
+                .section("Additional Information")
+                .visible_when("status", json!("Cancelled")),
+        )
         .field(FieldDef::one_to_many("orders", "Order", "reservation_id"))
         .build()
 }
@@ -217,7 +267,8 @@ pub fn order() -> EntityDef {
             FieldDef::decimal("total")
                 .nullable()
                 .min(0.0)
-                .default_value(json!(0)),
+                .default_value(json!(0))
+                .currency(),
         )
         .field(FieldDef::text("notes").nullable().list(false))
         .field(FieldDef::one_to_many("items", "OrderItem", "order_id"))
@@ -246,7 +297,7 @@ pub fn order_item() -> EntityDef {
                 .min(1.0)
                 .default_value(json!(1)),
         )
-        .field(FieldDef::decimal("unit_price").required().min(0.0))
+        .field(FieldDef::decimal("unit_price").required().min(0.0).currency())
         .field(FieldDef::text("notes").nullable().list(false))
         .build()
 }
@@ -261,7 +312,7 @@ pub fn payment() -> EntityDef {
                 .required()
                 .label("Order"),
         )
-        .field(FieldDef::decimal("amount").required().min(0.0))
+        .field(FieldDef::decimal("amount").required().min(0.0).currency())
         .field(
             FieldDef::enum_values("method", vec!["cash", "card", "other"])
                 .required()
@@ -273,6 +324,182 @@ pub fn payment() -> EntityDef {
                 .required()
                 .default_value(json!("pending"))
                 .filterable(),
+        )
+        .build()
+}
+
+/// Framework UI showcase: every core widget, no custom React page.
+pub fn ui_showcase() -> EntityDef {
+    EntityDef::new("UiShowcase")
+        .label("UI Showcase")
+        .label_plural("UI Showcases")
+        .table_name("ui_showcases")
+        .slug_name("ui-showcases")
+        .description("Reference entity covering the V0.5 widget set")
+        .field(
+            FieldDef::string("name")
+                .required()
+                .searchable()
+                .section("Basics")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::text("description")
+                .nullable()
+                .list(false)
+                .section("Basics")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::integer("age")
+                .nullable()
+                .min(0.0)
+                .max(120.0)
+                .section("Basics")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::decimal("price")
+                .nullable()
+                .min(0.0)
+                .currency()
+                .section("Money")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::decimal("discount")
+                .nullable()
+                .percentage()
+                .section("Money")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::date("birth_date")
+                .nullable()
+                .ui(UiConfig::date())
+                .section("Schedule")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::time("appointment_time")
+                .nullable()
+                .ui(UiConfig::time())
+                .section("Schedule")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::datetime("appointment_at")
+                .nullable()
+                .ui(UiConfig::datetime().tenant_timezone())
+                .section("Schedule")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::string("brand_color")
+                .nullable()
+                .ui(UiConfig::color())
+                .section("Appearance")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::enum_("status", vec!["Draft", "Active", "Cancelled"])
+                .required()
+                .default_value(json!("Draft"))
+                .filterable()
+                .section("Status")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::json("categories")
+                .nullable()
+                .ui(UiConfig::tags())
+                .list(false)
+                .section("Status")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::relation("customer_id", "Customer")
+                .nullable()
+                .label("Customer")
+                .section("Relations")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::boolean("active")
+                .required()
+                .default_value(json!(true))
+                .ui(UiConfig::checkbox())
+                .section("Flags")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::boolean("enabled")
+                .required()
+                .default_value(json!(true))
+                .ui(UiConfig::switch())
+                .section("Flags")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::string("phone")
+                .nullable()
+                .phone()
+                .section("Contact")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::string("email")
+                .nullable()
+                .email()
+                .section("Contact")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::string("website")
+                .nullable()
+                .url()
+                .section("Contact")
+                .tab("Details"),
+        )
+        .field(
+            FieldDef::json("tags")
+                .nullable()
+                .ui(UiConfig::tags())
+                .list(false)
+                .section("Content")
+                .tab("Media"),
+        )
+        .field(
+            FieldDef::text("rich_description")
+                .nullable()
+                .rich_text()
+                .list(false)
+                .section("Content")
+                .tab("Media"),
+        )
+        .field(
+            FieldDef::json("metadata")
+                .nullable()
+                .ui(UiConfig::json())
+                .list(false)
+                .section("Content")
+                .tab("Media"),
+        )
+        .field(
+            FieldDef::string("image")
+                .nullable()
+                .ui(UiConfig::image())
+                .list(false)
+                .section("Files")
+                .tab("Media"),
+        )
+        .field(
+            FieldDef::string("attachment")
+                .nullable()
+                .ui(UiConfig::file())
+                .list(false)
+                .section("Files")
+                .tab("Media"),
         )
         .build()
 }

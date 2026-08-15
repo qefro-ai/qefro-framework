@@ -1,6 +1,8 @@
 import { Navigate, NavLink, Route, Routes, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
-import { api, clearToken, hasToken, type TenantConfig, type UiEntity } from "./api";
+import { api, ApiError, clearToken, hasToken, onAuthChange, type TenantConfig, type UiEntity } from "./api";
+import { TenantThemeContext } from "./metadata/context";
+import "./widgets";
 import Login from "./pages/Login";
 import EntityList from "./pages/EntityList";
 import EntityForm from "./pages/EntityForm";
@@ -9,7 +11,11 @@ import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
 
 export default function App() {
-  if (!hasToken()) {
+  const [authed, setAuthed] = useState(hasToken());
+
+  useEffect(() => onAuthChange(() => setAuthed(hasToken())), []);
+
+  if (!authed) {
     return (
       <Routes>
         <Route path="/login" element={<Login />} />
@@ -54,9 +60,11 @@ function Shell() {
           );
         }
       })
-      .catch(() => {
-        clearToken();
-        navigate("/login");
+      .catch((err) => {
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+          clearToken();
+          navigate("/login");
+        }
       });
     api
       .me()
@@ -68,11 +76,11 @@ function Shell() {
   useEffect(() => {
     const root = document.documentElement;
     const primary = config?.branding.primary_color;
-    const secondary = config?.branding.secondary_color;
-    const accent = config?.branding.accent_color;
-    if (primary) root.style.setProperty("--accent", primary);
-    if (secondary) root.style.setProperty("--bg", secondary);
+    const accent = config?.branding.accent_color || primary;
     if (accent) root.style.setProperty("--accent", accent);
+    if (primary) root.style.setProperty("--primary", primary);
+    const secondary = config?.branding.secondary_color;
+    if (secondary) root.style.setProperty("--secondary", secondary);
     const name =
       config?.branding.company_name || config?.branding.app_name || "Workspace";
     document.title = name;
@@ -101,29 +109,39 @@ function Shell() {
 
   const appName =
     config?.branding.company_name || config?.branding.app_name || "Workspace";
+  const theme = {
+    timezone: config?.business?.timezone || "UTC",
+    locale: config?.business?.locale || "en-US",
+    currency: config?.business?.currency || "USD",
+  };
 
   return (
+    <TenantThemeContext.Provider value={theme}>
     <div className="shell">
       <aside className="nav">
-        {config?.branding.logo ? <img src={config.branding.logo} alt="" className="logo" /> : null}
-        <h1>{appName}</h1>
-        <div className="badge">{me}</div>
-        <NavLink to="/" className={({ isActive }) => (isActive ? "active" : "")} end>
-          Dashboard
-        </NavLink>
-        {navEntities.map((e) => (
-          <NavLink
-            key={e.slug}
-            to={`/${e.slug}`}
-            className={({ isActive }) => (isActive ? "active" : "")}
-          >
-            {e.label_plural}
+        <div className="nav-brand">
+          {config?.branding.logo ? <img src={config.branding.logo} alt="" className="logo" /> : null}
+          <h1>{appName}</h1>
+        </div>
+        <div className="nav-links">
+          <NavLink to="/" className={({ isActive }) => (isActive ? "active" : "")} end>
+            Dashboard
           </NavLink>
-        ))}
-        <NavLink to="/settings" className={({ isActive }) => (isActive ? "active" : "")}>
-          Settings
-        </NavLink>
-        <p>
+          {navEntities.map((e) => (
+            <NavLink
+              key={e.slug}
+              to={`/${e.slug}`}
+              className={({ isActive }) => (isActive ? "active" : "")}
+            >
+              {e.label_plural}
+            </NavLink>
+          ))}
+          <NavLink to="/settings" className={({ isActive }) => (isActive ? "active" : "")}>
+            Settings
+          </NavLink>
+        </div>
+        <div className="nav-footer">
+          <div className="badge">{me || "Signed in"}</div>
           <button
             className="ghost"
             onClick={() => {
@@ -133,7 +151,7 @@ function Shell() {
           >
             Log out
           </button>
-        </p>
+        </div>
       </aside>
       <main className="main">
         <Routes>
@@ -151,5 +169,6 @@ function Shell() {
         </Routes>
       </main>
     </div>
+    </TenantThemeContext.Provider>
   );
 }

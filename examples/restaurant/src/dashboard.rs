@@ -14,4 +14,6 @@ pub fn ops() -> DashboardDef {
         .card(
             DashboardCard::sum("Today's sales", "Payment", "amount").filter("status", "captured"),
         )
+        .card(DashboardCard::status_breakdown("Reservations by status", "Reservation", "status"))
+        .card(DashboardCard::recent("Recent reservations", "Reservation", 8))
 }

@@ -372,6 +372,9 @@ fn field_schema(field: &qefro_core::FieldDef) -> Value {
         FieldType::Enum { values } => json!({ "type": "string", "enum": values }),
         FieldType::Json => json!({ "type": "object" }),
         FieldType::Uuid | FieldType::Relation => json!({ "type": "string", "format": "uuid" }),
+        FieldType::Date => json!({ "type": "string", "format": "date" }),
+        FieldType::Time => json!({ "type": "string", "format": "time" }),
+        FieldType::DateTime => json!({ "type": "string", "format": "date-time" }),
         _ => json!({ "type": "string" }),
     }
 }

@@ -2,6 +2,8 @@
 
 Qefro is a modular monolith. One HTTP process, an optional dedicated worker, one PostgreSQL database, one generic frontend. Redis is not required.
 
+V0.5 extends V0.4. It does not rewrite the runtime. It turns generic CRUD into a metadata-driven form engine: data type stays independent of widget, UI schema is versioned, and the frontend resolves widgets through a registry.
+
 V0.4 extends V0.3. It does not rewrite CRUD, operations, or the agent boundary. It adds production tenant customization, application entitlements, and an explicit worker policy.
 
 ## Metadata is the source of truth

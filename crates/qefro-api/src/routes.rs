@@ -1,12 +1,14 @@
 use crate::error::ApiError;
 use crate::extract::Auth;
 use crate::state::AppState;
-use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::extract::{Multipart, Path, Query, State};
+use axum::http::{header, StatusCode};
+use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use qefro_auth::AuthToken;
 use qefro_core::{AppManifest, QefroError, TenantConfig};
+use qefro_db::BlobMeta;
 use qefro_search::parse_query;
 use qefro_tenant::Tenant;
 use serde::Deserialize;
@@ -45,6 +47,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/tenant/branding", get(get_branding).patch(patch_branding))
         .route("/api/v1/tenant/apps", get(get_apps).patch(patch_apps))
         .route("/api/v1/tenant/features", get(get_features).patch(patch_features))
+        .route("/api/v1/files", post(upload_file))
+        .route("/api/v1/files/{key}", get(download_file).delete(delete_file))
+        .route("/api/v1/saved-filters", get(list_saved_filters).post(create_saved_filter))
+        .route("/api/v1/saved-filters/{id}", axum::routing::delete(delete_saved_filter))
         .route("/api/v1/dashboards/{name}", get(get_dashboard))
         .route("/api/v1/{slug}/{id}/workflow", get(get_workflow_state))
         .route("/api/v1/{slug}/{id}/transition", post(transition_entity))
@@ -252,6 +258,7 @@ async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<
         })
         .collect();
     Ok(Json(json!({
+        "schema_version": qefro_core::UI_SCHEMA_VERSION,
         "entities": entities,
         "branding": config.branding,
         "enabled_apps": ctx.enabled_apps,
@@ -378,6 +385,7 @@ fn reject_reserved(slug: &str) -> Result<(), ApiError> {
     const RESERVED: &[&str] = &[
         "auth", "meta", "tenants", "tenant", "agent", "audit", "health", "ready", "events", "docs",
         "tools", "dashboards", "settings", "users", "operations", "jobs",
+        "files", "saved-filters",
     ];
     if RESERVED.contains(&slug) {
         Err(QefroError::not_found(format!("entity '{slug}' not found")).into())
@@ -710,4 +718,188 @@ fn reject_client_tenant_field(data: &Value) -> Result<(), ApiError> {
     } else {
         Ok(())
     }
+}
+
+const MAX_UPLOAD_BYTES: usize = 8 * 1024 * 1024;
+
+async fn upload_file(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Query(params): Query<HashMap<String, String>>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, ApiError> {
+    let kind = params.get("kind").map(|s| s.as_str()).unwrap_or("file");
+    let mut filename = String::from("upload.bin");
+    let mut content_type = String::from("application/octet-stream");
+    let mut bytes = Vec::new();
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| QefroError::bad_request(format!("multipart: {e}")))?
+    {
+        if let Some(name) = field.file_name() {
+            filename = sanitize_filename(name);
+        }
+        if let Some(ct) = field.content_type() {
+            content_type = ct.to_string();
+        }
+        bytes = field
+            .bytes()
+            .await
+            .map_err(|e| QefroError::bad_request(format!("upload: {e}")))?
+            .to_vec();
+    }
+    if bytes.is_empty() {
+        return Err(QefroError::bad_request("file is required").into());
+    }
+    if bytes.len() > MAX_UPLOAD_BYTES {
+        return Err(QefroError::bad_request("file exceeds 8MB limit").into());
+    }
+    if kind == "image" && !content_type.starts_with("image/") {
+        return Err(QefroError::bad_request("image uploads must be an image MIME type").into());
+    }
+    if !allowed_mime(&content_type) {
+        return Err(QefroError::bad_request("file type is not allowed").into());
+    }
+    let key = format!("{}-{}", Uuid::new_v4(), filename);
+    state.blob_store.put(ctx.tenant_id, &key, &bytes)?;
+    let meta = BlobMeta {
+        key: key.clone(),
+        filename,
+        content_type: content_type.clone(),
+        size: bytes.len() as i64,
+    };
+    state.blobs.insert(ctx.tenant_id, ctx.user_id, &meta).await?;
+    Ok(Json(json!({
+        "key": meta.key,
+        "filename": meta.filename,
+        "content_type": meta.content_type,
+        "size": meta.size,
+        "url": format!("/api/v1/files/{}", meta.key),
+    })))
+}
+
+async fn download_file(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(key): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let meta = state.blobs.get(ctx.tenant_id, &key).await?;
+    let bytes = state.blob_store.get(ctx.tenant_id, &key)?;
+    let disposition = format!("inline; filename=\"{}\"", meta.filename.replace('"', ""));
+    Ok((
+        [
+            (header::CONTENT_TYPE, meta.content_type),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        bytes,
+    ))
+}
+
+async fn delete_file(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(key): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let _ = state.blobs.get(ctx.tenant_id, &key).await?;
+    state.blob_store.delete(ctx.tenant_id, &key)?;
+    state.blobs.delete(ctx.tenant_id, &key).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn sanitize_filename(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let cleaned: String = base
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "upload.bin".into()
+    } else {
+        cleaned.chars().take(80).collect()
+    }
+}
+
+fn allowed_mime(ct: &str) -> bool {
+    ct.starts_with("image/")
+        || ct.starts_with("text/")
+        || matches!(
+            ct,
+            "application/pdf"
+                | "application/json"
+                | "application/octet-stream"
+                | "application/zip"
+        )
+}
+
+#[derive(Deserialize)]
+struct SavedFilterBody {
+    entity: String,
+    name: String,
+    #[serde(default)]
+    query: Value,
+}
+
+async fn list_saved_filters(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    let entity = params
+        .get("entity")
+        .ok_or_else(|| QefroError::bad_request("entity is required"))?;
+    ensure_entity_app(&state, &ctx, entity)?;
+    let items = state
+        .saved_filters
+        .list(ctx.tenant_id, ctx.user_id, entity)
+        .await?;
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn create_saved_filter(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Json(body): Json<SavedFilterBody>,
+) -> Result<Json<Value>, ApiError> {
+    ensure_entity_app(&state, &ctx, &body.entity)?;
+    if body.name.trim().is_empty() {
+        return Err(QefroError::bad_request("name is required").into());
+    }
+    let created = state
+        .saved_filters
+        .create(
+            ctx.tenant_id,
+            ctx.user_id,
+            &body.entity,
+            body.name.trim(),
+            body.query,
+        )
+        .await?;
+    Ok(Json(serde_json::to_value(created).unwrap_or(json!({}))))
+}
+
+async fn delete_saved_filter(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .saved_filters
+        .delete(ctx.tenant_id, ctx.user_id, id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+fn ensure_entity_app(state: &AppState, ctx: &qefro_core::OpContext, name: &str) -> Result<(), ApiError> {
+    let entity = state.entities.registry().get(name)?;
+    if !ctx.allows_app(entity.module.as_deref()) {
+        return Err(QefroError::not_found(format!("entity '{name}' not found")).into());
+    }
+    Ok(())
 }

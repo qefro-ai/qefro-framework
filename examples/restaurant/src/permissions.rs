@@ -13,6 +13,7 @@ pub fn grants() -> Vec<PermissionGrant> {
         "Order",
         "OrderItem",
         "Payment",
+        "UiShowcase",
     ];
     for entity in manager_entities {
         grants.push(PermissionGrant::crud(ROLE_MANAGER, entity));
@@ -30,6 +31,7 @@ pub fn grants() -> Vec<PermissionGrant> {
         "Customer",
         "MenuItem",
         "DiningTable",
+        "UiShowcase",
     ] {
         grants.push(PermissionGrant::new(
             ROLE_STAFF,

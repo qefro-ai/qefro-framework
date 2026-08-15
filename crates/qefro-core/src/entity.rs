@@ -1,7 +1,7 @@
 use crate::error::{QefroError, QefroResult};
 use crate::field::{FieldDef, FieldType};
 use crate::ident::to_plural_slug;
-use crate::ui::{UiEntityMeta, UiFieldView};
+use crate::ui::{UiEntityMeta, UiFieldView, UI_SCHEMA_VERSION};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -288,42 +288,74 @@ impl EntityDef {
             .fields
             .iter()
             .filter(|f| !f.system)
-            .map(|f| UiFieldView {
-                name: f.name.clone(),
-                field_type: f.field_type.as_str().to_string(),
-                label: f.ui.label.clone(),
-                description: f.ui.description.clone().or(f.ui.help.clone()),
-                required: f.required,
-                list: f.ui.list,
-                list_visible: f.ui.list && !f.ui.hidden,
-                form: f.ui.form,
-                form_visible: f.ui.form && !f.ui.hidden,
-                filter: f.ui.filter,
-                filterable: f.ui.filter,
-                searchable: f.searchable,
-                sortable: f.ui.sortable || matches!(f.name.as_str(), "created_at" | "updated_at" | "name"),
-                hidden: f.ui.hidden,
-                widget: f.ui.widget,
-                placeholder: f.ui.placeholder.clone(),
-                section: f.ui.section.clone(),
-                width: f.ui.width.clone(),
-                order: f.ui.order,
-                enum_values: match &f.field_type {
-                    FieldType::Enum { values } => Some(values.clone()),
-                    _ => None,
-                },
-                relation: f.relation.as_ref().map(|r| r.target_entity.clone()),
-                relation_kind: f.relation.as_ref().map(|r| match r.kind {
-                    crate::field::RelationKind::ManyToOne => "many_to_one".into(),
-                    crate::field::RelationKind::OneToMany => "one_to_many".into(),
-                    crate::field::RelationKind::ManyToMany => "many_to_many".into(),
-                }),
-                inverse_field: f.relation.as_ref().and_then(|r| r.inverse_field.clone()),
-                readonly: f.ui.readonly,
+            .map(|f| {
+                let mut widget_options = f.ui.widget_options.clone();
+                if widget_options.entity.is_none() {
+                    widget_options.entity = f.relation.as_ref().map(|r| r.target_entity.clone());
+                }
+                UiFieldView {
+                    name: f.name.clone(),
+                    field_type: f.field_type.as_str().to_string(),
+                    label: f.ui.label.clone(),
+                    description: f.ui.description.clone().or(f.ui.help.clone()),
+                    required: f.required,
+                    list: f.ui.list,
+                    list_visible: f.ui.list && !f.ui.hidden,
+                    form: f.ui.form,
+                    form_visible: f.ui.form && !f.ui.hidden,
+                    detail: f.ui.detail,
+                    detail_visible: f.ui.detail && !f.ui.hidden,
+                    filter: f.ui.filter,
+                    filterable: f.ui.filter,
+                    searchable: f.searchable,
+                    sortable: f.ui.sortable
+                        || matches!(f.name.as_str(), "created_at" | "updated_at" | "name"),
+                    hidden: f.ui.hidden,
+                    disabled: f.ui.disabled,
+                    widget: f.ui.widget.clone(),
+                    widget_options,
+                    placeholder: f.ui.placeholder.clone(),
+                    help: f.ui.help.clone(),
+                    help_text: f.ui.help.clone(),
+                    section: f.ui.section.clone(),
+                    tab: f.ui.tab.clone(),
+                    width: f.ui.width.clone(),
+                    order: f.ui.order,
+                    enum_values: match &f.field_type {
+                        FieldType::Enum { values } => Some(values.clone()),
+                        _ => None,
+                    },
+                    relation: f.relation.as_ref().map(|r| r.target_entity.clone()),
+                    relation_kind: f.relation.as_ref().map(|r| match r.kind {
+                        crate::field::RelationKind::ManyToOne => "many_to_one".into(),
+                        crate::field::RelationKind::OneToMany => "one_to_many".into(),
+                        crate::field::RelationKind::ManyToMany => "many_to_many".into(),
+                    }),
+                    inverse_field: f.relation.as_ref().and_then(|r| r.inverse_field.clone()),
+                    readonly: f.ui.readonly,
+                    visible_when: f.ui.visible_when.clone(),
+                    readonly_when: f.ui.readonly_when.clone(),
+                    default_from: f.default_from.clone(),
+                }
             })
             .collect();
         fields.sort_by_key(|f| f.order);
+        let mut tabs = Vec::new();
+        let mut sections = Vec::new();
+        for f in &fields {
+            if let Some(tab) = &f.tab {
+                if !tabs.iter().any(|t| t == tab) {
+                    tabs.push(tab.clone());
+                }
+            }
+            if let Some(section) = &f.section {
+                if !sections.iter().any(|s| s == section) {
+                    sections.push(section.clone());
+                }
+            }
+        }
         UiEntityMeta {
+            schema_version: UI_SCHEMA_VERSION.into(),
             entity: self.name.clone(),
             label: self.label.clone(),
             label_plural: self.label_plural.clone(),
@@ -335,6 +367,8 @@ impl EntityDef {
             display_field: self.display_field.clone(),
             module: self.module.clone(),
             fields,
+            tabs,
+            sections,
         }
     }
 
@@ -421,7 +455,8 @@ fields:
         let title = ui.fields.iter().find(|f| f.name == "title").unwrap();
         assert!(title.list_visible);
         assert!(title.form_visible);
-        assert_eq!(title.widget.as_str(), "text");
+        assert_eq!(title.widget, "text");
+        assert_eq!(ui.schema_version, "1");
     }
 
     #[test]
@@ -434,7 +469,7 @@ fields:
         let customer = ui.fields.iter().find(|f| f.name == "customer_id").unwrap();
         assert_eq!(customer.relation.as_deref(), Some("Customer"));
         assert_eq!(customer.relation_kind.as_deref(), Some("many_to_one"));
-        assert_eq!(customer.widget.as_str(), "relation");
+        assert_eq!(customer.widget, "relation");
         let orders = ui.fields.iter().find(|f| f.name == "orders").unwrap();
         assert_eq!(orders.relation_kind.as_deref(), Some("one_to_many"));
         assert!(!orders.form_visible);
