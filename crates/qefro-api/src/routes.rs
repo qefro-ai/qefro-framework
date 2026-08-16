@@ -594,6 +594,7 @@ async fn get_dashboard(
     State(state): State<AppState>,
     Auth(ctx): Auth,
     Path(name): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, ApiError> {
     let dash = state
         .dashboards_live()
@@ -603,9 +604,27 @@ async fn get_dashboard(
     if !ctx.allows_app(dash.module.as_deref()) {
         return Err(QefroError::not_found(format!("dashboard '{name}' not found")).into());
     }
+    let extra: Vec<qefro_core::ui::DashboardFilter> = params
+        .into_iter()
+        .filter(|(k, v)| !k.is_empty() && !v.is_empty() && !["name"].contains(&k.as_str()))
+        .map(|(field, value)| qefro_core::ui::DashboardFilter { field, value })
+        .collect();
     let mut cards = Vec::new();
     for card in &dash.cards {
-        cards.push(state.entities.dashboard_card_value(&ctx, card).await?);
+        let mut card = card.clone();
+        for extra_f in &extra {
+            let base = extra_f
+                .field
+                .split_once('.')
+                .map(|(f, _)| f)
+                .unwrap_or(&extra_f.field);
+            card.filters.retain(|f| {
+                let fb = f.field.split_once('.').map(|(n, _)| n).unwrap_or(&f.field);
+                fb != base
+            });
+            card.filters.push(extra_f.clone());
+        }
+        cards.push(state.entities.dashboard_card_value(&ctx, &card).await?);
     }
     Ok(Json(json!({
         "name": dash.name,

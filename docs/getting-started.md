@@ -54,7 +54,7 @@ cd frontend && npm install && npm run dev
 | Documents | [documents.md](documents.md) |
 | Workflows | [workflows.md](workflows.md) |
 | Permissions | [permissions.md](permissions.md) |
-| UI | [ui.md](ui.md) |
+| UI | [ui.md](ui.md), [ui-2.md](ui-2.md), [views.md](views.md) |
 | Studio | [studio.md](studio.md) |
 | Reports / dashboards | [reports.md](reports.md), [dashboards.md](dashboards.md) |
 | Events / jobs | [events.md](events.md), [jobs.md](jobs.md) |

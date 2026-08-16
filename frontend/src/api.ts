@@ -129,8 +129,9 @@ export const api = {
     request<{ dashboards: Array<{ name: string; label: string; module?: string }> }>(
       "/api/v1/meta/dashboards",
     ),
-  dashboard: (name: string) =>
-    request<{
+  dashboard: (name: string, extra?: URLSearchParams) => {
+    const q = extra?.toString();
+    return request<{
       name: string;
       label: string;
       cards: Array<{
@@ -139,12 +140,15 @@ export const api = {
         metric: string;
         kind?: string;
         chart?: string;
+        group_by?: string;
+        filters?: Array<{ field: string; value: string }>;
         value: number;
         series?: Array<{ label: string; value: number }>;
         items?: Record<string, unknown>[];
         total?: number;
       }>;
-    }>(`/api/v1/dashboards/${name}`),
+    }>(`/api/v1/dashboards/${name}${q ? `?${q}` : ""}`);
+  },
   list: (slug: string, params: URLSearchParams) =>
     request<{ items: Record<string, unknown>[]; total: number; page: number; page_size: number }>(
       `/api/v1/${slug}?${params}`,
@@ -344,19 +348,29 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ csv, mapping: mapping ?? [], batch_size: 100 }),
     }),
-  uploadAttachment: async (slug: string, id: string, file: File) => {
-    const token = localStorage.getItem(TOKEN_KEY);
-    const body = new FormData();
-    body.append("file", file);
-    const res = await fetch(`/api/v1/${slug}/${id}/attachments`, {
-      method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body,
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new ApiError(data.message || data.error || res.statusText, res.status);
-    return data as Record<string, unknown>;
-  },
+  uploadAttachment: (slug: string, id: string, file: File, onProgress?: (n: number) => void) =>
+    new Promise<Record<string, unknown>>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", `/api/v1/${slug}/${id}/attachments`);
+      const headers = tokenHeader();
+      for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+      };
+      xhr.onload = () => {
+        try {
+          const data = JSON.parse(xhr.responseText || "{}");
+          if (xhr.status >= 400) reject(new ApiError(data.message || xhr.statusText, xhr.status));
+          else resolve(data);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      xhr.onerror = () => reject(new ApiError("upload failed", 0));
+      const body = new FormData();
+      body.append("file", file);
+      xhr.send(body);
+    }),
   webhookDeliveries: (name: string) =>
     request<{ deliveries: Array<Record<string, unknown>> }>(`/api/v1/webhooks/${name}/deliveries`),
   testWebhook: (name: string) =>

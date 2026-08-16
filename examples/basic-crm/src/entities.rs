@@ -1,4 +1,7 @@
-use qefro_core::{ChildTableDef, EntityDef, FieldDef, UiConfig};
+use qefro_core::{
+    CalendarViewSpec, ChildTableDef, EntityDef, EntityViews, FieldDef, KanbanCardSpec,
+    KanbanViewSpec, UiConfig,
+};
 use serde_json::json;
 
 pub fn crm_customer() -> EntityDef {
@@ -64,6 +67,22 @@ pub fn lead() -> EntityDef {
                 .nullable()
                 .label("Contact"),
         )
+        .views(EntityViews {
+            kanban: Some(KanbanViewSpec {
+                group_by: Some("status".into()),
+                card: Some(KanbanCardSpec {
+                    title: Some("title".into()),
+                    subtitle: Some("company".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            calendar: Some(CalendarViewSpec {
+                enabled: false,
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
         .build()
 }
 
@@ -133,6 +152,23 @@ pub fn opportunity() -> EntityDef {
                 .computed("SUM(lines.amount)")
                 .label("Value"),
         )
+        .views(EntityViews {
+            kanban: Some(KanbanViewSpec {
+                group_by: Some("status".into()),
+                card: Some(KanbanCardSpec {
+                    title: Some("name".into()),
+                    subtitle: Some("status".into()),
+                    fields: vec!["amount".into()],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            calendar: Some(CalendarViewSpec {
+                enabled: false,
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
         .build()
 }
 
@@ -188,5 +224,14 @@ pub fn activity() -> EntityDef {
                 .default_value(json!(false))
                 .filterable(),
         )
+        .views(EntityViews {
+            calendar: Some(CalendarViewSpec {
+                start: Some("due_at".into()),
+                title: Some("subject".into()),
+                subtitle: Some("kind".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
         .build()
 }

@@ -36,7 +36,7 @@ Staff and Customer have no Studio access.
 | YAML (`entities/*.yaml`) | Inspect, overlay, and write the changed entity file after validation. Comments in that file may be rewritten. Unrelated files are left alone. |
 | Rust (`examples/…`, catalog) | Inspect. Overlay safe presentation and additive fields at runtime. **Does not rewrite** `OperationHandler` or other Rust. |
 
-Live reload uses an overlay on the existing registries. `GET /api/v1/meta/ui` and `EntityService` both see the overlay. There is no second frontend renderer: form preview reuses `FormLayout` / the widget registry.
+Live reload uses an overlay on the existing registries. `GET /api/v1/meta/ui` and `EntityService` both see the overlay. There is no second frontend renderer: form preview reuses `FormLayout` / the widget registry, and the Views tab reuses the production view registry (`ListView`, `KanbanView`, `CalendarView`).
 
 Studio inspects V0.9 primitives on the same entity page: singleton flag, field permission levels, allow-on-submit, actions, links, public forms, plus dedicated Notifications / Webhooks / Public Forms lists. Secrets are never shown. Field permission_level and allow_on_submit publish through the existing `entity.field.ui` change path.
 
@@ -45,6 +45,8 @@ Studio inspects V0.9 primitives on the same entity page: singleton flag, field p
 **Platform Studio** (apps, versions, entities, workflows, permissions, reports): shared application metadata.
 
 **Tenant Studio** (`/studio/system` and existing `/api/v1/tenant*`): branding, navigation, terminology, enabled apps, locale, currency, timezone. Tenant A cannot read or write Tenant B’s drafts, branding, or data.
+
+The entity page includes Fields, Form/layout, **Views** (List / Kanban / Calendar / Detail detection plus production preview), Workflow, and Permissions. There is no second preview engine.
 
 ## HTTP
 

@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 license = "MIT"
 authors = ["Qefro"]
@@ -26,18 +26,18 @@ repository = "https://github.com/qefro-ai/qefro-framework"
 homepage = "https://github.com/qefro-ai/qefro-framework"
 
 [workspace.dependencies]
-qefro-core = { version = "1.0.0", path = "crates/qefro-core" }
-qefro-db = { version = "1.0.0", path = "crates/qefro-db" }
-qefro-api = { version = "1.0.0", path = "crates/qefro-api" }
-qefro-auth = { version = "1.0.0", path = "crates/qefro-auth" }
-qefro-permissions = { version = "1.0.0", path = "crates/qefro-permissions" }
-qefro-workflow = { version = "1.0.0", path = "crates/qefro-workflow" }
-qefro-tenant = { version = "1.0.0", path = "crates/qefro-tenant" }
-qefro-events = { version = "1.0.0", path = "crates/qefro-events" }
-qefro-search = { version = "1.0.0", path = "crates/qefro-search" }
-qefro-agent = { version = "1.0.0", path = "crates/qefro-agent" }
-qefro-restaurant = { version = "1.0.0", path = "examples/restaurant" }
-qefro-crm = { version = "1.0.0", path = "examples/basic-crm" }
+qefro-core = { version = "1.0.1", path = "crates/qefro-core" }
+qefro-db = { version = "1.0.1", path = "crates/qefro-db" }
+qefro-api = { version = "1.0.1", path = "crates/qefro-api" }
+qefro-auth = { version = "1.0.1", path = "crates/qefro-auth" }
+qefro-permissions = { version = "1.0.1", path = "crates/qefro-permissions" }
+qefro-workflow = { version = "1.0.1", path = "crates/qefro-workflow" }
+qefro-tenant = { version = "1.0.1", path = "crates/qefro-tenant" }
+qefro-events = { version = "1.0.1", path = "crates/qefro-events" }
+qefro-search = { version = "1.0.1", path = "crates/qefro-search" }
+qefro-agent = { version = "1.0.1", path = "crates/qefro-agent" }
+qefro-restaurant = { version = "1.0.1", path = "examples/restaurant" }
+qefro-crm = { version = "1.0.1", path = "examples/basic-crm" }
 toml = "0.8"
 semver = "1"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
@@ -75,3 +75,13 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 
 [profile.dev]
 debug = 1
+
+# cargo install uses the release profile. rustc's default strip=debuginfo
+# produces proc-macro dylibs (notably sqlx-macros) whose LINKEDIT string pool
+# is not 8-byte aligned. macOS 27 dyld rejects those with
+# "mis-aligned LINKEDIT string pool" (rust-lang/rust#157750).
+[profile.release]
+strip = "none"
+
+[profile.release.package.sqlx-macros]
+strip = "none"

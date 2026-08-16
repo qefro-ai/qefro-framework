@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, ApiError, type TenantConfig } from "../api";
+import { usePrefsOptional } from "../prefsContext";
 
 export default function Settings({
   config,
@@ -24,6 +25,7 @@ export default function Settings({
   const [terminology, setTerminology] = useState("");
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
+  const prefs = usePrefsOptional();
 
   useEffect(() => {
     if (!config) return;
@@ -109,6 +111,30 @@ export default function Settings({
         enforces enabled apps and permissions — hiding a nav item is not a security control.
       </p>
       <form className="form" onSubmit={onSubmit}>
+        {prefs ? (
+          <fieldset>
+            <legend>Appearance</legend>
+            <label>
+              Theme
+              <select value={prefs.prefs.theme} onChange={(e) => prefs.setTheme(e.target.value as "light" | "dark" | "system")}>
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
+            <label>
+              Density
+              <select
+                value={prefs.prefs.density}
+                onChange={(e) => prefs.setDensity(e.target.value as "comfortable" | "compact")}
+              >
+                <option value="comfortable">Comfortable</option>
+                <option value="compact">Compact</option>
+              </select>
+            </label>
+            <p className="muted">Saved on this device for the signed-in user. Accent color still comes from tenant branding.</p>
+          </fieldset>
+        ) : null}
         <fieldset>
           <legend>Branding</legend>
         <label>

@@ -20,3 +20,5 @@ Card kinds:
 | `list` / `table` / `activity` | `{ items, total }` from the entity list API |
 
 All queries run through `EntityService` with tenant, app entitlement, and `List` permission. Charts are simple SVG; there is no drag-and-drop dashboard builder.
+
+Metric cards drill into the generic list using the card's existing filters. Chart segments set dashboard query parameters and refetch. See [dashboard-drilldown.md](dashboard-drilldown.md).

@@ -9,6 +9,12 @@ cargo install qefro-cli
 qefro --help
 ```
 
+macOS 26/27 workaround if `sqlx` fails with `mis-aligned LINKEDIT string pool`:
+
+```bash
+CARGO_PROFILE_RELEASE_STRIP=none cargo install qefro-cli
+```
+
 ```bash
 export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro
 qefro dev --app restaurant

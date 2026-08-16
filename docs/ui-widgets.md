@@ -32,7 +32,9 @@ YAML:
 
 The React app resolves `field.ui.widget` through `registerWidget`. Built-in names:
 
-`text`, `textarea`, `number`, `currency`, `percentage`, `date`, `time`, `datetime`, `color`, `select`, `multiselect`, `relation`, `checkbox`, `switch`, `radio`, `tags`, `phone`, `url`, `email`, `rich_text`, `file`, `image`, `json`, `child_table`
+`text`, `textarea`, `number`, `currency`, `percentage`, `date`, `time`, `datetime`, `duration`, `color`, `select`, `multiselect`, `relation`, `checkbox`, `switch`, `radio`, `tags`, `phone`, `url`, `email`, `password`, `rich_text`, `markdown`, `file`, `image`, `json`, `status`, `child_table`
+
+See [Widgets](widgets.md) and [UI 2.0](ui-2.md).
 
 An application can register a custom widget without changing framework core:
 

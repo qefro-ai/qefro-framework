@@ -38,3 +38,11 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 sqlx.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Used when this crate is the package root (`cargo install qefro-cli` from crates.io).
+# Workspace builds ignore member profiles; the same settings live in the root Cargo.toml.
+[profile.release]
+strip = "none"
+
+[profile.release.package.sqlx-macros]
+strip = "none"

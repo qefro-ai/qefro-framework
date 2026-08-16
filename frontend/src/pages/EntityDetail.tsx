@@ -4,11 +4,17 @@ import {
   api,
   detailVisible,
   expandedLabel,
-  tokenHeader,
   type EntityAction,
   type UiEntity,
   type WorkflowAction,
 } from "../api";
+import { ActionBar } from "../components/actions/ActionBar";
+import { AttachmentsPanel } from "../components/attachments/AttachmentsPanel";
+import { Timeline } from "../components/timeline/Timeline";
+import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
+import { StatusBadge } from "../components/ui/StatusBadge";
+import { friendlyError } from "../friendlyError";
+import { relativeTime } from "../format";
 import { formatMoney, utcToDatetimeLocal } from "../metadata/timezone";
 import { useTenantTheme } from "../metadata/context";
 import { useRealtime } from "../realtime";
@@ -22,7 +28,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const [activity, setActivity] = useState<Array<Record<string, unknown>>>([]);
   const [attachments, setAttachments] = useState<Array<Record<string, unknown>>>([]);
   const theme = useTenantTheme();
-  const [tab, setTab] = useState("");
+  const [tab, setTab] = useState("overview");
 
   async function load() {
     if (!slug || !id) return;
@@ -43,7 +49,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   }
 
   useEffect(() => {
-    load().catch((e) => setError(e.message));
+    load().catch((e) => setError(friendlyError(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, id]);
 
@@ -51,9 +57,9 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
     load().catch(() => undefined);
   });
 
-  if (!meta || !slug || !id) return <p>Unknown entity.</p>;
-  if (!row && !error) return <p className="muted">Loading…</p>;
-  if (!row) return <p className="error">{error || "Unable to load record."}</p>;
+  if (!meta || !slug || !id) return <ErrorState message="Unknown entity." />;
+  if (!row && !error) return <Skeleton rows={6} />;
+  if (!row) return <ErrorState message={error || "Unable to load record."} />;
 
   const workflow = row._workflow as
     | { current?: string; transitions?: WorkflowAction[] }
@@ -80,67 +86,205 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const childTables = meta.fields.filter(
     (f) => f.relation_kind === "child_table" || f.type === "child_table",
   );
-  const tabs = [...new Set(visible.map((f) => f.tab).filter(Boolean) as string[])];
-  const activeTab = tab || tabs[0] || "";
-  const shown = tabs.length ? visible.filter((f) => (f.tab ?? "") === activeTab) : visible;
-  const sections = group(shown);
+  const number =
+    row[meta.naming?.field || ""] ??
+    row.name ??
+    row.code ??
+    row.title ??
+    id;
+  const owner = row.owner ?? row.created_by ?? row.modified_by;
+  const created = row.created_at;
+  const statusField = meta.fields.find((f) => f.widget === "status" || f.name === "status");
+  const status = workflow?.current ?? row.status;
+
+  const chrome = [
+    { id: "overview", label: "Overview" },
+    ...childTables.map((c) => ({ id: `items:${c.name}`, label: c.label })),
+    { id: "related", label: "Related", hide: links.length === 0 && Object.keys(related).length === 0 },
+    { id: "files", label: "Attachments", hide: !meta.attachments },
+    { id: "activity", label: "Activity" },
+  ].filter((t) => !t.hide);
+
+  async function runAction(name: string, action?: EntityAction) {
+    if (!slug || !id) return;
+    const message = action?.confirmation_message || `${action?.label || name}?`;
+    if ((action?.requires_confirmation || action?.confirmation_message) && !confirm(message)) return;
+    try {
+      const next = await api.action(slug, id, name);
+      setRow(next);
+      setError("");
+    } catch (e) {
+      setError(friendlyError(e));
+    }
+  }
 
   return (
     <div className="page">
-      <div className="row">
+      <header className="doc-header">
         <div>
           <div className="badge">{meta.entity}</div>
-          <h2>{String(row[meta.display_field || "name"] ?? meta.label)}</h2>
-          {workflow?.current && <p className="pill">{workflow.current}</p>}
+          <h2>
+            {meta.label} {String(number)}
+          </h2>
+          <p className="muted doc-meta">
+            {status ? <StatusBadge value={status} indicators={statusField?.widget_options?.indicators} /> : null}
+            {owner ? <span> · {String(owner)}</span> : null}
+            {created ? <span> · {relativeTime(created, theme.locale)}</span> : null}
+          </p>
         </div>
         <div className="actions">
           <Link to={`/${slug}/${id}/edit`}>
-            <button className="ghost">Edit</button>
+            <button>Edit</button>
           </Link>
-          <a href={`/api/v1/${slug}/${id}/print`} target="_blank" rel="noreferrer">
-            <button className="ghost">Print</button>
-          </a>
-          <a href={`/api/v1/${slug}/${id}/print.pdf`} target="_blank" rel="noreferrer">
-            <button className="ghost">PDF</button>
-          </a>
-          <button
-            className="ghost"
-            onClick={async () => {
-              if (!confirm("Delete this record?")) return;
-              await api.remove(slug, id);
-              navigate(`/${slug}`);
+          <ActionBar
+            actions={actions}
+            transitions={workflow?.transitions}
+            onAction={(name, action) => void runAction(name, action)}
+            onTransition={async (name) => {
+              try {
+                const next = await api.transition(slug, id, name);
+                setRow(next);
+                setError("");
+              } catch (e) {
+                setError(friendlyError(e));
+              }
             }}
-          >
-            Delete
-          </button>
+          />
+          <div className="more-menu">
+            <details>
+              <summary className="ghost btn-like">More</summary>
+              <div className="menu-list">
+                <a href={`/api/v1/${slug}/${id}/print`} target="_blank" rel="noreferrer">
+                  Print
+                </a>
+                <a href={`/api/v1/${slug}/${id}/print.pdf`} target="_blank" rel="noreferrer">
+                  Download PDF
+                </a>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={async () => {
+                    if (!confirm("Delete this record?")) return;
+                    try {
+                      await api.remove(slug, id);
+                      navigate(`/${slug}`);
+                    } catch (e) {
+                      setError(friendlyError(e));
+                    }
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            </details>
+          </div>
         </div>
-      </div>
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-      {tabs.length > 1 && (
-        <div className="tabs" role="tablist">
-          {tabs.map((t) => (
-            <button key={t} type="button" className={activeTab === t ? "" : "ghost"} onClick={() => setTab(t)}>
-              {t}
-            </button>
+      </header>
+      {error && <ErrorState message={error} />}
+      {statusField?.enum_values && statusField.enum_values.length > 1 ? (
+        <ol className="wf-strip" aria-label="Status">
+          {statusField.enum_values.map((step) => (
+            <li key={step} className={String(status) === step ? "is-current" : undefined}>
+              {step}
+            </li>
           ))}
-        </div>
+        </ol>
+      ) : null}
+      <div className="tabs" role="tablist">
+        {chrome.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            className={tab === t.id ? "" : "ghost"}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {tab === "overview" ? (
+        <Overview
+          row={row}
+          fields={visible}
+          entities={entities}
+          theme={theme}
+          sections={meta.views?.detail?.sections}
+        />
+      ) : null}
+      {childTables.map((field) =>
+        tab === `items:${field.name}` ? (
+          <ChildPanel key={field.name} field={field} row={row} entities={entities} />
+        ) : null,
       )}
-      {sections.map(([section, fields]) => (
+      {tab === "related" ? (
+        <RelatedPanel links={links} related={related} id={id} />
+      ) : null}
+      {tab === "files" && meta.attachments ? (
+        <div className="panel" style={{ padding: "0.85rem" }}>
+          <h3>Attachments</h3>
+          <AttachmentsPanel slug={slug} id={id} items={attachments} onChanged={() => void load()} />
+        </div>
+      ) : null}
+      {tab === "activity" ? (
+        <div className="panel" style={{ padding: "0.85rem" }}>
+          <h3>Activity</h3>
+          <Timeline
+            items={activity.map((item) => ({
+              id: String(item.id ?? ""),
+              action: String(item.action ?? item.event ?? "updated"),
+              actor: item.actor ? String(item.actor) : item.user ? String(item.user) : undefined,
+              created_at: item.created_at,
+              summary: String(item.summary ?? item.action ?? item.event ?? "updated"),
+            }))}
+            timezone={theme.timezone}
+            locale={theme.locale}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Overview({
+  row,
+  fields,
+  entities,
+  theme,
+  sections: spec,
+}: {
+  row: Record<string, unknown>;
+  fields: UiEntity["fields"];
+  entities: UiEntity[];
+  theme: { currency: string; locale: string; timezone: string };
+  sections?: Array<{ title: string; fields?: string[] }>;
+}) {
+  const sections =
+    spec && spec.length
+      ? spec
+          .map((s) => [s.title, fields.filter((f) => (s.fields ?? []).includes(f.name))] as const)
+          .filter(([, fs]) => fs.length)
+      : group(fields);
+  if (fields.length === 0) return <EmptyState title="Nothing to show" />;
+  return (
+    <>
+      {sections.map(([section, sectionFields]) => (
         <div key={section || "default"} className="panel">
           {section ? <h3 style={{ padding: "0.85rem 0.85rem 0" }}>{section}</h3> : null}
           <table className="dl">
             <tbody>
-              {fields.map((f) => (
+              {sectionFields.map((f) => (
                 <tr key={f.name}>
                   <th>{f.label}</th>
                   <td>
-                    {f.relation
-                      ? relationLink(row, f.name, entities)
-                      : formatValue(row[f.name], f.widget, theme, f.widget_options?.currency)}
+                    {f.widget === "status" || f.name === "status" ? (
+                      <StatusBadge value={row[f.name]} indicators={f.widget_options?.indicators} />
+                    ) : f.relation ? (
+                      relationLink(row, f.name, entities)
+                    ) : (
+                      formatValue(row[f.name], f.widget, theme, f.widget_options?.currency)
+                    )}
                   </td>
                 </tr>
               ))}
@@ -148,145 +292,70 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
           </table>
         </div>
       ))}
-      {actions.length > 0 ? (
-        <div className="actions">
-          {actions.map((action) => (
-            <button
-              key={action.name}
-              className={action.style === "danger" ? "danger" : action.style === "ghost" ? "ghost" : undefined}
-              onClick={async () => {
-                const message = action.confirmation_message || `${action.label || action.name}?`;
-                if ((action.requires_confirmation || action.confirmation_message) && !confirm(message)) {
-                  return;
-                }
-                try {
-                  const next = await api.action(slug, id, action.name);
-                  setRow(next);
-                  setError("");
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : "failed");
-                }
-              }}
-            >
-              {action.label || action.name}
-            </button>
-          ))}
-        </div>
+    </>
+  );
+}
+
+function ChildPanel({
+  field,
+  row,
+  entities,
+}: {
+  field: UiEntity["fields"][number];
+  row: Record<string, unknown>;
+  entities: UiEntity[];
+}) {
+  const items = (Array.isArray(row[field.name]) ? row[field.name] : []) as Record<string, unknown>[];
+  const child = entities.find((e) => e.entity === (field.child_entity || field.relation));
+  const cols = (child?.fields ?? []).filter(
+    (f) => !f.hidden && f.list !== false && f.relation_kind !== "one_to_many",
+  );
+  return (
+    <div className="panel">
+      <h3 style={{ padding: "0.85rem 0.85rem 0" }}>{field.label}</h3>
+      {items.length === 0 ? (
+        <EmptyState title={`No ${field.label.toLowerCase()} yet`} />
       ) : (
-        workflow?.transitions &&
-        workflow.transitions.length > 0 && (
-          <div className="actions">
-            {workflow.transitions.map((t) => (
-              <button
-                key={t.name}
-                onClick={async () => {
-                  try {
-                    const next = await api.transition(slug, id, t.name);
-                    setRow(next);
-                    setError("");
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : "failed");
-                  }
-                }}
-              >
-                {t.label || t.name}
-              </button>
+        <table className="data">
+          <thead>
+            <tr>
+              {cols.map((c) => (
+                <th key={c.name}>{c.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, i) => (
+              <tr key={String(item.id ?? i)}>
+                {cols.map((c) => (
+                  <td key={c.name} data-label={c.label}>
+                    {String(item[c.name] ?? "")}
+                  </td>
+                ))}
+              </tr>
             ))}
-          </div>
-        )
+          </tbody>
+        </table>
       )}
-      {childTables.map((field) => {
-        const items = (Array.isArray(row[field.name]) ? row[field.name] : []) as Record<
-          string,
-          unknown
-        >[];
-        const child = entities.find((e) => e.entity === (field.child_entity || field.relation));
-        const cols = (child?.fields ?? []).filter(
-          (f) => !f.hidden && f.list !== false && f.relation_kind !== "one_to_many",
-        );
-        return (
-          <div key={field.name} className="panel">
-            <h3 style={{ padding: "0.85rem 0.85rem 0" }}>{field.label}</h3>
-            {items.length === 0 ? (
-              <p className="empty">No rows.</p>
-            ) : (
-              <table className="data">
-                <thead>
-                  <tr>
-                    {cols.map((c) => (
-                      <th key={c.name}>{c.label}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item, i) => (
-                    <tr key={String(item.id ?? i)}>
-                      {cols.map((c) => (
-                        <td key={c.name}>{String(item[c.name] ?? "")}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        );
-      })}
-      {meta.attachments ? (
-        <div className="panel">
-          <h3 style={{ padding: "0.85rem 0.85rem 0" }}>Attachments</h3>
-          {attachments.length === 0 ? <p className="empty">No files.</p> : null}
-          <ul>
-            {attachments.map((file) => (
-              <li key={String(file.id)}>
-                <a
-                  href={`/api/v1/attachments/${file.id}`}
-                  onClick={async (e) => {
-                    e.preventDefault();
-                    const res = await fetch(`/api/v1/attachments/${file.id}`, { headers: tokenHeader() });
-                    const blob = await res.blob();
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = String(file.filename ?? "file");
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                >
-                  {String(file.filename ?? file.id)}
-                </a>{" "}
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={async () => {
-                    await api.deleteAttachment(String(file.id));
-                    await load();
-                  }}
-                >
-                  Remove
-                </button>
-              </li>
-            ))}
-          </ul>
-          <label style={{ padding: "0.85rem" }}>
-            Attach file
-            <input
-              type="file"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                await api.uploadAttachment(slug, id, file);
-                e.target.value = "";
-                await load();
-              }}
-            />
-          </label>
-        </div>
-      ) : null}
+    </div>
+  );
+}
+
+function RelatedPanel({
+  links,
+  related,
+  id,
+}: {
+  links: Array<{ label: string; slug: string; relation: string; total: number }>;
+  related: Record<string, { slug: string; items: Record<string, unknown>[]; total: number }>;
+  id: string;
+}) {
+  return (
+    <>
       {links.length > 0 ? (
         <div className="panel related">
           <h3 style={{ padding: "0.85rem 0.85rem 0" }}>Related</h3>
-          <ul>
+          <ul className="related-tree">
             {links.map((link) => (
               <li key={`${link.slug}-${link.relation}`}>
                 <Link to={`/${link.slug}?${encodeURIComponent(link.relation)}=${id}`}>
@@ -299,14 +368,12 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
       ) : null}
       {Object.entries(related).map(([name, rel]) => (
         <div key={name} className="related panel">
-          <h3 style={{ padding: "0.85rem 0.85rem 0" }}>
-            {meta.fields.find((f) => f.name === name)?.label ?? name}
-          </h3>
+          <h3 style={{ padding: "0.85rem 0.85rem 0" }}>{name}</h3>
           <p className="muted" style={{ padding: "0 0.85rem" }}>
             {rel.total} related
           </p>
           {rel.items.length === 0 ? (
-            <p className="empty">No related records.</p>
+            <EmptyState title="No related records." />
           ) : (
             <ul>
               {rel.items.map((item) => (
@@ -320,22 +387,10 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
           )}
         </div>
       ))}
-      <div className="panel related">
-        <h3 style={{ padding: "0.85rem 0.85rem 0" }}>Activity</h3>
-        {activity.length === 0 ? (
-          <p className="empty">No activity yet.</p>
-        ) : (
-          <ul>
-            {activity.map((item, i) => (
-              <li key={String(item.id ?? i)}>
-                {String(item.action ?? item.event ?? "updated")} ·{" "}
-                {utcToDatetimeLocal(item.created_at, theme.timezone) || ""}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
+      {links.length === 0 && Object.keys(related).length === 0 ? (
+        <EmptyState title="No related records" />
+      ) : null}
+    </>
   );
 }
 

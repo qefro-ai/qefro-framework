@@ -74,9 +74,10 @@ pub use studio::{
 pub use seed::SeedBatch;
 pub use timezone::{canonicalize_datetime, local_to_utc, utc_to_local};
 pub use ui::{
-    DashboardCard, DashboardDef, TenantBranding, TenantBusinessConfig, TenantConfig,
+    CalendarViewSpec, DashboardCard, DashboardDef, DetailViewSpec, EntityViews, FormViewSpec,
+    KanbanCardSpec, KanbanViewSpec, ListViewSpec, TenantBranding, TenantBusinessConfig, TenantConfig,
     TenantFeatures, TenantUiConfig, UiConfig, UiEntityMeta, UiFieldMeta, UiWhen, UiWidget,
-    WidgetOptions, UI_SCHEMA_VERSION,
+    ViewSectionSpec, WidgetOptions, UI_SCHEMA_VERSION,
 };
 pub use validate::{destructive_field_removals, validate_bundle, InstalledAppRef, ValidationReport};
 pub use validation::{validate_record, ValidationRules};

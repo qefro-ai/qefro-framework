@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { useNavigate } from "react-router-dom";
+import { api, type UiEntity } from "../api";
 import { useRealtime } from "../realtime";
 
 type Note = {
@@ -7,12 +8,15 @@ type Note = {
   title?: string;
   body?: string;
   read_at?: string | null;
+  entity?: string;
+  record_id?: string;
 };
 
-export default function NotificationBell() {
+export default function NotificationBell({ entities = [] }: { entities?: UiEntity[] }) {
   const [open, setOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [items, setItems] = useState<Note[]>([]);
+  const navigate = useNavigate();
 
   async function load() {
     const data = await api.notifications();
@@ -28,23 +32,30 @@ export default function NotificationBell() {
     load().catch(() => undefined);
   });
 
+  function openRecord(note: Note) {
+    if (!note.entity || !note.record_id) return;
+    const slug = entities.find((e) => e.entity === note.entity)?.slug;
+    if (slug) navigate(`/${slug}/${note.record_id}`);
+  }
+
   return (
     <div className="notify-wrap">
       <button type="button" className="ghost" onClick={() => setOpen((v) => !v)} aria-label="Notifications">
-        🔔 {unread > 0 ? unread : ""}
+        🔔 {unread > 0 ? <span className="notify-count">{unread}</span> : null}
       </button>
       {open ? (
         <div className="notify-panel" role="dialog" aria-label="Notifications">
           {items.length === 0 ? <p className="muted">No notifications.</p> : null}
           <ul>
             {items.map((n) => (
-              <li key={String(n.id)}>
+              <li key={String(n.id)} className={n.read_at ? "is-read" : ""}>
                 <button
                   type="button"
                   className="ghost"
                   onClick={async () => {
                     if (n.id) await api.readNotification(String(n.id)).catch(() => undefined);
                     setOpen(false);
+                    openRecord(n);
                     await load().catch(() => undefined);
                   }}
                 >

@@ -1,6 +1,7 @@
 use qefro_core::{
-    ChildTableDef, DocumentConfig, EntityActionDef, EntityDef, FieldDef, LinkDef, NamingConfig,
-    PrintFormat, PublicFormDef, UiConfig,
+    CalendarViewSpec, ChildTableDef, DocumentConfig, EntityActionDef, EntityDef, EntityViews,
+    FieldDef, KanbanCardSpec, KanbanViewSpec, LinkDef, NamingConfig, PrintFormat, PublicFormDef,
+    UiConfig,
 };
 use serde_json::json;
 
@@ -278,6 +279,26 @@ pub fn reservation() -> EntityDef {
                 .visible_when("status", json!("Cancelled")),
         )
         .field(FieldDef::one_to_many("orders", "Order", "reservation_id"))
+        .views(EntityViews {
+            kanban: Some(KanbanViewSpec {
+                group_by: Some("status".into()),
+                card: Some(KanbanCardSpec {
+                    title: Some("guest_name".into()),
+                    subtitle: Some("reservation_time".into()),
+                    fields: vec!["party_size".into(), "reservation_date".into()],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            calendar: Some(CalendarViewSpec {
+                start: Some("reservation_date".into()),
+                time: Some("reservation_time".into()),
+                title: Some("guest_name".into()),
+                subtitle: Some("status".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
         .build()
 }
 
@@ -287,6 +308,18 @@ pub fn order() -> EntityDef {
         .label_plural("Orders")
         .table_name("orders")
         .workflow("order")
+        .views(EntityViews {
+            kanban: Some(KanbanViewSpec {
+                group_by: Some("status".into()),
+                card: Some(KanbanCardSpec {
+                    title: Some("doc_no".into()),
+                    subtitle: Some("status".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
         .attachments()
         .document(
             DocumentConfig::new()

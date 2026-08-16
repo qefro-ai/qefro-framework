@@ -1,9 +1,11 @@
 export function Chart({
   kind,
   series,
+  onSegmentClick,
 }: {
   kind?: string;
   series: Array<{ label: string; value: number }>;
+  onSegmentClick?: (label: string) => void;
 }) {
   if (!series.length) return <p className="muted">No data</p>;
   const max = Math.max(...series.map((s) => s.value), 1);
@@ -21,7 +23,17 @@ export function Chart({
           acc += s.value;
           const end = acc / total;
           const path = arc(cx, cy, r, start, end);
-          return <path key={s.label} d={path} fill={color(i)} />;
+          return (
+            <path
+              key={s.label}
+              d={path}
+              fill={color(i)}
+              role={onSegmentClick ? "button" : undefined}
+              tabIndex={onSegmentClick ? 0 : undefined}
+              onClick={() => onSegmentClick?.(s.label)}
+              style={{ cursor: onSegmentClick ? "pointer" : undefined }}
+            />
+          );
         })}
         {inner ? <circle cx={cx} cy={cy} r={inner} fill="var(--panel)" /> : null}
       </svg>
@@ -43,15 +55,26 @@ export function Chart({
   }
   return (
     <div className="bar-chart" role="img">
-      {series.map((s, i) => (
-        <div key={s.label} className="bar-row">
-          <span className="muted">{s.label}</span>
-          <div className="bar-track">
-            <div className="bar-fill" style={{ width: `${(s.value / max) * 100}%`, background: color(i) }} />
+      {series.map((s, i) => {
+        const inner = (
+          <>
+            <span className="muted">{s.label}</span>
+            <div className="bar-track">
+              <div className="bar-fill" style={{ width: `${(s.value / max) * 100}%`, background: color(i) }} />
+            </div>
+            <strong>{s.value}</strong>
+          </>
+        );
+        return onSegmentClick ? (
+          <button key={s.label} type="button" className="bar-row" onClick={() => onSegmentClick(s.label)}>
+            {inner}
+          </button>
+        ) : (
+          <div key={s.label} className="bar-row">
+            {inner}
           </div>
-          <strong>{s.value}</strong>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

@@ -15,6 +15,7 @@ export type WidgetOptions = {
   entity?: string;
   collapsed?: boolean;
   allow_create?: boolean;
+  indicators?: Record<string, string>;
   columns?: number;
   editable?: boolean;
   addable?: boolean;
@@ -96,6 +97,40 @@ export type UiEntity = {
   actions?: Array<{ name: string; label?: string; confirmation?: { required?: boolean; message?: string } }>;
   links?: Array<{ label: string; entity: string; relation: string }>;
   public_form?: { enabled?: boolean; slug?: string; fields?: string[] };
+  list?: {
+    columns?: Array<{ field: string; width?: number | string; widget?: string }>;
+    default_sort?: { field: string; direction?: "asc" | "desc" };
+    page_size?: number;
+    group_by?: string;
+  };
+  views?: EntityViews;
+};
+
+export type ViewKind = "list" | "kanban" | "calendar";
+
+export type EntityViews = {
+  list?: UiEntity["list"] & { group_by?: string };
+  form?: { sections?: ViewSection[] };
+  detail?: { sections?: ViewSection[] };
+  kanban?: {
+    enabled?: boolean;
+    group_by?: string;
+    card?: { title?: string; subtitle?: string; fields?: string[] };
+  };
+  calendar?: {
+    enabled?: boolean;
+    start?: string;
+    end?: string;
+    time?: string;
+    title?: string;
+    subtitle?: string;
+  };
+};
+
+export type ViewSection = {
+  title: string;
+  fields?: string[];
+  visible_when?: UiWhen;
 };
 
 export type TenantTheme = {

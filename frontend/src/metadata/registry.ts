@@ -8,6 +8,7 @@ export type WidgetProps = {
   entities: UiEntity[];
   disabled?: boolean;
   id?: string;
+  invalid?: boolean;
 };
 
 export type Widget = (props: WidgetProps) => ReactNode;

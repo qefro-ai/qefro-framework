@@ -4,6 +4,7 @@ import { useTenantTheme } from "../../metadata/context";
 import { registerWidget, renderWidget, type WidgetProps } from "../../metadata/registry";
 import { localToUtcIso, utcToLocalParts, formatMoney } from "../../metadata/timezone";
 import { previewFormula } from "../../metadata/formula";
+import { StatusBadge } from "../ui/StatusBadge";
 
 function opt(field: WidgetProps["field"]) {
   return field.widget_options ?? {};
@@ -13,19 +14,31 @@ function described(field: WidgetProps["field"]) {
   return field.help || field.help_text || field.description || undefined;
 }
 
-export function TextInput({ field, value, onChange, disabled, id }: WidgetProps) {
+function a11y(field: WidgetProps["field"], id?: string, invalid?: boolean) {
+  const describedBy = [
+    described(field) ? `${field.name}-help` : "",
+    invalid ? `${field.name}-error` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return {
+    id,
+    required: field.required,
+    readOnly: field.readonly,
+    "aria-required": field.required || undefined,
+    "aria-invalid": invalid || undefined,
+    "aria-describedby": describedBy || undefined,
+  };
+}
+
+export function TextInput({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   return (
     <input
-      id={id}
       type="text"
       placeholder={field.placeholder ?? ""}
       value={value == null ? "" : String(value)}
       disabled={disabled}
-      readOnly={field.readonly}
-      required={field.required}
-      maxLength={undefined}
-      aria-required={field.required}
-      aria-describedby={described(field) ? `${field.name}-help` : undefined}
+      {...a11y(field, id, invalid)}
       onChange={(e) => onChange(e.target.value)}
     />
   );
@@ -579,7 +592,7 @@ function FileWidget({ field, value, onChange, disabled, id, image }: WidgetProps
   return (
     <div className="file-widget" id={id}>
       {image && url ? <img src={url} alt="" className="image-preview" /> : null}
-      {key && !image ? <p className="muted">{key}</p> : null}
+      {key && !image ? <p className="muted">File attached</p> : null}
       <input
         type="file"
         accept={accept || undefined}
@@ -616,17 +629,20 @@ export function ImageUpload(props: WidgetProps) {
   return <FileWidget {...props} image />;
 }
 
-export function RelationPicker({ field, value, onChange, entities, disabled, id }: WidgetProps) {
+export function RelationPicker({ field, value, onChange, entities, disabled, id, invalid }: WidgetProps) {
   const targetName = field.relation || opt(field).entity;
   const target = entities.find((e) => e.entity === targetName);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
-  const [options, setOptions] = useState<Array<{ id: string; label: string }>>([]);
+  const [options, setOptions] = useState<Array<{ id: string; label: string; snippet?: string }>>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [hi, setHi] = useState(0);
+  const [creating, setCreating] = useState(false);
   const selected = value == null || value === "" ? "" : String(value);
   const displayField = opt(field).display_field || target?.display_field || "name";
   const current = options.find((o) => o.id === selected);
+  const allowCreate = opt(field).allow_create !== false;
 
   useEffect(() => {
     if (!target) return;
@@ -643,6 +659,7 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id 
             const next = result.items.map((row) => ({
               id: String(row.id),
               label: String(row[displayField] ?? row.name ?? row.title ?? row.code ?? row.id),
+              snippet: String(row.email ?? row.phone ?? row.code ?? ""),
             }));
             const keep = prev.find((o) => o.id === selected && !next.some((n) => n.id === o.id));
             return keep ? [keep, ...next] : next;
@@ -667,32 +684,59 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id 
   if (!target) {
     return (
       <input
-        id={id}
         value={selected}
         disabled={disabled}
+        {...a11y(field, id, invalid)}
         onChange={(e) => onChange(e.target.value || null)}
       />
     );
+  }
+
+  function pick(id: string) {
+    onChange(id);
+    setOpen(false);
+    setQ("");
   }
 
   return (
     <div className="relation-picker">
       <div className="relation-control">
         <input
-          id={id}
           role="combobox"
           aria-expanded={open}
           aria-autocomplete="list"
-          placeholder={`Search ${target.label_plural}`}
+          placeholder={field.placeholder || `Search ${target.label}`}
           value={open ? q : current?.label ?? ""}
           disabled={disabled}
+          {...a11y(field, id, invalid)}
           onFocus={() => setOpen(true)}
           onChange={(e) => {
             setQ(e.target.value);
             setPage(1);
             setOpen(true);
           }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setOpen(true);
+              setHi((n) => Math.min(n + 1, Math.max(0, options.length - 1)));
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setHi((n) => Math.max(n - 1, 0));
+            }
+            if (e.key === "Enter" && open && options[hi]) {
+              e.preventDefault();
+              pick(options[hi].id);
+            }
+            if (e.key === "Escape") setOpen(false);
+          }}
         />
+        {allowCreate ? (
+          <button type="button" className="ghost" disabled={disabled} aria-label={`Create ${target.label}`} onClick={() => setCreating(true)}>
+            +
+          </button>
+        ) : null}
         {selected && (
           <button
             type="button"
@@ -710,18 +754,16 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id 
       </div>
       {open && (
         <ul className="option-list" role="listbox">
-          {options.map((o) => (
+          {options.map((o, i) => (
             <li key={o.id}>
               <button
                 type="button"
-                className={o.id === selected ? "active" : "ghost"}
-                onClick={() => {
-                  onChange(o.id);
-                  setOpen(false);
-                  setQ("");
-                }}
+                className={i === hi || o.id === selected ? "active" : "ghost"}
+                onMouseEnter={() => setHi(i)}
+                onClick={() => pick(o.id)}
               >
-                {o.label}
+                <strong>{o.label}</strong>
+                {o.snippet ? <div className="muted">{o.snippet}</div> : null}
               </button>
             </li>
           ))}
@@ -735,6 +777,83 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id 
           )}
         </ul>
       )}
+      {creating ? (
+        <QuickCreate
+          target={target}
+          onClose={() => setCreating(false)}
+          onCreated={(id) => {
+            setCreating(false);
+            pick(id);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function QuickCreate({
+  target,
+  onClose,
+  onCreated,
+}: {
+  target: { slug: string; label: string; fields: WidgetProps["entities"][number]["fields"] };
+  onClose: () => void;
+  onCreated: (id: string) => void;
+}) {
+  const fields = target.fields
+    .filter((f) => f.form !== false && !f.hidden && !f.readonly && f.relation_kind !== "child_table" && f.type !== "child_table")
+    .filter((f) => !["id", "tenant_id", "created_at", "updated_at"].includes(f.name))
+    .slice(0, 6);
+  const [values, setValues] = useState<Record<string, unknown>>({});
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  return (
+    <div className="palette-backdrop" onClick={onClose}>
+      <form
+        className="palette quick-create"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={async (e) => {
+          e.preventDefault();
+          try {
+            setSaving(true);
+            setError("");
+            const created = await api.create(target.slug, values);
+            onCreated(String(created.id));
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Unable to create.");
+          } finally {
+            setSaving(false);
+          }
+        }}
+      >
+        <h3>Quick create {target.label}</h3>
+        {fields.map((f) => (
+          <label key={f.name}>
+            {f.label}
+            {f.required ? " *" : ""}
+            <input
+              required={f.required}
+              placeholder={f.placeholder}
+              value={String(values[f.name] ?? "")}
+              onChange={(e) => setValues((prev) => ({ ...prev, [f.name]: e.target.value }))}
+            />
+          </label>
+        ))}
+        {error ? (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <div className="actions">
+          <button type="button" className="ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" disabled={saving}>
+            {saving ? "Creating…" : "Create"}
+          </button>
+        </div>
+      </form>
     </div>
   );
 }
@@ -753,6 +872,9 @@ export function ChildTable({ field, value, onChange, entities, disabled }: Widge
   const addable = opts.addable !== false && !disabled;
   const deletable = opts.deletable !== false && !disabled;
   const reorderable = opts.reorderable !== false && !disabled;
+  const numericCols = cols.filter(
+    (c) => c.widget === "currency" || c.widget === "number" || c.type === "decimal" || c.type === "integer",
+  );
 
   function setRow(i: number, name: string, v: unknown) {
     const next = rows.map((row, idx) => (idx === i ? { ...row, [name]: v } : row));
@@ -820,11 +942,102 @@ export function ChildTable({ field, value, onChange, entities, disabled }: Widge
           ))}
         </tbody>
       </table>
+      {numericCols.length > 0 && rows.length > 0 ? (
+        <div className="child-totals">
+          {numericCols.map((c) => (
+            <div key={c.name}>
+              <span className="muted">{c.label}</span>
+              <strong>
+                {c.widget === "currency"
+                  ? formatMoney(
+                      rows.reduce((s, r) => s + Number(r[c.name] ?? 0), 0),
+                      c.widget_options?.currency || "USD",
+                      "en-US",
+                    )
+                  : rows.reduce((s, r) => s + Number(r[c.name] ?? 0), 0)}
+              </strong>
+            </div>
+          ))}
+        </div>
+      ) : null}
       {addable && (
         <button type="button" className="ghost" onClick={() => onChange([...rows, {}])}>
           + Add {child?.label || "row"}
         </button>
       )}
+    </div>
+  );
+}
+
+export function PasswordInput({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
+  return (
+    <input
+      type="password"
+      autoComplete="new-password"
+      placeholder={field.placeholder ?? ""}
+      value={value == null ? "" : String(value)}
+      disabled={disabled}
+      {...a11y(field, id, invalid)}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
+export function DurationInput({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
+  return (
+    <div className="widget-affix">
+      <input
+        type="number"
+        min={0}
+        placeholder={field.placeholder ?? "0"}
+        value={value == null ? "" : String(value)}
+        disabled={disabled}
+        {...a11y(field, id, invalid)}
+        onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
+      />
+      <span className="affix">min</span>
+    </div>
+  );
+}
+
+export function MarkdownInput({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
+  const text = value == null ? "" : String(value);
+  return (
+    <div className="markdown-widget">
+      <textarea
+        rows={6}
+        placeholder={field.placeholder ?? ""}
+        value={text}
+        disabled={disabled}
+        {...a11y(field, id, invalid)}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {text ? <pre className="markdown-preview muted">{text}</pre> : null}
+    </div>
+  );
+}
+
+export function StatusInput({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
+  const options = field.enum_values ?? [];
+  if (disabled || field.readonly) {
+    return <StatusBadge value={value} indicators={opt(field).indicators} />;
+  }
+  return (
+    <div className="status-input">
+      <select
+        value={value == null ? "" : String(value)}
+        disabled={disabled}
+        {...a11y(field, id, invalid)}
+        onChange={(e) => onChange(e.target.value || null)}
+      >
+        <option value="">Select…</option>
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {o}
+          </option>
+        ))}
+      </select>
+      <StatusBadge value={value} indicators={opt(field).indicators} />
     </div>
   );
 }
@@ -867,6 +1080,14 @@ export function registerBuiltinWidgets() {
   registerWidget("image", ImageUpload);
   registerWidget("child_table", ChildTable);
   registerWidget("string", TextInput);
+  registerWidget("password", PasswordInput);
+  registerWidget("duration", DurationInput);
+  registerWidget("markdown", MarkdownInput);
+  registerWidget("status", StatusInput);
+  registerWidget("toggle", Switch);
+  registerWidget("multi-select", MultiSelect);
+  registerWidget("multi-relation", MultiSelect);
+  registerWidget("rich-text", RichText);
 }
 
 registerBuiltinWidgets();

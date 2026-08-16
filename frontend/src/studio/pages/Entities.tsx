@@ -6,6 +6,7 @@ import SourceView from "../components/SourceView";
 import FieldEditor from "../editors/FieldEditor";
 import FormulaEditor from "../editors/FormulaEditor";
 import FormPreview from "../preview/FormPreview";
+import ViewsPreview from "../preview/ViewsPreview";
 
 type EntityPayload = {
   entity?: Record<string, unknown>;
@@ -94,7 +95,7 @@ export default function Entities({ caps }: { caps: string[] }) {
         </p>
       ) : null}
       <div className="studio-tabs">
-        {["fields", "relations", "child tables", "computed", "actions", "links", "public form", "layout", "preview", "source"].map((name) => (
+        {["fields", "relations", "child tables", "computed", "actions", "links", "public form", "layout", "views", "preview", "source"].map((name) => (
           <button
             key={name}
             className={tab === name ? "" : "ghost"}
@@ -235,6 +236,7 @@ export default function Entities({ caps }: { caps: string[] }) {
             ))}
         </ul>
       )}
+      {tab === "views" && ui && <ViewsPreview entity={ui} />}
       {tab === "preview" && ui && <FormPreview entity={ui} />}
       {tab === "source" && (
         <SourceView jsonText={detail?.json ?? ""} yamlText={detail?.yaml ?? ""} />

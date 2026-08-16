@@ -35,6 +35,12 @@ cargo install qefro-cli
 qefro --help
 ```
 
+If that fails on macOS 26/27 with `mis-aligned LINKEDIT string pool` while compiling `sqlx`:
+
+```bash
+CARGO_PROFILE_RELEASE_STRIP=none cargo install qefro-cli
+```
+
 From a git checkout of this repository:
 
 ```bash

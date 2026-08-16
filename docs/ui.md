@@ -1,6 +1,6 @@
 # UI
 
-The backend exposes UI metadata at `GET /api/v1/meta/ui`. The payload is versioned (`schema_version: "1"`). The React app in `frontend/` is a generic renderer. It does not hardcode entity names.
+The backend exposes UI metadata at `GET /api/v1/meta/ui`. The payload is versioned (`schema_version: "1"`). The React app in `frontend/` is a generic renderer. It does not hardcode entity names. **UI 2.0** polishes that renderer (shell, lists, documents, theme) without changing `schema_version: "1"`. See [UI 2.0](ui-2.md).
 
 ## Routes
 

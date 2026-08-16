@@ -15,6 +15,12 @@ cargo install qefro-cli
 qefro --help
 ```
 
+On macOS 26/27, if install fails with `mis-aligned LINKEDIT string pool` while compiling `sqlx`, skip stripping proc-macro dylibs:
+
+```bash
+CARGO_PROFILE_RELEASE_STRIP=none cargo install qefro-cli
+```
+
 From this repo without crates.io:
 
 ```bash
@@ -53,7 +59,7 @@ The UI reads `/api/v1/meta/ui`. Branding, navigation, terminology, widgets, form
 
 Authorized developers open **Qefro Studio** (`/studio`) to inspect and publish metadata through the same registries. See [Qefro Studio](docs/studio.md).
 
-V1.0 hardens the V0.9 platform (settings, field permissions, attachments, notifications, webhooks, CSV import, global search, realtime, public forms) on the same `EntityService` path. See [Architecture](docs/architecture.md).
+V1.0 hardens the V0.9 platform (settings, field permissions, attachments, notifications, webhooks, CSV import, global search, realtime, public forms) on the same `EntityService` path. The generic UI is **UI 2.1**: a professional metadata-driven shell with List, Kanban, and Calendar views on that API. See [UI 2.0 / 2.1](docs/ui-2.md), [Views](docs/views.md), and [Architecture](docs/architecture.md).
 
 ## Build a fullstack app
 
@@ -225,6 +231,7 @@ Integration tests that need PostgreSQL skip when `DATABASE_URL` is unset. Fronte
 - [Events](docs/events.md)
 - [Jobs](docs/jobs.md)
 - [UI](docs/ui.md)
+- [UI 2.1 views](docs/views.md)
 - [UI widgets](docs/ui-widgets.md)
 - [Forms](docs/forms.md)
 - [Layouts](docs/layouts.md)

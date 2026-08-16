@@ -1,8 +1,10 @@
-import { Navigate, NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import StudioApp from "./studio/StudioApp";
 import { api, ApiError, clearToken, hasToken, METADATA_EVENT, onAuthChange, type TenantConfig, type UiEntity } from "./api";
 import { TenantThemeContext } from "./metadata/context";
+import { PrefsProvider } from "./prefsContext";
+import { AppShell } from "./components/shell/AppShell";
 import "./widgets";
 import Login from "./pages/Login";
 import EntityList from "./pages/EntityList";
@@ -12,8 +14,6 @@ import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
 import Reports from "./pages/Reports";
 import PublicForm from "./pages/PublicForm";
-import GlobalSearch from "./components/GlobalSearch";
-import NotificationBell from "./components/NotificationBell";
 
 export default function App() {
   const [authed, setAuthed] = useState(hasToken());
@@ -35,7 +35,11 @@ export default function App() {
 function Shell() {
   const [entities, setEntities] = useState<UiEntity[]>([]);
   const [config, setConfig] = useState<TenantConfig | null>(null);
-  const [me, setMe] = useState("");
+  const [userName, setUserName] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+  const [roles, setRoles] = useState<string[]>([]);
+  const [tenantKey, setTenantKey] = useState("local");
+  const [userKey, setUserKey] = useState("anon");
   const [studio, setStudio] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -80,7 +84,11 @@ function Shell() {
     api
       .me()
       .then((d) => {
-        setMe(`${d.user.name} · ${d.roles.join(", ")}`);
+        setUserName(d.user.name);
+        setUserEmail(d.user.email);
+        setRoles(d.roles);
+        setTenantKey(d.tenant_id || "local");
+        setUserKey(d.user.email || "anon");
         setStudio((d.studio ?? []).includes("studio.view"));
       })
       .catch(() => undefined);
@@ -97,8 +105,7 @@ function Shell() {
     if (primary) root.style.setProperty("--primary", primary);
     const secondary = config?.branding.secondary_color;
     if (secondary) root.style.setProperty("--secondary", secondary);
-    const name =
-      config?.branding.company_name || config?.branding.app_name || "Workspace";
+    const name = config?.branding.company_name || config?.branding.app_name || "Workspace";
     document.title = name;
     const favicon = config?.branding.favicon;
     if (favicon) {
@@ -120,18 +127,32 @@ function Shell() {
     );
     if (ordered.length === 0) return visible;
     const bySlug = new Map(visible.map((e) => [e.slug, e]));
-    const picked = ordered.map((slug) => bySlug.get(slug)).filter(Boolean) as UiEntity[];
+    const picked = ordered.map((s) => bySlug.get(s)).filter(Boolean) as UiEntity[];
     const rest = visible.filter((e) => !ordered.includes(e.slug));
     return [...picked, ...rest];
   }, [entities, config]);
 
-  const appName =
-    config?.branding.company_name || config?.branding.app_name || "Workspace";
+  const appName = config?.branding.company_name || config?.branding.app_name || "Workspace";
   const theme = {
     timezone: config?.business?.timezone || "UTC",
     locale: config?.business?.locale || "en-US",
     currency: config?.business?.currency || "USD",
   };
+
+  const routes = (
+    <Routes>
+      <Route path="/" element={<Dashboard entities={entities} config={config} />} />
+      <Route path="/login" element={<Navigate to="/" replace />} />
+      <Route path="/settings" element={<Settings config={config} onSaved={setConfig} />} />
+      <Route path="/reports" element={<Reports />} />
+      <Route path="/p/:tenant/:form" element={<PublicForm />} />
+      <Route path="/:slug" element={<EntityList entities={entities} />} />
+      <Route path="/:slug/new" element={<EntityForm entities={entities} />} />
+      <Route path="/:slug/:id" element={<EntityDetail entities={entities} />} />
+      <Route path="/:slug/:id/edit" element={<EntityForm entities={entities} />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
 
   if (location.pathname.startsWith("/studio")) {
     return (
@@ -145,71 +166,19 @@ function Shell() {
 
   return (
     <TenantThemeContext.Provider value={theme}>
-    <div className="shell">
-      <a className="skip-link" href="#main">Skip to content</a>
-      <aside className="nav" aria-label="Application">
-        <div className="nav-brand">
-          {config?.branding.logo ? <img src={config.branding.logo} alt="" className="logo" /> : null}
-          <h1>{appName}</h1>
-        </div>
-        <div className="nav-links">
-          <NavLink to="/" className={({ isActive }) => (isActive ? "active" : "")} end>
-            Dashboard
-          </NavLink>
-          {navEntities.map((e) => (
-            <NavLink
-              key={e.slug}
-              to={`/${e.slug}`}
-              className={({ isActive }) => (isActive ? "active" : "")}
-            >
-              {e.label_plural}
-            </NavLink>
-          ))}
-          <NavLink to="/reports" className={({ isActive }) => (isActive ? "active" : "")}>
-            Reports
-          </NavLink>
-          <NavLink to="/settings" className={({ isActive }) => (isActive ? "active" : "")}>
-            Settings
-          </NavLink>
-          {studio ? (
-            <NavLink to="/studio" className={({ isActive }) => (isActive ? "active" : "")}>
-              Studio
-            </NavLink>
-          ) : null}
-        </div>
-        <div className="nav-footer">
-          <GlobalSearch />
-          <NotificationBell />
-          <div className="badge">{me || "Signed in"}</div>
-          <button
-            className="ghost"
-            onClick={() => {
-              clearToken();
-              navigate("/login");
-            }}
-          >
-            Log out
-          </button>
-        </div>
-      </aside>
-      <main id="main" className="main" tabIndex={-1}>
-        <Routes>
-          <Route path="/" element={<Dashboard entities={entities} config={config} />} />
-          <Route path="/login" element={<Navigate to="/" replace />} />
-          <Route
-            path="/settings"
-            element={<Settings config={config} onSaved={setConfig} />}
-          />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/p/:tenant/:form" element={<PublicForm />} />
-          <Route path="/:slug" element={<EntityList entities={entities} />} />
-          <Route path="/:slug/new" element={<EntityForm entities={entities} />} />
-          <Route path="/:slug/:id" element={<EntityDetail entities={entities} />} />
-          <Route path="/:slug/:id/edit" element={<EntityForm entities={entities} />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </main>
-    </div>
+      <PrefsProvider tenantId={tenantKey} userId={userKey}>
+        <AppShell
+          appName={appName}
+          logo={config?.branding.logo}
+          navEntities={navEntities}
+          studio={studio}
+          userName={userName}
+          userEmail={userEmail}
+          roles={roles}
+        >
+          {routes}
+        </AppShell>
+      </PrefsProvider>
     </TenantThemeContext.Provider>
   );
 }

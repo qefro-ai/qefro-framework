@@ -1475,6 +1475,7 @@ impl EntityService {
                 "kind": kind,
                 "chart": card.chart,
                 "group_by": group_by,
+                "filters": card.filters,
                 "series": series,
                 "value": value,
             }));
@@ -1490,6 +1491,7 @@ impl EntityService {
                 "entity": card.entity,
                 "metric": card.metric,
                 "kind": kind,
+                "filters": card.filters,
                 "items": page.items,
                 "total": page.total,
                 "value": page.total,
@@ -1504,6 +1506,7 @@ impl EntityService {
             "entity": card.entity,
             "metric": card.metric,
             "kind": "metric",
+            "filters": card.filters,
             "value": value,
         }))
     }

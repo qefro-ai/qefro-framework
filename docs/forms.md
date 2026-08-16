@@ -17,6 +17,9 @@ The renderer:
 3. Groups by `tab`, then `section`, then `order` / `width`.
 4. Resolves each field's `widget` in the widget registry.
 5. Shows server `FieldError`s next to the matching input.
+6. Warns on unsaved navigation and marks required fields.
+
+See [UI 2.0](ui-2.md) and [Forms in UI 2.0](ui-2.md).
 
 Dynamic defaults (`default_from`: `current_user`, `current_date`, `current_datetime`, `tenant_timezone`, `tenant_currency`) are applied in `EntityService::create`, not in React.
 

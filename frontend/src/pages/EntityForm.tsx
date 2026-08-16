@@ -1,11 +1,14 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useBlocker, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError, formVisible, type UiEntity, type UiField } from "../api";
 import { FormLayout } from "../components/forms/FormLayout";
+import { ErrorState, Skeleton } from "../components/ui/EmptyState";
+import { friendlyError } from "../friendlyError";
 import { previewFormula } from "../metadata/formula";
 
 export default function EntityForm({ entities }: { entities: UiEntity[] }) {
   const { slug, id } = useParams();
+  const [searchParams] = useSearchParams();
   const meta = entities.find((e) => e.slug === slug);
   const navigate = useNavigate();
   const [values, setValues] = useState<Record<string, unknown>>({});
@@ -13,6 +16,7 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(Boolean(id));
   const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
 
   const baseFields = useMemo(
     () => (meta?.fields.filter(formVisible) ?? []).filter((f) => f.relation_kind !== "one_to_many"),
@@ -36,17 +40,36 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
             next[field.name] = row[field.name] ?? "";
           }
           setValues(next);
+          setDirty(false);
         })
-        .catch((e) => setError(e.message))
+        .catch((e) => setError(friendlyError(e)))
         .finally(() => setLoading(false));
     } else {
-      setValues({});
+      const next: Record<string, unknown> = {};
+      for (const field of baseFields) {
+        const q = searchParams.get(field.name);
+        if (q) next[field.name] = q;
+      }
+      setValues(next);
+      setDirty(false);
       setLoading(false);
     }
-  }, [id, slug, baseFields]);
+  }, [id, slug, baseFields, searchParams]);
 
-  if (!meta || !slug) return <p>Unknown entity.</p>;
-  if (loading) return <p className="muted">Loading {meta.label.toLowerCase()}…</p>;
+  useEffect(() => {
+    const onBefore = (e: BeforeUnloadEvent) => {
+      if (!dirty || saving) return;
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBefore);
+    return () => window.removeEventListener("beforeunload", onBefore);
+  }, [dirty, saving]);
+
+  const blocker = useBlocker(Boolean(dirty && !saving));
+
+  if (!meta || !slug) return <ErrorState message="Unknown entity." />;
+  if (loading) return <Skeleton rows={6} />;
   const entitySlug = slug;
   const isSingleton = Boolean(meta.singleton);
 
@@ -69,17 +92,20 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
       if (id) {
         if (isSingleton) await api.saveSettings(entitySlug, body);
         else await api.update(entitySlug, id, body);
+        setDirty(false);
         navigate(`/${entitySlug}/${id}`);
       } else if (isSingleton) {
         const saved = await api.saveSettings(entitySlug, body);
+        setDirty(false);
         navigate(`/${entitySlug}/${saved.id ?? ""}`);
       } else {
         const created = await api.create(entitySlug, body);
+        setDirty(false);
         navigate(`/${entitySlug}/${created.id}`);
       }
     } catch (err) {
       if (err instanceof ApiError) {
-        setError(err.message);
+        setError(friendlyError(err));
         const next: Record<string, string> = {};
         for (const fe of err.fields) next[fe.field] = fe.message;
         setFieldErrors(next);
@@ -103,7 +129,9 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
           values={values}
           entities={entities}
           fieldErrors={fieldErrors}
-          onChange={(name, value) =>
+          sectionRules={meta.views?.form?.sections}
+          onChange={(name, value) => {
+            setDirty(true);
             setValues((prev) => {
               const next = { ...prev, [name]: value };
               const children: Record<string, Array<Record<string, unknown>>> = {};
@@ -121,18 +149,37 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
                 }
               }
               return next;
-            })
-          }
+            });
+          }}
         />
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-        <button type="submit" disabled={saving}>
-          {saving ? "Saving…" : "Save"}
-        </button>
+        {error && <ErrorState message={error} />}
+        <div className="actions">
+          <Link to={id ? `/${entitySlug}/${id}` : `/${entitySlug}`}>
+            <button type="button" className="ghost">
+              Cancel
+            </button>
+          </Link>
+          <button type="submit" disabled={saving}>
+            {saving ? "Saving…" : id ? "Save" : "Create"}
+          </button>
+        </div>
       </form>
+      {blocker.state === "blocked" ? (
+        <div className="palette-backdrop">
+          <div className="palette" role="alertdialog" aria-label="Unsaved changes">
+            <h3>Unsaved changes</h3>
+            <p className="muted">Leave this page and discard your changes?</p>
+            <div className="actions">
+              <button type="button" className="ghost" onClick={() => blocker.reset()}>
+                Stay
+              </button>
+              <button type="button" className="danger" onClick={() => blocker.proceed()}>
+                Discard
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

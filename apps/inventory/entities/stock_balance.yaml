@@ -22,3 +22,6 @@ fields:
     type: decimal
     required: true
     default: 0
+views:
+  list:
+    group_by: warehouse_id

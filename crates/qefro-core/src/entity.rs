@@ -66,6 +66,9 @@ pub struct EntityDef {
     pub links: Vec<LinkDef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_form: Option<PublicFormDef>,
+    /// Presentation-only. Does not affect permissions, workflow, or validation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub views: Option<crate::ui::EntityViews>,
 }
 
 fn default_true() -> bool {
@@ -104,6 +107,7 @@ impl EntityDef {
             actions: Vec::new(),
             links: Vec::new(),
             public_form: None,
+            views: None,
         }
     }
 
@@ -224,6 +228,12 @@ impl EntityDef {
 
     pub fn workflow(mut self, name: impl Into<String>) -> Self {
         self.workflow = Some(name.into());
+        self
+    }
+
+    /// Presentation-only view metadata. Omitted entities use automatic defaults.
+    pub fn views(mut self, views: crate::ui::EntityViews) -> Self {
+        self.views = Some(views);
         self
     }
 
@@ -542,6 +552,7 @@ impl EntityDef {
             actions: self.actions.clone(),
             links: self.links.clone(),
             public_form: self.public_form.clone(),
+            views: self.views.clone(),
         }
     }
 

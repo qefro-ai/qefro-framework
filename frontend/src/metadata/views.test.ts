@@ -1,0 +1,74 @@
+import { availableViews, calendarStartField, kanbanEnabled, listGroupField } from "./views";
+import type { UiEntity, UiField } from "./types";
+
+function field(over: Partial<UiField> & { name: string }): UiField {
+  return {
+    type: "string",
+    label: over.label ?? over.name,
+    required: false,
+    list: true,
+    form: true,
+    filter: false,
+    searchable: false,
+    readonly: false,
+    widget: "text",
+    ...over,
+  };
+}
+
+function entity(over: Partial<UiEntity> & { entity: string }): UiEntity {
+  return {
+    label: over.entity,
+    label_plural: `${over.entity}s`,
+    slug: over.entity.toLowerCase(),
+    searchable: true,
+    fields: [],
+    ...over,
+  };
+}
+
+describe("view metadata", () => {
+  it("always includes list and adds kanban when the entity has a workflow", () => {
+    const reservation = entity({
+      entity: "Reservation",
+      workflow: "reservation",
+      fields: [
+        field({ name: "status", type: "enum", widget: "status", enum_values: ["Pending", "Confirmed"] }),
+        field({ name: "reservation_date", type: "date", widget: "date" }),
+      ],
+    });
+    expect(availableViews(reservation)).toEqual(["list", "kanban", "calendar"]);
+    expect(kanbanEnabled(reservation)).toBe(true);
+    expect(calendarStartField(reservation)?.name).toBe("reservation_date");
+  });
+
+  it("does not offer kanban for a status enum without a workflow", () => {
+    const table = entity({
+      entity: "DiningTable",
+      fields: [field({ name: "status", type: "enum", widget: "status", enum_values: ["available"] })],
+    });
+    expect(availableViews(table)).toEqual(["list"]);
+  });
+
+  it("honors explicit calendar.enabled false", () => {
+    const lead = entity({
+      entity: "Lead",
+      workflow: "lead",
+      fields: [
+        field({ name: "status", type: "enum", widget: "status", enum_values: ["New"] }),
+        field({ name: "follow_up_date", type: "date", widget: "date" }),
+      ],
+      views: { calendar: { enabled: false } },
+    });
+    expect(availableViews(lead)).toEqual(["list", "kanban"]);
+  });
+
+  it("reads list grouping from view metadata", () => {
+    const stock = entity({
+      entity: "StockBalance",
+      views: { list: { group_by: "warehouse_id" } },
+      fields: [field({ name: "warehouse_id", type: "relation" })],
+    });
+    expect(listGroupField(stock)).toBe("warehouse_id");
+  });
+});

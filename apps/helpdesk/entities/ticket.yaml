@@ -38,3 +38,9 @@ fields:
     relation:
       target_entity: HdCustomer
       kind: many_to_one
+views:
+  kanban:
+    group_by: status
+    card:
+      title: subject
+      subtitle: status

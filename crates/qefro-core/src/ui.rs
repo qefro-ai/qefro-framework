@@ -402,6 +402,9 @@ pub struct UiEntityMeta {
     pub links: Vec<crate::platform::LinkDef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_form: Option<crate::platform::PublicFormDef>,
+    /// Presentation-only view configuration. Omitted entities use automatic defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub views: Option<EntityViews>,
 }
 
 fn default_true_standalone() -> bool {
@@ -410,6 +413,133 @@ fn default_true_standalone() -> bool {
 
 fn schema_version() -> String {
     UI_SCHEMA_VERSION.into()
+}
+
+/// Additive view metadata. `schema_version` stays `"1"`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct EntityViews {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<ListViewSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<FormViewSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<DetailViewSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kanban: Option<KanbanViewSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar: Option<CalendarViewSpec>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ListViewSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<ListColumnSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_sort: Option<SortSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_size: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ListColumnSpec {
+    pub field: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub widget: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SortSpec {
+    pub field: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FormViewSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<ViewSectionSpec>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DetailViewSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<ViewSectionSpec>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ViewSectionSpec {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_when: Option<UiWhen>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KanbanViewSpec {
+    #[serde(default = "default_view_enabled")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<KanbanCardSpec>,
+}
+
+impl Default for KanbanViewSpec {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            group_by: None,
+            card: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct KanbanCardSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalendarViewSpec {
+    #[serde(default = "default_view_enabled")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+}
+
+impl Default for CalendarViewSpec {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            start: None,
+            end: None,
+            time: None,
+            title: None,
+            subtitle: None,
+        }
+    }
+}
+
+fn default_view_enabled() -> bool {
+    true
 }
 
 impl UiEntityMeta {
