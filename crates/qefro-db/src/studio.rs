@@ -9,8 +9,8 @@ use crate::schema::apply_schema;
 use chrono::{DateTime, Utc};
 use qefro_core::{
     classify_entity_change, detect_cycles, entity_referrers, find_app_root, snake_case,
-    ChangeAnalysis, EntityDef, EntityRegistry, FieldDef, FieldUiPatch, OpContext, PrintFormat,
-    QefroError, QefroResult, ReportDef, SchemaImpact, StudioCatalog,
+    ChangeAnalysis, EntityDef, EntityRegistry, EntityViews, FieldDef, FieldUiPatch, OpContext,
+    PrintFormat, QefroError, QefroResult, ReportDef, SchemaImpact, StudioCatalog,
 };
 use qefro_core::studio::{apply_field_ui_patch, is_production, validate_formula_on_entity};
 use qefro_core::ui::DashboardDef;
@@ -225,6 +225,7 @@ impl MetadataChangeService {
                 }
                 Ok(analysis)
             }
+            "entity.views" => analyze_views_overlay(target, payload),
             "workflow" => {
                 let wf: WorkflowDef = serde_json::from_value(payload.clone())
                     .map_err(|e| QefroError::bad_request(format!("invalid workflow: {e}")))?;
@@ -260,6 +261,11 @@ impl MetadataChangeService {
             "entity.field" | "entity.field.upsert" | "entity.field.ui" => {
                 let mut entity = (*self.registry.get(target)?).clone();
                 let after = apply_field_payload(&mut entity, payload)?;
+                validate_entity(self.registry.as_ref(), &after)?;
+            }
+            "entity.views" => {
+                let mut entity = (*self.registry.get(target)?).clone();
+                let after = apply_views_payload(&mut entity, payload)?;
                 validate_entity(self.registry.as_ref(), &after)?;
             }
             "workflow" => {
@@ -445,7 +451,8 @@ impl MetadataChangeService {
 
     fn snapshot(&self, kind: &str, target: &str) -> Option<Value> {
         match kind {
-            "entity" | "entity.replace" | "entity.field" | "entity.field.upsert" | "entity.field.ui" => {
+            "entity" | "entity.replace" | "entity.field" | "entity.field.upsert" | "entity.field.ui"
+            | "entity.views" => {
                 self.registry
                     .try_get(target)
                     .and_then(|e| serde_json::to_value(&*e).ok())
@@ -489,6 +496,14 @@ impl MetadataChangeService {
             "entity.field" | "entity.field.upsert" | "entity.field.ui" => {
                 let mut entity = (*self.registry.get(target)?).clone();
                 let after = apply_field_payload(&mut entity, payload)?;
+                validate_entity(self.registry.as_ref(), &after)?;
+                let module = after.module.clone();
+                self.registry.overlay_put(after.clone())?;
+                maybe_write_yaml(module.as_deref(), &after)?;
+            }
+            "entity.views" => {
+                let mut entity = (*self.registry.get(target)?).clone();
+                let after = apply_views_payload(&mut entity, payload)?;
                 validate_entity(self.registry.as_ref(), &after)?;
                 let module = after.module.clone();
                 self.registry.overlay_put(after.clone())?;
@@ -650,6 +665,73 @@ fn apply_field_payload(entity: &mut EntityDef, payload: &Value) -> QefroResult<E
             );
         }
     }
+    Ok(entity.clone())
+}
+
+const VIEW_OVERLAY_KEYS: &[&str] = &["list", "card", "form", "detail", "kanban", "calendar"];
+const VIEW_OVERLAY_REJECT: &[&str] = &[
+    "permissions",
+    "workflow",
+    "fields",
+    "name",
+    "table",
+    "slug",
+    "type",
+    "actions",
+    "operations",
+    "module",
+];
+
+fn analyze_views_overlay(target: &str, payload: &Value) -> QefroResult<ChangeAnalysis> {
+    reject_non_presentation_view_keys(payload)?;
+    let mut analysis = ChangeAnalysis::safe();
+    analysis.diff.push(format!("~ {target} views"));
+    Ok(analysis)
+}
+
+fn reject_non_presentation_view_keys(payload: &Value) -> QefroResult<()> {
+    let obj = payload.as_object().ok_or_else(|| {
+        QefroError::bad_request("entity.views payload must be an object")
+    })?;
+    for key in obj.keys() {
+        if VIEW_OVERLAY_REJECT.iter().any(|k| k == key) {
+            return Err(QefroError::bad_request(format!(
+                "entity.views rejects non-presentation key '{key}'"
+            )));
+        }
+        if !VIEW_OVERLAY_KEYS.iter().any(|k| k == key) {
+            return Err(QefroError::bad_request(format!(
+                "entity.views unknown presentation key '{key}'"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn apply_views_payload(entity: &mut EntityDef, payload: &Value) -> QefroResult<EntityDef> {
+    reject_non_presentation_view_keys(payload)?;
+    let patch: EntityViews = serde_json::from_value(payload.clone())
+        .map_err(|e| QefroError::bad_request(format!("invalid views overlay: {e}")))?;
+    let mut views = entity.views.clone().unwrap_or_default();
+    if payload.get("list").is_some() {
+        views.list = patch.list;
+    }
+    if payload.get("card").is_some() {
+        views.card = patch.card;
+    }
+    if payload.get("form").is_some() {
+        views.form = patch.form;
+    }
+    if payload.get("detail").is_some() {
+        views.detail = patch.detail;
+    }
+    if payload.get("kanban").is_some() {
+        views.kanban = patch.kanban;
+    }
+    if payload.get("calendar").is_some() {
+        views.calendar = patch.calendar;
+    }
+    entity.views = Some(views);
     Ok(entity.clone())
 }
 

@@ -9,6 +9,7 @@ use axum::{Json, Router};
 use qefro_auth::AuthToken;
 use qefro_core::{AppManifest, QefroError, RateLimiter, TenantConfig};
 use qefro_db::BlobMeta;
+use qefro_permissions::Action;
 use qefro_search::parse_query;
 use qefro_tenant::Tenant;
 use serde::Deserialize;
@@ -292,6 +293,7 @@ async fn meta_entity(
 
 async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<Value>, ApiError> {
     let config = state.tenants.get_config(ctx.tenant_id).await?;
+    let permissions = state.entities.permissions();
     let entities: Vec<_> = state
         .entities
         .registry()
@@ -301,6 +303,13 @@ async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<
         .map(|e| {
             let mut meta = e.to_ui_meta();
             meta.apply_terminology(&config.ui_config.terminology);
+            meta.permissions = Some(qefro_core::EntityPermissions {
+                list: permissions.allows(&ctx.roles, &e.name, Action::List),
+                create: permissions.allows(&ctx.roles, &e.name, Action::Create),
+                read: permissions.allows(&ctx.roles, &e.name, Action::Read),
+                update: permissions.allows(&ctx.roles, &e.name, Action::Update),
+                delete: permissions.allows(&ctx.roles, &e.name, Action::Delete),
+            });
             meta
         })
         .collect();

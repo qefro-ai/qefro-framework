@@ -3,6 +3,7 @@ import type { ViewKind } from "../../metadata/types";
 
 const LABELS: Record<ViewKind, string> = {
   list: "List",
+  card: "Cards",
   kanban: "Kanban",
   calendar: "Calendar",
 };
@@ -25,7 +26,7 @@ export function ViewSelector({
           type="button"
           role="tab"
           aria-selected={current === view}
-          className={current === view ? "" : "ghost"}
+          className={current === view ? "is-active" : "ghost"}
           onClick={() => onChange(view)}
         >
           {LABELS[view] || view}

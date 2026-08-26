@@ -3,20 +3,23 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   api,
   detailVisible,
-  expandedLabel,
   type EntityAction,
   type UiEntity,
   type WorkflowAction,
-} from "../api";
+} from "../sdk/client";
 import { ActionBar } from "../components/actions/ActionBar";
 import { AttachmentsPanel } from "../components/attachments/AttachmentsPanel";
 import { Timeline } from "../components/timeline/Timeline";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
+import { PageHeader } from "../components/ui/PageHeader";
+import { ActionMenu } from "../components/ui/ActionMenu";
+import { FieldValue } from "../components/fields/FieldValue";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { friendlyError } from "../friendlyError";
 import { relativeTime } from "../format";
-import { formatMoney, utcToDatetimeLocal } from "../metadata/timezone";
 import { useTenantTheme } from "../metadata/context";
+import { canDeleteRecord, canUpdateRecord, displayValue } from "../metadata/views";
+import { useBreadcrumbRecord } from "../components/shell/breadcrumbContext";
 import { useRealtime } from "../realtime";
 
 export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
@@ -29,12 +32,14 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const [attachments, setAttachments] = useState<Array<Record<string, unknown>>>([]);
   const theme = useTenantTheme();
   const [tab, setTab] = useState("overview");
+  const { setRecord } = useBreadcrumbRecord();
 
   async function load() {
     if (!slug || !id) return;
     const data = await api.get(slug, id);
     setRow(data);
     if (meta) {
+      setRecord(recordCrumb(meta, entities, data));
       api
         .audit(meta.entity, id)
         .then((d) => setActivity(d.items ?? []))
@@ -50,6 +55,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
 
   useEffect(() => {
     load().catch((e) => setError(friendlyError(e)));
+    return () => setRecord(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, id]);
 
@@ -120,50 +126,51 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
 
   return (
     <div className="page">
-      <header className="doc-header">
-        <div>
-          <div className="badge">{meta.entity}</div>
-          <h2>
+      <PageHeader
+        kicker={meta.entity}
+        title={
+          <>
             {meta.label} {String(number)}
-          </h2>
-          <p className="muted doc-meta">
+          </>
+        }
+        description={
+          <>
             {status ? <StatusBadge value={status} indicators={statusField?.widget_options?.indicators} /> : null}
             {owner ? <span> · {String(owner)}</span> : null}
             {created ? <span> · {relativeTime(created, theme.locale)}</span> : null}
-          </p>
-        </div>
-        <div className="actions">
-          <Link to={`/${slug}/${id}/edit`}>
-            <button>Edit</button>
-          </Link>
-          <ActionBar
-            actions={actions}
-            transitions={workflow?.transitions}
-            onAction={(name, action) => void runAction(name, action)}
-            onTransition={async (name) => {
-              try {
-                const next = await api.transition(slug, id, name);
-                setRow(next);
-                setError("");
-              } catch (e) {
-                setError(friendlyError(e));
-              }
-            }}
-          />
-          <div className="more-menu">
-            <details>
-              <summary className="ghost btn-like">More</summary>
-              <div className="menu-list">
-                <a href={`/api/v1/${slug}/${id}/print`} target="_blank" rel="noreferrer">
-                  Print
-                </a>
-                <a href={`/api/v1/${slug}/${id}/print.pdf`} target="_blank" rel="noreferrer">
-                  Download PDF
-                </a>
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={async () => {
+          </>
+        }
+        actions={
+          <>
+            {canUpdateRecord(meta, row) ? (
+              <Link to={`/${slug}/${id}/edit`}>
+                <button type="button">Edit</button>
+              </Link>
+            ) : null}
+            <ActionBar
+              actions={actions}
+              transitions={workflow?.transitions}
+              onAction={(name, action) => void runAction(name, action)}
+              onTransition={async (name) => {
+                try {
+                  const next = await api.transition(slug, id, name);
+                  setRow(next);
+                  setError("");
+                } catch (e) {
+                  setError(friendlyError(e));
+                }
+              }}
+            />
+            <ActionMenu
+              items={[
+                { key: "print", label: "Print", href: `/api/v1/${slug}/${id}/print`, target: "_blank" },
+                { key: "pdf", label: "Download PDF", href: `/api/v1/${slug}/${id}/print.pdf`, target: "_blank" },
+                {
+                  key: "delete",
+                  label: "Delete",
+                  danger: true,
+                  hidden: !canDeleteRecord(meta, row),
+                  onSelect: async () => {
                     if (!confirm("Delete this record?")) return;
                     try {
                       await api.remove(slug, id);
@@ -171,16 +178,14 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
                     } catch (e) {
                       setError(friendlyError(e));
                     }
-                  }}
-                >
-                  Delete
-                </button>
-              </div>
-            </details>
-          </div>
-        </div>
-      </header>
-      {error && <ErrorState message={error} />}
+                  },
+                },
+              ]}
+            />
+          </>
+        }
+      />
+      {error && <ErrorState message={error} onRetry={() => void load()} />}
       {statusField?.enum_values && statusField.enum_values.length > 1 ? (
         <ol className="wf-strip" aria-label="Status">
           {statusField.enum_values.map((step) => (
@@ -197,7 +202,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
             type="button"
             role="tab"
             aria-selected={tab === t.id}
-            className={tab === t.id ? "" : "ghost"}
+            className={tab === t.id ? "is-active" : "ghost"}
             onClick={() => setTab(t.id)}
           >
             {t.label}
@@ -209,7 +214,6 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
           row={row}
           fields={visible}
           entities={entities}
-          theme={theme}
           sections={meta.views?.detail?.sections}
         />
       ) : null}
@@ -219,7 +223,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
         ) : null,
       )}
       {tab === "related" ? (
-        <RelatedPanel links={links} related={related} id={id} />
+        <RelatedPanel links={links} related={related} id={id} meta={meta} entities={entities} />
       ) : null}
       {tab === "files" && meta.attachments ? (
         <div className="panel" style={{ padding: "0.85rem" }}>
@@ -251,13 +255,11 @@ function Overview({
   row,
   fields,
   entities,
-  theme,
   sections: spec,
 }: {
   row: Record<string, unknown>;
   fields: UiEntity["fields"];
   entities: UiEntity[];
-  theme: { currency: string; locale: string; timezone: string };
   sections?: Array<{ title: string; fields?: string[] }>;
 }) {
   const sections =
@@ -271,20 +273,14 @@ function Overview({
     <>
       {sections.map(([section, sectionFields]) => (
         <div key={section || "default"} className="panel">
-          {section ? <h3 style={{ padding: "0.85rem 0.85rem 0" }}>{section}</h3> : null}
+          {section ? <h3 className="panel-title">{section}</h3> : null}
           <table className="dl">
             <tbody>
               {sectionFields.map((f) => (
                 <tr key={f.name}>
                   <th>{f.label}</th>
                   <td>
-                    {f.widget === "status" || f.name === "status" ? (
-                      <StatusBadge value={row[f.name]} indicators={f.widget_options?.indicators} />
-                    ) : f.relation ? (
-                      relationLink(row, f.name, entities)
-                    ) : (
-                      formatValue(row[f.name], f.widget, theme, f.widget_options?.currency)
-                    )}
+                    <FieldValue row={row} field={f} entities={entities} linkRelations relativeDates={false} compact={false} />
                   </td>
                 </tr>
               ))}
@@ -310,12 +306,14 @@ function ChildPanel({
   const cols = (child?.fields ?? []).filter(
     (f) => !f.hidden && f.list !== false && f.relation_kind !== "one_to_many",
   );
+  const standalone = child?.standalone !== false;
   return (
     <div className="panel">
-      <h3 style={{ padding: "0.85rem 0.85rem 0" }}>{field.label}</h3>
+      <h3 className="panel-title">{field.label}</h3>
       {items.length === 0 ? (
         <EmptyState title={`No ${field.label.toLowerCase()} yet`} />
       ) : (
+        <div className="child-table">
         <table className="data">
           <thead>
             <tr>
@@ -327,15 +325,25 @@ function ChildPanel({
           <tbody>
             {items.map((item, i) => (
               <tr key={String(item.id ?? i)}>
-                {cols.map((c) => (
-                  <td key={c.name} data-label={c.label}>
-                    {String(item[c.name] ?? "")}
-                  </td>
-                ))}
+                {cols.map((c, colIdx) => {
+                  const canOpen = Boolean(standalone && item.id && colIdx === 0 && child);
+                  return (
+                    <td key={c.name} data-label={c.label}>
+                      {canOpen ? (
+                        <Link to={`/${child!.slug}/${item.id}`}>
+                          <FieldValue row={item} field={c} compact />
+                        </Link>
+                      ) : (
+                        <FieldValue row={item} field={c} entities={entities} linkRelations compact />
+                      )}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
@@ -345,53 +353,102 @@ function RelatedPanel({
   links,
   related,
   id,
+  meta,
+  entities,
 }: {
   links: Array<{ label: string; slug: string; relation: string; total: number }>;
   related: Record<string, { slug: string; items: Record<string, unknown>[]; total: number }>;
   id: string;
+  meta: UiEntity;
+  entities: UiEntity[];
 }) {
   return (
     <>
       {links.length > 0 ? (
         <div className="panel related">
-          <h3 style={{ padding: "0.85rem 0.85rem 0" }}>Related</h3>
+          <h3 className="panel-title">Related</h3>
           <ul className="related-tree">
             {links.map((link) => (
               <li key={`${link.slug}-${link.relation}`}>
                 <Link to={`/${link.slug}?${encodeURIComponent(link.relation)}=${id}`}>
                   {link.label} ({link.total})
                 </Link>
+                {" · "}
+                <Link to={`/${link.slug}/new?${encodeURIComponent(link.relation)}=${id}`}>Add</Link>
               </li>
             ))}
           </ul>
         </div>
       ) : null}
-      {Object.entries(related).map(([name, rel]) => (
-        <div key={name} className="related panel">
-          <h3 style={{ padding: "0.85rem 0.85rem 0" }}>{name}</h3>
-          <p className="muted" style={{ padding: "0 0.85rem" }}>
-            {rel.total} related
-          </p>
-          {rel.items.length === 0 ? (
-            <EmptyState title="No related records." />
-          ) : (
-            <ul>
-              {rel.items.map((item) => (
-                <li key={String(item.id)}>
-                  <Link to={`/${rel.slug}/${item.id}`}>
-                    {String(item.name ?? item.title ?? item.code ?? item.id)}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ))}
+      {Object.entries(related).map(([name, rel]) => {
+        const inverse =
+          meta.fields.find((f) => f.name === name)?.inverse_field ||
+          entities.find((e) => e.slug === rel.slug)?.fields.find(
+            (f) => f.relation === meta.entity && f.relation_kind === "many_to_one",
+          )?.name;
+        return (
+          <div key={name} className="related panel">
+            <h3 className="panel-title">{name}</h3>
+            <p className="muted related-meta">
+              {rel.total} related
+              {inverse ? (
+                <>
+                  {" · "}
+                  <Link to={`/${rel.slug}/new?${encodeURIComponent(inverse)}=${id}`}>Add</Link>
+                </>
+              ) : null}
+            </p>
+            {rel.items.length === 0 ? (
+              <EmptyState title="No related records." />
+            ) : (
+              <ul>
+                {rel.items.map((item) => (
+                  <li key={String(item.id)}>
+                    <Link to={`/${rel.slug}/${item.id}`}>
+                      {String(item.name ?? item.title ?? item.code ?? item.id)}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
       {links.length === 0 && Object.keys(related).length === 0 ? (
         <EmptyState title="No related records" />
       ) : null}
     </>
   );
+}
+
+function recordCrumb(meta: UiEntity, entities: UiEntity[], row: Record<string, unknown>) {
+  const label = displayValue(row, meta.display_field);
+  const parentEntity = meta.child_of
+    ? entities.find((e) => e.entity === meta.child_of)
+    : undefined;
+  const fk = parentEntity
+    ? meta.fields.find(
+        (f) => f.relation === parentEntity.entity && f.relation_kind === "many_to_one",
+      )
+    : undefined;
+  const expanded = row._expanded as
+    | Record<string, { id: string; label: string; slug: string }>
+    | undefined;
+  const parentRel = fk ? expanded?.[fk.name] : undefined;
+  const parentId = parentRel?.id ?? (fk ? String(row[fk.name] ?? "") : "");
+  return {
+    id: String(row.id ?? ""),
+    label: label || String(row.id ?? "Record"),
+    parent:
+      parentEntity && parentId
+        ? {
+            slug: parentEntity.slug,
+            id: parentId,
+            label: parentRel?.label || parentId,
+            entityLabel: parentEntity.label,
+          }
+        : undefined,
+  };
 }
 
 function group(fields: UiEntity["fields"]) {
@@ -403,43 +460,4 @@ function group(fields: UiEntity["fields"]) {
     map.set(key, list);
   }
   return Array.from(map.entries());
-}
-
-function relationLink(row: Record<string, unknown>, field: string, entities: UiEntity[]) {
-  const expanded = row._expanded as
-    | Record<string, { id: string; label: string; slug: string }>
-    | undefined;
-  const rel = expanded?.[field];
-  if (!rel) return expandedLabel(row, field);
-  const target = entities.find((e) => e.slug === rel.slug);
-  if (!target) return rel.label;
-  return <Link to={`/${rel.slug}/${rel.id}`}>{rel.label}</Link>;
-}
-
-function formatValue(
-  value: unknown,
-  widget: string,
-  theme: { currency: string; locale: string; timezone: string },
-  currency?: string,
-) {
-  if (value == null) return "";
-  if (widget === "currency") return formatMoney(value, currency || theme.currency, theme.locale);
-  if (widget === "percentage") return `${value}%`;
-  if (widget === "datetime") return utcToDatetimeLocal(value, theme.timezone).replace("T", " ");
-  if (widget === "rich_text") {
-    return <div className="rich-surface" dangerouslySetInnerHTML={{ __html: String(value) }} />;
-  }
-  if (widget === "color") {
-    return (
-      <span className="swatch">
-        <i style={{ background: String(value) }} /> {String(value)}
-      </span>
-    );
-  }
-  if (widget === "image") {
-    return <img src={`/api/v1/files/${encodeURIComponent(String(value))}`} alt="" className="image-preview" />;
-  }
-  if (typeof value === "boolean") return value ? "yes" : "no";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
 }

@@ -1,5 +1,5 @@
-import { useState } from "react";
 import type { EntityAction, WorkflowAction } from "../../api";
+import { ActionMenu } from "../ui/ActionMenu";
 
 export function ActionBar({
   actions,
@@ -12,16 +12,16 @@ export function ActionBar({
   onAction: (name: string, action: EntityAction) => void;
   onTransition?: (name: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const primary = actions.filter((a) => a.style !== "danger").slice(0, 2);
   const rest = actions.filter((a) => !primary.includes(a));
-  const fallback = actions.length === 0 ? transitions ?? [] : [];
+  const fallback = actions.length === 0 ? (transitions ?? []) : [];
 
   return (
     <div className="actions action-bar">
       {primary.map((action) => (
         <button
           key={action.name}
+          type="button"
           className={action.style === "ghost" ? "ghost" : undefined}
           onClick={() => onAction(action.name, action)}
         >
@@ -29,36 +29,18 @@ export function ActionBar({
         </button>
       ))}
       {fallback.map((t) => (
-        <button key={t.name} onClick={() => onTransition?.(t.name)}>
+        <button key={t.name} type="button" onClick={() => onTransition?.(t.name)}>
           {t.label || t.name}
         </button>
       ))}
-      {rest.length > 0 ? (
-        <div className="more-menu">
-          <button type="button" className="ghost" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-            More
-          </button>
-          {open ? (
-            <ul role="menu">
-              {rest.map((action) => (
-                <li key={action.name} role="none">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={action.style === "danger" ? "danger" : "ghost"}
-                    onClick={() => {
-                      setOpen(false);
-                      onAction(action.name, action);
-                    }}
-                  >
-                    {action.label || action.name}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      ) : null}
+      <ActionMenu
+        items={rest.map((action) => ({
+          key: action.name,
+          label: action.label || action.name,
+          danger: action.style === "danger",
+          onSelect: () => onAction(action.name, action),
+        }))}
+      />
     </div>
   );
 }

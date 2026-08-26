@@ -12,12 +12,24 @@ describe("ViewSelector", () => {
     const onChange = vi.fn();
     render(
       <MemoryRouter>
-        <ViewSelector views={["list", "kanban", "calendar"]} current="kanban" onChange={onChange} />
+        <ViewSelector views={["list", "card", "kanban", "calendar"]} current="kanban" onChange={onChange} />
       </MemoryRouter>,
     );
     expect(screen.getByRole("tab", { name: "Kanban" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Kanban" })).toHaveClass("is-active");
+    expect(screen.getByRole("tab", { name: "Cards" })).toBeInTheDocument();
     screen.getByRole("tab", { name: "Calendar" }).click();
     expect(onChange).toHaveBeenCalledWith("calendar");
+  });
+
+  it("shows Cards only when that view is in the list", () => {
+    render(
+      <MemoryRouter>
+        <ViewSelector views={["list", "kanban"]} current="list" onChange={() => undefined} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("tab", { name: "Cards" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "List" })).toBeInTheDocument();
   });
 
   it("builds a deep-link that preserves filters", () => {

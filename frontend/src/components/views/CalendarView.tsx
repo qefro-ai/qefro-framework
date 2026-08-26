@@ -6,6 +6,8 @@ import { friendlyError } from "../../friendlyError";
 import { calendarEndField, calendarStartField, calendarTimeField, displayValue } from "../../metadata/views";
 import { localToUtcIso, utcToLocalParts } from "../../metadata/timezone";
 import { useTenantTheme } from "../../metadata/context";
+import { FieldValue } from "../fields/FieldValue";
+import { Skeleton } from "../ui/EmptyState";
 import type { CollectionViewProps } from "../../views/registry";
 
 type Mode = "day" | "week" | "month";
@@ -151,19 +153,34 @@ export default function CalendarView({
         <strong>
           {when.toLocaleTimeString(theme.locale, { hour: "2-digit", minute: "2-digit" })} {displayValue(row, titleField)}
         </strong>
-        <div className="muted">{displayValue(row, subtitleField)}</div>
+        <div className="muted">
+          <FieldValue
+            row={row}
+            field={meta.fields.find((f) => f.name === subtitleField)}
+            fieldName={subtitleField}
+          />
+        </div>
       </Link>
     );
   }
 
-  if (loading) return <p className="muted">Loading calendar…</p>;
+  if (loading && rows.length === 0) return <Skeleton variant="calendar" />;
+
+  const todayKey = isoDate(new Date());
+  const cursorMonth = cursor.getMonth();
 
   return (
-    <div className={`calendar cal-${mode}`}>
+    <div className={`calendar cal-${mode}${loading ? " is-loading" : ""}`} aria-busy={loading || undefined}>
       <div className="row">
         <div className="view-selector" role="tablist" aria-label="Calendar range">
           {(["day", "week", "month"] as Mode[]).map((m) => (
-            <button key={m} type="button" className={mode === m ? "" : "ghost"} onClick={() => setMode(m)}>
+            <button
+              key={m}
+              type="button"
+              className={mode === m ? "is-active" : "ghost"}
+              aria-selected={mode === m}
+              onClick={() => setMode(m)}
+            >
               {m[0].toUpperCase() + m.slice(1)}
             </button>
           ))}
@@ -192,7 +209,7 @@ export default function CalendarView({
             return (
               <div
                 key={key}
-                className="cal-day"
+                className={`cal-day${key === todayKey ? " is-today" : ""}${day.getMonth() !== cursorMonth ? " is-other-month" : ""}`}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => {
                   e.preventDefault();
@@ -219,7 +236,7 @@ export default function CalendarView({
             return (
               <section
                 key={key}
-                className="cal-day"
+                className={`cal-day${key === todayKey ? " is-today" : ""}`}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => {
                   e.preventDefault();

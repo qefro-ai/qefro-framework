@@ -35,6 +35,10 @@ V0.4 extends V0.3. It does not rewrite CRUD, operations, or the agent boundary. 
 - Singletons, attachments, actions, links, and public forms
 - Notifications, webhooks, import, search, and realtime fan-out
 
+`EntityDef` is the source of truth. `EntityService` is the execution boundary. Generic List / Card / Kanban / Calendar / Form / Detail renderers consume UI metadata. Studio overlays presentation (`entity.field.ui`, `entity.views`); it does not replace the business model.
+
+See [sdk.md](sdk.md).
+
 ## Security pipeline
 
 HTTP APIs, CLI actions, and agent tools share `EntityService`:
@@ -73,12 +77,15 @@ HTTP / Agent / CLI / UI / Public form / Import
 
 ```
 REST ─────────────┐
+QefroClient ──────┤
 CLI  ─────────────┤
                   ↓
              EntityService
                   ↑
-Agent ────────────┘
+EntityOps / Agent ┘
 ```
+
+`EntityDef` is the source of truth. `EntityService` is the execution boundary. The browser talks to REST through `QefroClient` ([sdk.md](sdk.md)). Agents use in-process `EntityOps`. Generic List / Card / Kanban / Calendar / Form / Detail renderers consume UI metadata. Studio overlays presentation (`entity.field.ui`, `entity.views`); it does not replace the business model.
 
 Clients cannot set `tenant_id` on create, update, action, or agent invoke. `X-Tenant-ID` is ignored. Agents have no SQLx dependency and cannot run SQL. Restaurant and CRM rules live in `examples/`, not in core crates.
 
@@ -98,7 +105,7 @@ Permissions are evaluated in `EntityService`. Admin bypasses entity grants; othe
 
 Status fields listed on a workflow cannot be PATCHed directly. Named transitions remain available. When an application registers a business operation with the same name, `POST .../transition` delegates to that operation so related-entity rules cannot be skipped.
 
-GET responses include `_workflow` and `_actions`.
+GET responses include `_workflow`, `_actions`, and `_permissions` (session-scoped `update` / `delete` chrome hints). Entity rows on `GET /meta/ui` include `permissions: { list, create, read, update, delete }`. These hide New / Edit / Delete in the UI. The server still 403s unauthorized writes.
 
 ## Hooks and transactions
 

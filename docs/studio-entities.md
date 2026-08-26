@@ -11,6 +11,9 @@ It shows fields, relations, child tables, computed formulas, form/list/detail la
 - searchable / sortable / filterable
 - widget and widget options (currency code, precision, timezone, …)
 - section, tab, width, order
+- `entity.views` overlay: list columns, card, kanban group/card, form/detail sections (presentation only; permissions, workflow, and field types are rejected)
+
+The **Layout** tab publishes field order / section / tab / label via `entity.field.ui`. The **Views** tab publishes `entity.views` and previews with the production view registry (including Cards). There is no page builder.
 
 ## Additive edits (migration required)
 

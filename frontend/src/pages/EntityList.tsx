@@ -1,18 +1,20 @@
 import { FormEvent, Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, ApiError, expandedLabel, formVisible, listVisible, type UiEntity, type UiField } from "../api";
+import { api, ApiError, expandedLabel, formVisible, listVisible, type UiEntity, type UiField } from "../sdk/client";
 import { FilterBar } from "../components/filters/FilterBar";
 import { FormLayout } from "../components/forms/FormLayout";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
-import { StatusBadge } from "../components/ui/StatusBadge";
+import { PageHeader } from "../components/ui/PageHeader";
+import { ActionMenu } from "../components/ui/ActionMenu";
+import { FieldValue } from "../components/fields/FieldValue";
 import { ViewSelector } from "../components/views/ViewSelector";
 import { renderView } from "../views/registry";
 import "../views";
-import { downloadCsv, isoDate, relativeTime } from "../format";
+import { downloadCsv, isoDate } from "../format";
 import { friendlyError } from "../friendlyError";
 import { formatMoney } from "../metadata/timezone";
 import { useTenantTheme } from "../metadata/context";
-import { availableViews, calendarStartField, listGroupField } from "../metadata/views";
+import { availableViews, calendarStartField, canCreate, canDelete, listGroupField, listViewSpec } from "../metadata/views";
 import type { ViewKind } from "../metadata/types";
 import { usePrefsOptional } from "../prefsContext";
 import { useRealtime } from "../realtime";
@@ -25,18 +27,19 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
   const page = Number(params.get("page") ?? "1");
   const prefs = usePrefsOptional();
   const table = slug ? prefs?.tablePrefs(slug) : undefined;
-  const defaultSort = meta?.list?.default_sort
-    ? `${meta.list.default_sort.direction === "desc" ? "-" : ""}${meta.list.default_sort.field}`
+  const listSpec = listViewSpec(meta ?? ({ fields: [] } as UiEntity));
+  const defaultSort = listSpec?.default_sort
+    ? `${listSpec.default_sort.direction === "desc" ? "-" : ""}${listSpec.default_sort.field}`
     : "-created_at";
   const sort = params.get("sort") ?? table?.sort ?? defaultSort;
   const views = useMemo(() => (meta ? availableViews(meta) : (["list"] as ViewKind[])), [meta]);
-  const view = (["list", "kanban", "calendar"].includes(params.get("view") || "")
+  const view = (["list", "card", "kanban", "calendar"].includes(params.get("view") || "")
     ? (params.get("view") as ViewKind)
     : ((table?.view as ViewKind) || "list")) as ViewKind;
   const currentView = views.includes(view) ? view : "list";
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
-  const [pageSize, setPageSize] = useState(table?.pageSize ?? meta?.list?.page_size ?? 25);
+  const [pageSize, setPageSize] = useState(table?.pageSize ?? listSpec?.page_size ?? 25);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -53,8 +56,8 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
 
   const allCols = useMemo(() => {
     if (!meta) return [];
-    if (meta.list?.columns?.length) {
-      return meta.list.columns
+    if (listSpec?.columns?.length) {
+      return listSpec.columns
         .map((c) => {
           const field = meta.fields.find((f) => f.name === c.field);
           if (!field) return null;
@@ -67,7 +70,7 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
         .filter(Boolean) as UiField[];
     }
     return meta.fields.filter(listVisible);
-  }, [meta]);
+  }, [meta, listSpec]);
 
   const cols = useMemo(() => {
     if (table?.columns?.length) return allCols.filter((c) => table.columns!.includes(c.name));
@@ -143,6 +146,20 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const groupBy = listGroupField(meta);
   const grouped = groupBy ? groupRows(rows, groupBy) : ([["", rows]] as Array<[string, Record<string, unknown>[]]>);
+  const allowCreate = canCreate(meta);
+  const allowDelete = canDelete(meta);
+  const queryActive = isQueryActive(params, search);
+  const initialLoad = loading && rows.length === 0 && !error;
+
+  function clearQuery() {
+    const next = new URLSearchParams();
+    const keepView = params.get("view");
+    const keepCal = params.get("cal");
+    if (keepView) next.set("view", keepView);
+    if (keepCal) next.set("cal", keepCal);
+    setSearchInput("");
+    setParams(next);
+  }
 
   function setParam(key: string, value: string) {
     const next = new URLSearchParams(params);
@@ -198,23 +215,30 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
 
   return (
     <div className="page">
-      <div className="row">
-        <div>
-          <div className="badge">{meta.entity}</div>
-          <h2>{meta.label_plural}</h2>
-        </div>
-        <div className="actions">
-          <button type="button" className="ghost" onClick={() => void exportCsv()}>
-            Export
-          </button>
-          <button type="button" className="ghost" onClick={() => setImportOpen((v) => !v)}>
-            Import CSV
-          </button>
-          <Link to={`/${meta.slug}/new`}>
-            <button>New {meta.label}</button>
-          </Link>
-        </div>
-      </div>
+      <PageHeader
+        kicker={meta.entity}
+        title={meta.label_plural}
+        actions={
+          <>
+            <ActionMenu
+              items={[
+                { key: "export", label: "Export", onSelect: () => void exportCsv() },
+                {
+                  key: "import",
+                  label: "Import CSV",
+                  hidden: !allowCreate,
+                  onSelect: () => setImportOpen((v) => !v),
+                },
+              ]}
+            />
+            {allowCreate ? (
+              <Link to={`/${meta.slug}/new`}>
+                <button type="button">New {meta.label}</button>
+              </Link>
+            ) : null}
+          </>
+        }
+      />
       <ViewSelector
         views={views}
         current={currentView}
@@ -224,14 +248,35 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
         }}
       />
       {importOpen ? <ImportPanel slug={meta.slug} onDone={() => setTick((n) => n + 1)} /> : null}
-      <div className="toolbar">
+      <div className="view-toolbar toolbar">
         {meta.searchable && (
-          <input
-            placeholder={`Search ${meta.label_plural.toLowerCase()}`}
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            aria-label={`Search ${meta.label_plural}`}
-          />
+          <div className="search-field">
+            <input
+              placeholder={`Search ${meta.label_plural.toLowerCase()}`}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  setSearchInput("");
+                  setParam("search", "");
+                }
+              }}
+              aria-label={`Search ${meta.label_plural}`}
+            />
+            {searchInput ? (
+              <button
+                type="button"
+                className="ghost icon-btn search-clear"
+                aria-label="Clear search"
+                onClick={() => {
+                  setSearchInput("");
+                  setParam("search", "");
+                }}
+              >
+                ×
+              </button>
+            ) : null}
+          </div>
         )}
         {currentView === "list" ? (
           <>
@@ -257,6 +302,11 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
               </select>
             </label>
           </>
+        ) : null}
+        {loading ? (
+          <span className="muted toolbar-status" aria-live="polite">
+            Loading…
+          </span>
         ) : null}
       </div>
       {colsOpen ? (
@@ -289,30 +339,51 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
           onReplace={setParams}
         />
       )}
-      {error && <ErrorState message={`Unable to load ${meta.label_plural.toLowerCase()}. ${error}`} />}
+      {error && (
+        <ErrorState
+          message={`Unable to load ${meta.label_plural.toLowerCase()}. ${error}`}
+          onRetry={() => setTick((n) => n + 1)}
+        />
+      )}
       {selected.size > 0 && (
         <div className="actions bulk-bar">
           <span className="muted">{selected.size} selected</span>
           <button className="ghost" onClick={() => void exportCsv()}>
             Export selected
           </button>
-          <button className="danger" onClick={() => void bulkDelete()}>
-            Delete selected
-          </button>
+          {allowDelete ? (
+            <button className="danger" onClick={() => void bulkDelete()}>
+              Delete selected
+            </button>
+          ) : null}
         </div>
       )}
       {currentView === "list" ? (
-      <div className="panel table-wrap">
-        {loading ? (
+      <div className={`panel table-wrap${loading ? " is-loading" : ""}`} aria-busy={loading || undefined}>
+        {initialLoad ? (
           <Skeleton rows={8} />
         ) : rows.length === 0 && !error ? (
           <EmptyState
-            title={`No ${meta.label_plural.toLowerCase()} yet`}
-            description={`Create your first ${meta.label.toLowerCase()}.`}
+            title={
+              queryActive
+                ? `No matching ${meta.label_plural.toLowerCase()}`
+                : `No ${meta.label_plural.toLowerCase()} yet`
+            }
+            description={
+              queryActive
+                ? "Try a different search or clear filters."
+                : `Create your first ${meta.label.toLowerCase()}.`
+            }
             action={
-              <Link to={`/${meta.slug}/new`}>
-                <button>New {meta.label}</button>
-              </Link>
+              queryActive ? (
+                <button type="button" className="ghost" onClick={clearQuery}>
+                  Clear filters
+                </button>
+              ) : allowCreate ? (
+                <Link to={`/${meta.slug}/new`}>
+                  <button>New {meta.label}</button>
+                </Link>
+              ) : undefined
             }
           />
         ) : (
@@ -351,7 +422,7 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
                     </tr>
                   ) : null}
                   {groupRowsList.map((row) => (
-                    <tr key={String(row.id)}>
+                    <tr key={String(row.id)} className={selected.has(String(row.id)) ? "is-selected" : undefined}>
                       <td>
                         <input
                           type="checkbox"
@@ -369,9 +440,11 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
                       {cols.map((c, i) => (
                         <td key={c.name} data-label={c.label} className={isNumeric(c) ? "num" : undefined}>
                           {i === 0 ? (
-                            <Link to={`/${meta.slug}/${row.id}`}>{fmtCell(row, c, theme)}</Link>
+                            <Link to={`/${meta.slug}/${row.id}`}>
+                              <FieldValue row={row} field={c} />
+                            </Link>
                           ) : (
-                            fmtCell(row, c, theme)
+                            <FieldValue row={row} field={c} />
                           )}
                         </td>
                       ))}
@@ -413,19 +486,21 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
           loading,
           onReload: () => setTick((n) => n + 1),
           onError: setError,
+          queryActive,
+          onClearQuery: clearQuery,
         })
       )}
       {currentView === "list" ? (
-      <div className="row" style={{ marginTop: "0.85rem" }}>
+      <div className="row pagination" style={{ marginTop: "0.85rem" }}>
         <p className="muted">{total} records</p>
         <p>
-          <button className="ghost" disabled={page <= 1} onClick={() => setParam("page", String(page - 1))}>
+          <button type="button" className="ghost" disabled={page <= 1} onClick={() => setParam("page", String(page - 1))}>
             Prev
           </button>{" "}
           <span className="muted">
             {page} / {pages}
           </span>{" "}
-          <button className="ghost" disabled={page >= pages} onClick={() => setParam("page", String(page + 1))}>
+          <button type="button" className="ghost" disabled={page >= pages} onClick={() => setParam("page", String(page + 1))}>
             Next
           </button>
         </p>
@@ -471,26 +546,14 @@ function cellText(
   return String(value);
 }
 
-function fmtCell(
-  row: Record<string, unknown>,
-  field: UiField,
-  theme: { currency: string; locale: string; timezone?: string },
-) {
-  if (field.relation) return expandedLabel(row, field.name) ?? "";
-  const value = row[field.name];
-  if (value == null) return "";
-  if (field.widget === "status" || field.name === "status") {
-    return <StatusBadge value={value} indicators={field.widget_options?.indicators} />;
+function isQueryActive(params: URLSearchParams, search: string) {
+  if (search.trim()) return true;
+  const skip = new Set(["search", "sort", "page", "page_size", "view", "cal", "cursor"]);
+  for (const [key, value] of params.entries()) {
+    if (skip.has(key) || key.endsWith(".op") || key.endsWith(".preset")) continue;
+    if (value) return true;
   }
-  if (field.widget === "currency") return formatMoney(value, field.widget_options?.currency || theme.currency, theme.locale);
-  if (field.widget === "percentage") return `${value}%`;
-  if (field.widget === "image" && value) {
-    return <img src={`/api/v1/files/${encodeURIComponent(String(value))}`} alt="" className="avatar" />;
-  }
-  if (field.widget === "datetime" || field.type === "datetime") return relativeTime(value, theme.locale);
-  if (typeof value === "boolean") return value ? "yes" : "no";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
+  return false;
 }
 
 function SingletonSettings({ meta, entities }: { meta: UiEntity; entities: UiEntity[] }) {
@@ -531,8 +594,7 @@ function SingletonSettings({ meta, entities }: { meta: UiEntity; entities: UiEnt
 
   return (
     <div className="page">
-      <div className="badge">Singleton</div>
-      <h2>{meta.label}</h2>
+      <PageHeader kicker="Singleton" title={meta.label} />
       <form className="form form-wide" onSubmit={onSubmit}>
         <FormLayout
           fields={fields}
@@ -542,9 +604,11 @@ function SingletonSettings({ meta, entities }: { meta: UiEntity; entities: UiEnt
           onChange={(name, value) => setValues((prev) => ({ ...prev, [name]: value }))}
         />
         {error ? <ErrorState message={error} /> : null}
-        <button type="submit" disabled={saving}>
-          {saving ? "Saving…" : "Save"}
-        </button>
+        <div className="form-actions actions">
+          <button type="submit" disabled={saving}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
       </form>
     </div>
   );

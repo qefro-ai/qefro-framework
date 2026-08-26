@@ -1,6 +1,6 @@
 # Qefro UI 2.0 / 2.1
 
-Qefro **1.0.0** is the production-hardened backend. **UI 2.0** polished the generic React renderer. **UI 2.1** adds a metadata-driven **Business Views Engine** (List, Kanban, Calendar) on the same architecture. It does not replace EntityService, RBAC, tenant isolation, workflows, Studio, or the REST API.
+Qefro **1.0.0** is the production-hardened backend. **UI 2.0** polished the generic React renderer. **UI 2.1** is a metadata-driven **Business Views Engine** (List, Cards, Kanban, Calendar, Form, Detail) on the same architecture. It does not replace EntityService, RBAC, tenant isolation, workflows, Studio, or the REST API.
 
 ```
 Entity Metadata → UI Schema (schema_version: "1") → View Registry → Generic React Renderer → EntityService
@@ -22,12 +22,15 @@ The V1 generic UI already had lists, forms, dashboards, widgets, filters, search
 
 ## What UI 2.1 adds
 
-- View registry (`list`, `kanban`, `calendar`, plus custom registrations)
+- View registry (`list`, `card`, `kanban`, `calendar`, plus custom registrations)
 - Automatic view detection from workflow / date fields, overridable with `views:`
+- Opt-in Cards view when `views.card` is present (`enabled: false` hides it)
 - Kanban drag that calls workflow **transitions**, never PATCHes status
 - Calendar day/week/month with tenant timezone, slot-create, and EntityService reschedule
 - Dashboard metric drill-down and dashboard-level filters
 - List grouping, numeric footers, detail workflow strip, section `visible_when`
+- Permission chrome hints (`permissions` on `/meta/ui`, `_permissions` on GET)
+- Browser SDK: `QefroClient` in `frontend/src/sdk/client.ts` (see [sdk.md](sdk.md))
 
 ## Non-negotiable
 
@@ -37,6 +40,7 @@ Studio preview uses the **same** `FormLayout`, widget registry, and view registr
 
 ## Docs in this set
 
+- [SDK](sdk.md)
 - [Views](views.md)
 - [View metadata](view-metadata.md)
 - [Kanban](kanban.md)

@@ -79,6 +79,7 @@ export function FilterBar({
   const [saveName, setSaveName] = useState("");
   const [drafts, setDrafts] = useState<Draft[]>(() => readDrafts(fields, params));
   const [open, setOpen] = useState(false);
+  const applied = drafts.filter((d) => d.value || d.op === "empty" || d.op === "not_empty" || d.preset);
 
   useEffect(() => {
     api.savedFilters(entity).then((d) => setSaved(d.items)).catch(() => setSaved([]));
@@ -140,6 +141,34 @@ export function FilterBar({
     }
   }
 
+  function reset() {
+    setDrafts([]);
+    if (onReplace) {
+      const next = new URLSearchParams(params);
+      for (const field of fields) {
+        next.delete(field.name);
+        next.delete(`${field.name}.op`);
+        next.delete(`${field.name}.preset`);
+        for (const op of OPS[field.type] ?? []) next.delete(`${field.name}.${op}`);
+      }
+      next.set("page", "1");
+      onReplace(next);
+    } else {
+      for (const field of fields) {
+        onChange(field.name, "");
+        onChange(`${field.name}.op`, "");
+        onChange(`${field.name}.preset`, "");
+        for (const op of OPS[field.type] ?? []) onChange(`${field.name}.${op}`, "");
+      }
+    }
+  }
+
+  function removeApplied(i: number) {
+    const next = drafts.filter((_, idx) => idx !== i);
+    setDrafts(next);
+    apply(next);
+  }
+
   async function save() {
     if (!saveName.trim()) return;
     const query: Record<string, string> = {};
@@ -153,7 +182,37 @@ export function FilterBar({
   }
 
   return (
-    <div className="filters">
+    <div className={`filters${applied.length ? " has-filters" : ""}`}>
+      {applied.length > 0 ? (
+        <div className="chip-row filter-chips" aria-label="Active filters">
+          {applied.map((draft) => {
+            const field = fields.find((f) => f.name === draft.field);
+            if (!field) return null;
+            const text = draft.preset
+              ? `${field.label}: ${DATE_PRESETS.find(([id]) => id === draft.preset)?.[1] ?? draft.preset}`
+              : draft.op === "empty" || draft.op === "not_empty"
+                ? `${field.label}: ${OP_LABEL[draft.op]}`
+                : `${field.label}${draft.value ? `: ${draft.value}` : ""}`;
+            return (
+              <button
+                key={`${draft.field}-${draft.op}-${draft.value}`}
+                type="button"
+                className="chip"
+                aria-label={`Clear ${field.label} filter`}
+                onClick={() => {
+                  const idx = drafts.indexOf(draft);
+                  if (idx >= 0) removeApplied(idx);
+                }}
+              >
+                {text} ×
+              </button>
+            );
+          })}
+          <button type="button" className="ghost" onClick={reset}>
+            Reset
+          </button>
+        </div>
+      ) : null}
       {enumFields.length > 0 ? (
         <div className="quick-filters" aria-label="Quick filters">
           {enumFields.slice(0, 2).map((field) => (
@@ -165,7 +224,8 @@ export function FilterBar({
                   <button
                     key={v}
                     type="button"
-                    className={active ? "" : "ghost"}
+                    className={active ? "is-active" : "ghost"}
+                    aria-pressed={active}
                     onClick={() => onChange(field.name, active ? "" : v)}
                   >
                     {v}
@@ -260,6 +320,12 @@ export function FilterBar({
                     next[i] = { ...draft, value: e.target.value };
                     setDrafts(next);
                   }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      apply();
+                    }
+                  }}
                 />
                 {draft.op === "between" ? (
                   <input
@@ -278,7 +344,7 @@ export function FilterBar({
               type="button"
               className="ghost"
               aria-label={`Remove ${field.label} filter`}
-              onClick={() => setDrafts(drafts.filter((_, idx) => idx !== i))}
+              onClick={() => removeApplied(i)}
             >
               ×
             </button>
@@ -287,7 +353,15 @@ export function FilterBar({
       })}
       <div className="filter-ops">
         <div className="add-filter">
-          <button type="button" className="ghost" onClick={() => setOpen((v) => !v)}>
+          <button
+            type="button"
+            className={applied.length ? "is-active" : "ghost"}
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setOpen(false);
+            }}
+          >
             + Add filter
           </button>
           {open ? (

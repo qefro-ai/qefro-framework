@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { api } from "../../api";
+import { Link } from "react-router-dom";
+import { api } from "../../sdk/client";
 import { useTenantTheme } from "../../metadata/context";
 import { registerWidget, renderWidget, type WidgetProps } from "../../metadata/registry";
 import { localToUtcIso, utcToLocalParts, formatMoney } from "../../metadata/timezone";
@@ -639,10 +640,22 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id,
   const [total, setTotal] = useState(0);
   const [hi, setHi] = useState(0);
   const [creating, setCreating] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
   const selected = value == null || value === "" ? "" : String(value);
   const displayField = opt(field).display_field || target?.display_field || "name";
   const current = options.find((o) => o.id === selected);
   const allowCreate = opt(field).allow_create !== false;
+  const listId = `${id || field.name}-options`;
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointer(event: MouseEvent) {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointer);
+    return () => document.removeEventListener("mousedown", onPointer);
+  }, [open]);
 
   useEffect(() => {
     if (!target) return;
@@ -651,6 +664,7 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id,
       if (q) params.set("search", q);
       params.set("page", String(page));
       params.set("page_size", "20");
+      setLoading(true);
       api
         .list(target.slug, params)
         .then((result) => {
@@ -665,7 +679,8 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id,
             return keep ? [keep, ...next] : next;
           });
         })
-        .catch(() => setOptions([]));
+        .catch(() => setOptions((prev) => prev.filter((o) => o.id === selected)))
+        .finally(() => setLoading(false));
     }, 250);
     return () => window.clearTimeout(handle);
   }, [target, q, page, displayField, selected]);
@@ -699,12 +714,14 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id,
   }
 
   return (
-    <div className="relation-picker">
+    <div className="relation-picker" ref={root}>
       <div className="relation-control">
         <input
           role="combobox"
           aria-expanded={open}
           aria-autocomplete="list"
+          aria-controls={listId}
+          aria-activedescendant={open && options[hi] ? `${listId}-${options[hi].id}` : undefined}
           placeholder={field.placeholder || `Search ${target.label}`}
           value={open ? q : current?.label ?? ""}
           disabled={disabled}
@@ -725,6 +742,14 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id,
               e.preventDefault();
               setHi((n) => Math.max(n - 1, 0));
             }
+            if (e.key === "Home") {
+              e.preventDefault();
+              setHi(0);
+            }
+            if (e.key === "End") {
+              e.preventDefault();
+              setHi(Math.max(0, options.length - 1));
+            }
             if (e.key === "Enter" && open && options[hi]) {
               e.preventDefault();
               pick(options[hi].id);
@@ -737,6 +762,11 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id,
             +
           </button>
         ) : null}
+        {selected && (
+          <Link to={`/${target.slug}/${selected}`} className="ghost" aria-label={`Open ${target.label}`}>
+            Open
+          </Link>
+        )}
         {selected && (
           <button
             type="button"
@@ -753,11 +783,14 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id,
         )}
       </div>
       {open && (
-        <ul className="option-list" role="listbox">
+        <ul id={listId} className="option-list" role="listbox">
+          {loading ? <li className="muted">Loading…</li> : null}
           {options.map((o, i) => (
-            <li key={o.id}>
+            <li key={o.id} id={`${listId}-${o.id}`}>
               <button
                 type="button"
+                role="option"
+                aria-selected={o.id === selected || i === hi}
                 className={i === hi || o.id === selected ? "active" : "ghost"}
                 onMouseEnter={() => setHi(i)}
                 onClick={() => pick(o.id)}
@@ -767,7 +800,7 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id,
               </button>
             </li>
           ))}
-          {options.length === 0 && <li className="muted">No matches</li>}
+          {!loading && options.length === 0 && <li className="muted">No matches</li>}
           {total > options.length && (
             <li>
               <button type="button" className="ghost" onClick={() => setPage((p) => p + 1)}>
@@ -812,6 +845,9 @@ function QuickCreate({
     <div className="palette-backdrop" onClick={onClose}>
       <form
         className="palette quick-create"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Quick create ${target.label}`}
         onClick={(e) => e.stopPropagation()}
         onSubmit={async (e) => {
           e.preventDefault();
@@ -858,7 +894,7 @@ function QuickCreate({
   );
 }
 
-export function ChildTable({ field, value, onChange, entities, disabled }: WidgetProps) {
+export function ChildTable({ field, value, onChange, entities, disabled, fieldErrors }: WidgetProps) {
   const childName = field.child_entity || field.widget_options?.entity || field.relation;
   const child = entities.find((e) => e.entity === childName);
   const opts = opt(field);
@@ -894,23 +930,36 @@ export function ChildTable({ field, value, onChange, entities, disabled }: Widge
             {cols.map((c) => (
               <th key={c.name}>{c.label}</th>
             ))}
-            <th />
+            <th className="child-row-ops">
+              <span className="sr-only">Row actions</span>
+            </th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={String(row.id ?? i)}>
-              {cols.map((col) => (
-                <td key={col.name}>
-                  {renderWidget({
-                    field: { ...col, readonly: Boolean(col.computed || col.readonly || disabled) },
-                    value: row[col.name],
-                    entities,
-                    disabled: Boolean(disabled || col.computed || col.readonly),
-                    onChange: (v) => setRow(i, col.name, v),
-                  })}
-                </td>
-              ))}
+            <tr key={String(row.id ?? i)} className="child-row">
+              {cols.map((col) => {
+                const cellKey = `${field.name}.${i}.${col.name}`;
+                const cellError = fieldErrors?.[cellKey];
+                return (
+                  <td key={col.name} className={cellError ? "is-invalid" : undefined}>
+                    {renderWidget({
+                      field: { ...col, readonly: Boolean(col.computed || col.readonly || disabled) },
+                      value: row[col.name],
+                      entities,
+                      disabled: Boolean(disabled || col.computed || col.readonly),
+                      invalid: Boolean(cellError),
+                      id: `field-${cellKey}`,
+                      onChange: (v) => setRow(i, col.name, v),
+                    })}
+                    {cellError ? (
+                      <span id={`field-${cellKey}-error`} className="error" role="alert">
+                        {cellError}
+                      </span>
+                    ) : null}
+                  </td>
+                );
+              })}
               <td className="child-row-ops">
                 {reorderable && (
                   <>

@@ -104,14 +104,35 @@ export type UiEntity = {
     group_by?: string;
   };
   views?: EntityViews;
+  permissions?: EntityPermissions;
 };
 
-export type ViewKind = "list" | "kanban" | "calendar";
+export type EntityPermissions = {
+  list?: boolean;
+  create?: boolean;
+  read?: boolean;
+  update?: boolean;
+  delete?: boolean;
+};
+
+export type RecordPermissions = {
+  update?: boolean;
+  delete?: boolean;
+};
+
+export type ViewKind = "list" | "card" | "kanban" | "calendar";
 
 export type EntityViews = {
   list?: UiEntity["list"] & { group_by?: string };
   form?: { sections?: ViewSection[] };
   detail?: { sections?: ViewSection[] };
+  card?: {
+    enabled?: boolean;
+    title?: string;
+    subtitle?: string;
+    image?: string;
+    fields?: string[];
+  };
   kanban?: {
     enabled?: boolean;
     group_by?: string;

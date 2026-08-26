@@ -9,6 +9,7 @@ export type WidgetProps = {
   disabled?: boolean;
   id?: string;
   invalid?: boolean;
+  fieldErrors?: Record<string, string>;
 };
 
 export type Widget = (props: WidgetProps) => ReactNode;

@@ -61,4 +61,23 @@ describe("FilterBar", () => {
     expect(screen.getByText("Today")).toBeInTheDocument();
     await userEvent.click(screen.getByText("Apply"));
   });
+
+  it("shows chips and reset for active filters", async () => {
+    const onReplace = vi.fn();
+    render(
+      <FilterBar
+        entity="Reservation"
+        fields={fields}
+        entities={[]}
+        params={new URLSearchParams("status=Pending")}
+        onChange={() => undefined}
+        onReplace={onReplace}
+      />,
+    );
+    expect(screen.getByLabelText("Active filters")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(onReplace).toHaveBeenCalled();
+    const next = onReplace.mock.calls[0][0] as URLSearchParams;
+    expect(next.get("status")).toBeNull();
+  });
 });

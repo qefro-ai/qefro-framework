@@ -27,12 +27,12 @@ export default function ViewsPreview({ entity }: { entity: UiEntity }) {
   const fields = entity.fields.filter(formVisible).filter((f) => f.relation_kind !== "one_to_many");
   return (
     <MemoryRouter>
-      <div className="card">
+      <div className="card studio-preview">
         <h3>Views</h3>
         <p className="muted">
           Detected: {views.join(", ")}. Preview uses the production view registry.
         </p>
-        {entity.views?.kanban || entity.views?.calendar || entity.views?.list ? (
+        {entity.views?.kanban || entity.views?.calendar || entity.views?.list || entity.views?.card ? (
           <pre className="muted">{JSON.stringify(entity.views, null, 2)}</pre>
         ) : null}
         {views.map((view) => (

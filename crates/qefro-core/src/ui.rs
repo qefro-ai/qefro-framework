@@ -405,6 +405,19 @@ pub struct UiEntityMeta {
     /// Presentation-only view configuration. Omitted entities use automatic defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub views: Option<EntityViews>,
+    /// Session-scoped chrome hints. Server still authorizes writes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<EntityPermissions>,
+}
+
+/// Per-user entity capabilities for UI chrome. Not a grant dump.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntityPermissions {
+    pub list: bool,
+    pub create: bool,
+    pub read: bool,
+    pub update: bool,
+    pub delete: bool,
 }
 
 fn default_true_standalone() -> bool {
@@ -420,6 +433,8 @@ fn schema_version() -> String {
 pub struct EntityViews {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub list: Option<ListViewSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<CardViewSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub form: Option<FormViewSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -507,6 +522,34 @@ pub struct KanbanCardSpec {
     pub subtitle: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<String>,
+}
+
+/// Opt-in collection card view. Omitted entities do not show a Cards tab.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CardViewSpec {
+    #[serde(default = "default_view_enabled")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    /// Image, file, or relation field name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<String>,
+}
+
+impl Default for CardViewSpec {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            title: None,
+            subtitle: None,
+            image: None,
+            fields: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -909,5 +952,23 @@ mod tests {
         assert_eq!(meta.widget, "table-status");
         let json = serde_json::to_value(&meta).unwrap();
         assert_eq!(json["widget"], "table-status");
+    }
+
+    #[test]
+    fn card_view_is_omitted_when_unset_and_schema_stays_one() {
+        let views = EntityViews::default();
+        let json = serde_json::to_value(&views).unwrap();
+        assert!(json.get("card").is_none());
+        assert_eq!(UI_SCHEMA_VERSION, "1");
+        let card = CardViewSpec {
+            enabled: true,
+            title: Some("name".into()),
+            subtitle: Some("status".into()),
+            image: None,
+            fields: vec!["status".into()],
+        };
+        let round = serde_json::from_value::<CardViewSpec>(serde_json::to_value(&card).unwrap()).unwrap();
+        assert_eq!(round.title.as_deref(), Some("name"));
+        assert!(round.enabled);
     }
 }

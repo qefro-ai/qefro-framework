@@ -1,6 +1,8 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { StatusBadge } from "./StatusBadge";
 import { EmptyState, ErrorState, Skeleton } from "./EmptyState";
+import { PageHeader } from "./PageHeader";
 
 describe("StatusBadge", () => {
   it("uses metadata indicators", () => {
@@ -25,5 +27,25 @@ describe("empty loading error", () => {
     );
     expect(screen.getByText("Loading")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(/permission/i);
+  });
+
+  it("offers retry on errors and card skeletons", async () => {
+    const onRetry = vi.fn();
+    render(
+      <>
+        <ErrorState message="Unable to load." onRetry={onRetry} />
+        <Skeleton variant="cards" rows={3} />
+      </>,
+    );
+    expect(screen.getAllByText("Loading").length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it("renders a consistent page header", () => {
+    render(<PageHeader kicker="Note" title="Notes" actions={<button>New Note</button>} />);
+    expect(screen.getByText("Note")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Notes" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New Note" })).toBeInTheDocument();
   });
 });

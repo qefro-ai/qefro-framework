@@ -1,11 +1,18 @@
 import { Fragment } from "react";
 import { Link } from "react-router-dom";
-import { EmptyState } from "../ui/EmptyState";
-import { StatusBadge } from "../ui/StatusBadge";
-import { displayValue, listGroupField } from "../../metadata/views";
+import { EmptyState, Skeleton } from "../ui/EmptyState";
+import { FieldValue } from "../fields/FieldValue";
+import { listGroupField } from "../../metadata/views";
 import type { CollectionViewProps } from "../../views/registry";
 
-export default function ListView({ meta, slug, rows, loading }: CollectionViewProps) {
+export default function ListView({
+  meta,
+  slug,
+  rows,
+  loading,
+  queryActive,
+  onClearQuery,
+}: CollectionViewProps) {
   const cols = meta.fields.filter((f) => f.list !== false && !f.hidden).slice(0, 8);
   const groupBy = listGroupField(meta);
   const groups = groupBy
@@ -15,11 +22,29 @@ export default function ListView({ meta, slug, rows, loading }: CollectionViewPr
       ])
     : [["", rows]];
 
-  if (loading) return <p className="muted">Loading…</p>;
-  if (rows.length === 0) return <EmptyState title={`No ${meta.label_plural.toLowerCase()} yet`} />;
+  if (loading && rows.length === 0) return <Skeleton rows={6} />;
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        title={
+          queryActive
+            ? `No matching ${meta.label_plural.toLowerCase()}`
+            : `No ${meta.label_plural.toLowerCase()} yet`
+        }
+        description={queryActive ? "Try a different search or clear filters." : undefined}
+        action={
+          queryActive && onClearQuery ? (
+            <button type="button" className="ghost" onClick={onClearQuery}>
+              Clear filters
+            </button>
+          ) : undefined
+        }
+      />
+    );
+  }
 
   return (
-    <div className="panel table-wrap">
+    <div className="panel table-wrap" aria-busy={loading || undefined}>
       <table className="data freeze">
         <thead>
           <tr>
@@ -41,13 +66,17 @@ export default function ListView({ meta, slug, rows, loading }: CollectionViewPr
               {groupRows.map((row) => (
                 <tr key={String(row.id)}>
                   {cols.map((c, i) => (
-                    <td key={c.name} data-label={c.label} className={c.widget === "currency" || c.type === "decimal" ? "num" : undefined}>
+                    <td
+                      key={c.name}
+                      data-label={c.label}
+                      className={c.widget === "currency" || c.type === "decimal" ? "num" : undefined}
+                    >
                       {i === 0 ? (
-                        <Link to={`/${slug}/${row.id}`}>{displayValue(row, c.name)}</Link>
-                      ) : c.widget === "status" || c.name === "status" ? (
-                        <StatusBadge value={row[c.name]} indicators={c.widget_options?.indicators} />
+                        <Link to={`/${slug}/${row.id}`}>
+                          <FieldValue row={row} field={c} />
+                        </Link>
                       ) : (
-                        displayValue(row, c.name)
+                        <FieldValue row={row} field={c} />
                       )}
                     </td>
                   ))}

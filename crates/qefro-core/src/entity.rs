@@ -553,6 +553,7 @@ impl EntityDef {
             links: self.links.clone(),
             public_form: self.public_form.clone(),
             views: self.views.clone(),
+            permissions: None,
         }
     }
 

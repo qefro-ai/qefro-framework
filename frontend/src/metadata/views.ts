@@ -55,11 +55,42 @@ export function calendarEnabled(entity: UiEntity): boolean {
   return Boolean(calendarStartField(entity));
 }
 
+export function cardEnabled(entity: UiEntity): boolean {
+  const spec = entity.views?.card;
+  if (!spec) return false;
+  return spec.enabled !== false;
+}
+
 export function availableViews(entity: UiEntity): ViewKind[] {
   const views: ViewKind[] = ["list"];
+  if (cardEnabled(entity)) views.push("card");
   if (kanbanEnabled(entity)) views.push("kanban");
   if (calendarEnabled(entity)) views.push("calendar");
   return views;
+}
+
+export function listViewSpec(entity: UiEntity) {
+  return entity.views?.list ?? entity.list;
+}
+
+export function canCreate(entity: UiEntity): boolean {
+  return entity.permissions?.create !== false;
+}
+
+export function canDelete(entity: UiEntity): boolean {
+  return entity.permissions?.delete !== false;
+}
+
+export function canUpdateRecord(entity: UiEntity, row?: Record<string, unknown> | null): boolean {
+  const record = row?._permissions as { update?: boolean } | undefined;
+  if (record && typeof record.update === "boolean") return record.update;
+  return entity.permissions?.update !== false;
+}
+
+export function canDeleteRecord(entity: UiEntity, row?: Record<string, unknown> | null): boolean {
+  const record = row?._permissions as { delete?: boolean } | undefined;
+  if (record && typeof record.delete === "boolean") return record.delete;
+  return entity.permissions?.delete !== false;
 }
 
 export function listGroupField(entity: UiEntity): string | undefined {

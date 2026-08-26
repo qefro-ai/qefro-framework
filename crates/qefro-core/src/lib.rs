@@ -74,8 +74,9 @@ pub use studio::{
 pub use seed::SeedBatch;
 pub use timezone::{canonicalize_datetime, local_to_utc, utc_to_local};
 pub use ui::{
-    CalendarViewSpec, DashboardCard, DashboardDef, DetailViewSpec, EntityViews, FormViewSpec,
-    KanbanCardSpec, KanbanViewSpec, ListViewSpec, TenantBranding, TenantBusinessConfig, TenantConfig,
+    CalendarViewSpec, CardViewSpec, DashboardCard, DashboardDef, DetailViewSpec, EntityPermissions,
+    EntityViews, FormViewSpec, KanbanCardSpec, KanbanViewSpec, ListViewSpec, TenantBranding,
+    TenantBusinessConfig, TenantConfig,
     TenantFeatures, TenantUiConfig, UiConfig, UiEntityMeta, UiFieldMeta, UiWhen, UiWidget,
     ViewSectionSpec, WidgetOptions, UI_SCHEMA_VERSION,
 };

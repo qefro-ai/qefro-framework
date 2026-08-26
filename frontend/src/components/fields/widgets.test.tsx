@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { TenantThemeContext } from "../../metadata/context";
 import type { UiField } from "../../metadata/types";
 import {
@@ -290,5 +291,58 @@ describe("widgets", () => {
       );
       await userEvent.click(screen.getByRole("button", { name: /\+ Add/i }));
       expect(onChange).toHaveBeenCalled();
+    });
+
+    it("opens the linked record from RelationPicker", () => {
+      wrap(
+        <MemoryRouter>
+          <RelationPicker
+            field={field({ name: "customer", widget: "relation", relation: "Customer" })}
+            value="c1"
+            onChange={() => undefined}
+            entities={[
+              {
+                entity: "Customer",
+                label: "Customer",
+                label_plural: "Customers",
+                slug: "customers",
+                searchable: true,
+                display_field: "name",
+                fields: [field({ name: "name", widget: "text" })],
+              },
+            ]}
+          />
+        </MemoryRouter>,
+      );
+      expect(screen.getByRole("link", { name: "Open Customer" })).toHaveAttribute("href", "/customers/c1");
+    });
+
+    it("highlights nested child-table field errors", () => {
+      wrap(
+        <ChildTable
+          field={field({
+            name: "items",
+            widget: "child_table",
+            type: "child_table",
+            child_entity: "Line",
+            relation_kind: "child_table",
+          })}
+          value={[{ quantity: 0 }]}
+          fieldErrors={{ "items.0.quantity": "Must be greater than 0" }}
+          onChange={() => undefined}
+          entities={[
+            {
+              entity: "Line",
+              label: "Line",
+              label_plural: "Lines",
+              slug: "lines",
+              searchable: false,
+              fields: [field({ name: "quantity", widget: "number", type: "integer", label: "Qty" })],
+            },
+          ]}
+        />,
+      );
+      expect(screen.getByRole("alert")).toHaveTextContent("Must be greater than 0");
+      expect(screen.getByRole("alert").closest("td")).toHaveClass("is-invalid");
     });
 });

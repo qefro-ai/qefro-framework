@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { api, type EntityAction, type WorkflowAction } from "../../api";
+import { api, type EntityAction, type WorkflowAction } from "../../sdk/client";
+import { EntityCard } from "./EntityCard";
+import { Skeleton } from "../ui/EmptyState";
 import { StatusBadge } from "../ui/StatusBadge";
-import { displayValue, groupingField, isWorkflowGroup } from "../../metadata/views";
+import { groupingField, isWorkflowGroup } from "../../metadata/views";
 import { friendlyError } from "../../friendlyError";
 import type { CollectionViewProps } from "../../views/registry";
 
@@ -12,9 +13,6 @@ export default function KanbanView({ meta, slug, rows, loading, onReload, onErro
   const group = groupingField(meta);
   const groupName = group?.name || "status";
   const card = meta.views?.kanban?.card;
-  const titleField = card?.title || meta.display_field || "name";
-  const subtitleField = card?.subtitle;
-  const extra = card?.fields ?? [];
   const columns = useMemo(() => {
     const fromEnum = group?.enum_values ?? [];
     const fromRows = [...new Set(rows.map((r) => String(r[groupName] ?? "")))].filter(Boolean);
@@ -23,6 +21,7 @@ export default function KanbanView({ meta, slug, rows, loading, onReload, onErro
   }, [group, groupName, rows]);
 
   const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
 
   async function drop(dest: string, id: string) {
     const row = rows.find((r) => String(r.id) === id);
@@ -48,91 +47,100 @@ export default function KanbanView({ meta, slug, rows, loading, onReload, onErro
     }
   }
 
-  if (loading) return <p className="muted">Loading board…</p>;
+  if (loading && rows.length === 0) return <Skeleton variant="kanban" />;
 
   return (
-    <div className="kanban" role="list">
+    <div className={`kanban${loading ? " is-loading" : ""}`} role="list" aria-busy={loading || undefined}>
       {columns.map((col) => {
         const cards = rows.filter((r) => String(r[groupName] ?? "") === col);
         return (
           <section
             key={col}
-            className="kanban-col"
-            onDragOver={(e) => e.preventDefault()}
+            className={`kanban-col${over === col ? " is-drop-target" : ""}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (over !== col) setOver(col);
+            }}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(null);
+            }}
             onDrop={(e) => {
               e.preventDefault();
               const id = e.dataTransfer.getData("text/plain");
               if (id) void drop(col, id);
               setDragging(null);
+              setOver(null);
             }}
           >
             <header>
               <StatusBadge value={col} indicators={group?.widget_options?.indicators} />
-              <span className="muted">{cards.length}</span>
+              <span className="muted kanban-count">{cards.length}</span>
             </header>
             <div className="kanban-cards">
+              {cards.length === 0 ? <p className="muted empty-col">No records</p> : null}
               {cards.map((row) => {
                 const wf = row._workflow as Wf | undefined;
                 const actions = ((row._actions as EntityAction[] | undefined) ?? []).slice(0, 2);
                 const transitions = (wf?.transitions ?? []).slice(0, 2);
                 return (
-                  <article
+                  <div
                     key={String(row.id)}
-                    className={`kanban-card ${dragging === String(row.id) ? "is-dragging" : ""}`}
+                    className={dragging === String(row.id) ? "is-dragging" : undefined}
                     draggable
+                    aria-grabbed={dragging === String(row.id) || undefined}
                     onDragStart={(e) => {
                       e.dataTransfer.setData("text/plain", String(row.id));
                       setDragging(String(row.id));
                     }}
                     onDragEnd={() => setDragging(null)}
                   >
-                    <Link to={`/${slug}/${row.id}`}>
-                      <strong>{displayValue(row, titleField)}</strong>
-                    </Link>
-                    {subtitleField ? <div className="muted">{displayValue(row, subtitleField)}</div> : null}
-                    {extra.map((f) => (
-                      <div key={f} className="muted">
-                        {displayValue(row, f)}
-                      </div>
-                    ))}
-                    <div className="kanban-actions">
-                      {actions.length
-                        ? actions.map((a) => (
-                            <button
-                              key={a.name}
-                              type="button"
-                              className="ghost"
-                              onClick={async () => {
-                                try {
-                                  await api.action(slug, String(row.id), a.name);
-                                  onReload();
-                                } catch (err) {
-                                  onError(friendlyError(err));
-                                }
-                              }}
-                            >
-                              {a.label || a.name}
-                            </button>
-                          ))
-                        : transitions.map((t) => (
-                            <button
-                              key={t.name}
-                              type="button"
-                              className="ghost"
-                              onClick={async () => {
-                                try {
-                                  await api.transition(slug, String(row.id), t.name);
-                                  onReload();
-                                } catch (err) {
-                                  onError(friendlyError(err));
-                                }
-                              }}
-                            >
-                              {t.label || t.name}
-                            </button>
-                          ))}
-                    </div>
-                  </article>
+                    <EntityCard
+                      meta={meta}
+                      slug={slug}
+                      row={row}
+                      spec={card}
+                      className="kanban-card entity-card"
+                      footer={
+                        <div className="kanban-actions">
+                          {actions.length
+                            ? actions.map((a) => (
+                                <button
+                                  key={a.name}
+                                  type="button"
+                                  className="ghost"
+                                  onClick={async () => {
+                                    try {
+                                      await api.action(slug, String(row.id), a.name);
+                                      onReload();
+                                    } catch (err) {
+                                      onError(friendlyError(err));
+                                    }
+                                  }}
+                                >
+                                  {a.label || a.name}
+                                </button>
+                              ))
+                            : transitions.map((t) => (
+                                <button
+                                  key={t.name}
+                                  type="button"
+                                  className="ghost"
+                                  onClick={async () => {
+                                    try {
+                                      await api.transition(slug, String(row.id), t.name);
+                                      onReload();
+                                    } catch (err) {
+                                      onError(friendlyError(err));
+                                    }
+                                  }}
+                                >
+                                  {t.label || t.name}
+                                </button>
+                              ))}
+                        </div>
+                      }
+                    />
+                  </div>
                 );
               })}
             </div>

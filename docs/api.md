@@ -33,7 +33,8 @@ Create user body: `{ name, email, password, roles }`
 
 - `GET /meta/entities`
 - `GET /meta/entities/{name}`
-- `GET /meta/ui`
+- `GET /meta/ui` — entities, branding, locale, and per-entity `permissions: { list, create, read, update, delete }` chrome hints
+- `GET /meta/permissions`
 - `GET /meta/permissions`
 - `GET /meta/workflows`
 - `GET /meta/modules`
@@ -71,7 +72,9 @@ GET    /{slug}/{id}/actions
 POST   /{slug}/{id}/actions/{name}
 ```
 
-List/get include `_expanded` (many-to-one labels), `_related` (one-to-many, GET only), `_links` (related counts), `_workflow` (allowed transitions), and `_actions` (allowed business operations). Unauthorized fields are omitted.
+List/get include `_expanded` (many-to-one labels), `_related` (one-to-many, GET only), `_links` (related counts), `_workflow` (allowed transitions), `_actions` (allowed business operations), and GET `_permissions: { update, delete }` (chrome hints). Unauthorized fields are omitted. The UI hides New/Edit/Delete from these hints; the server still returns 403 for unauthorized writes.
+
+See [sdk.md](sdk.md) for the browser client.
 
 ## Platform
 

@@ -1,4 +1,4 @@
-import { availableViews, calendarStartField, kanbanEnabled, listGroupField } from "./views";
+import { availableViews, calendarStartField, cardEnabled, kanbanEnabled, listGroupField } from "./views";
 import type { UiEntity, UiField } from "./types";
 
 function field(over: Partial<UiField> & { name: string }): UiField {
@@ -70,5 +70,23 @@ describe("view metadata", () => {
       fields: [field({ name: "warehouse_id", type: "relation" })],
     });
     expect(listGroupField(stock)).toBe("warehouse_id");
+  });
+
+  it("adds Cards only when views.card is present and enabled", () => {
+    const plain = entity({ entity: "Note", fields: [field({ name: "title" })] });
+    expect(availableViews(plain)).toEqual(["list"]);
+    expect(cardEnabled(plain)).toBe(false);
+    const cards = entity({
+      entity: "Guest",
+      fields: [field({ name: "name" })],
+      views: { card: { title: "name" } },
+    });
+    expect(availableViews(cards)).toEqual(["list", "card"]);
+    const disabled = entity({
+      entity: "HiddenCard",
+      fields: [field({ name: "name" })],
+      views: { card: { enabled: false, title: "name" } },
+    });
+    expect(availableViews(disabled)).toEqual(["list"]);
   });
 });

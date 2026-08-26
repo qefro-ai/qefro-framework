@@ -577,3 +577,71 @@ async fn studio_audit_records_publish() {
         "{audit}"
     );
 }
+
+#[tokio::test]
+async fn studio_views_overlay_is_safe_and_rejects_permissions() {
+    let Some((router, token, _)) = boot().await else {
+        return;
+    };
+    let (status, bad) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/studio/validate",
+            &token,
+            json!({
+                "kind": "entity.views",
+                "target": "StudioGuest",
+                "payload": { "permissions": { "create": true } }
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+
+    let (status, preview) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/studio/validate",
+            &token,
+            json!({
+                "kind": "entity.views",
+                "target": "StudioGuest",
+                "payload": {
+                    "card": { "enabled": true, "title": "name", "fields": ["name"] },
+                    "list": { "columns": [{ "field": "name" }] }
+                }
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["impact"], "safe");
+    assert_eq!(preview["migration_required"], false);
+
+    let (status, published) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/studio/publish",
+            &token,
+            json!({
+                "kind": "entity.views",
+                "target": "StudioGuest",
+                "payload": {
+                    "card": { "enabled": true, "title": "name", "fields": ["name"] }
+                }
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{published}");
+
+    let (status, ui) = json(clone_router(&router), get("/api/v1/meta/ui", &token)).await;
+    assert_eq!(status, StatusCode::OK, "{ui}");
+    let guest = ui["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["entity"] == "StudioGuest")
+        .unwrap();
+    assert_eq!(guest["views"]["card"]["title"], "name");
+}

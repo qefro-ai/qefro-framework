@@ -1,10 +1,13 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useBlocker, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, ApiError, formVisible, type UiEntity, type UiField } from "../api";
+import { api, ApiError, formVisible, type UiEntity, type UiField } from "../sdk/client";
 import { FormLayout } from "../components/forms/FormLayout";
 import { ErrorState, Skeleton } from "../components/ui/EmptyState";
+import { PageHeader } from "../components/ui/PageHeader";
 import { friendlyError } from "../friendlyError";
 import { previewFormula } from "../metadata/formula";
+import { displayValue } from "../metadata/views";
+import { useBreadcrumbRecord } from "../components/shell/breadcrumbContext";
 
 export default function EntityForm({ entities }: { entities: UiEntity[] }) {
   const { slug, id } = useParams();
@@ -17,6 +20,7 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
   const [loading, setLoading] = useState(Boolean(id));
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const { setRecord } = useBreadcrumbRecord();
 
   const baseFields = useMemo(
     () => (meta?.fields.filter(formVisible) ?? []).filter((f) => f.relation_kind !== "one_to_many"),
@@ -41,6 +45,7 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
           }
           setValues(next);
           setDirty(false);
+          if (meta) setRecord({ id, label: displayValue(row, meta.display_field) || id });
         })
         .catch((e) => setError(friendlyError(e)))
         .finally(() => setLoading(false));
@@ -69,7 +74,7 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
   const blocker = useBlocker(Boolean(dirty && !saving));
 
   if (!meta || !slug) return <ErrorState message="Unknown entity." />;
-  if (loading) return <Skeleton rows={6} />;
+  if (loading) return <Skeleton rows={6} variant="form" />;
   const entitySlug = slug;
   const isSingleton = Boolean(meta.singleton);
 
@@ -119,10 +124,14 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
 
   return (
     <div className="page">
-      <div className="badge">{meta.entity}</div>
-      <h2>
-        {id ? "Edit" : "New"} {meta.label}
-      </h2>
+      <PageHeader
+        kicker={meta.entity}
+        title={
+          <>
+            {id ? "Edit" : "New"} {meta.label}
+          </>
+        }
+      />
       <form className="form form-wide" onSubmit={onSubmit}>
         <FormLayout
           fields={fields}
@@ -153,7 +162,7 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
           }}
         />
         {error && <ErrorState message={error} />}
-        <div className="actions">
+        <div className="form-actions actions">
           <Link to={id ? `/${entitySlug}/${id}` : `/${entitySlug}`}>
             <button type="button" className="ghost">
               Cancel
@@ -165,8 +174,15 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
         </div>
       </form>
       {blocker.state === "blocked" ? (
-        <div className="palette-backdrop">
-          <div className="palette" role="alertdialog" aria-label="Unsaved changes">
+        <div
+          className="palette-backdrop"
+          role="presentation"
+          onClick={() => blocker.reset()}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") blocker.reset();
+          }}
+        >
+          <div className="palette" role="alertdialog" aria-modal="true" aria-label="Unsaved changes">
             <h3>Unsaved changes</h3>
             <p className="muted">Leave this page and discard your changes?</p>
             <div className="actions">

@@ -10,6 +10,8 @@ export type CollectionViewProps = {
   loading: boolean;
   onReload: () => void;
   onError: (message: string) => void;
+  queryActive?: boolean;
+  onClearQuery?: () => void;
 };
 
 export type CollectionView = (props: CollectionViewProps) => ReactNode;

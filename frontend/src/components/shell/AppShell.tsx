@@ -5,6 +5,7 @@ import { usePrefs } from "../../prefsContext";
 import { useRealtime } from "../../realtime";
 import NotificationBell from "../NotificationBell";
 import { Breadcrumbs } from "./Breadcrumbs";
+import { BreadcrumbRecordProvider } from "./breadcrumbContext";
 import CommandPalette from "./CommandPalette";
 
 export function AppShell({
@@ -172,8 +173,10 @@ export function AppShell({
         </div>
       </aside>
       <main id="main" className="main" tabIndex={-1}>
-        <Breadcrumbs entities={navEntities} />
-        {children}
+        <BreadcrumbRecordProvider>
+          <Breadcrumbs entities={navEntities} />
+          {children}
+        </BreadcrumbRecordProvider>
       </main>
       <CommandPalette entities={navEntities} studio={studio} open={palette} onOpenChange={setPalette} />
       {helpOpen ? (

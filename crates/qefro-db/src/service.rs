@@ -578,6 +578,7 @@ impl EntityService {
         self.expand_child_tables(ctx, entity, &mut record).await?;
         self.attach_workflow(ctx, entity, &mut record);
         self.attach_actions(ctx, entity, &mut record);
+        self.attach_permissions(ctx, entity, &mut record);
         self.attach_links(ctx, entity, &mut record).await?;
         self.strip_forbidden_fields(ctx, entity, &mut record);
         Ok(record)
@@ -667,6 +668,23 @@ impl EntityService {
             .collect();
         if let Some(obj) = record.as_object_mut() {
             obj.insert("_actions".into(), json!(actions));
+        }
+    }
+
+    fn attach_permissions(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        record: &mut Value,
+    ) {
+        if let Some(obj) = record.as_object_mut() {
+            obj.insert(
+                "_permissions".into(),
+                json!({
+                    "update": self.permissions.allows(&ctx.roles, &entity.name, Action::Update),
+                    "delete": self.permissions.allows(&ctx.roles, &entity.name, Action::Delete),
+                }),
+            );
         }
     }
 

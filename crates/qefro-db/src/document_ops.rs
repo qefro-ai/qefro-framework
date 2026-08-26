@@ -51,6 +51,8 @@ async fn copy_document(ctx: &mut OperationCtx<'_, '_>) -> QefroResult<Value> {
             "_related",
             "_workflow",
             "_actions",
+            "_permissions",
+            "_links",
         ] {
             obj.remove(key);
         }

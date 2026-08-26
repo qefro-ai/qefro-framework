@@ -28,6 +28,11 @@ views:
       title: customer
       subtitle: reservation_time
       fields: [guests, reservation_date]
+  card:
+    title: name
+    subtitle: email
+    image: photo
+    fields: [status]
   calendar:
     start: reservation_datetime
     time: reservation_time   # when start is a date
@@ -39,4 +44,4 @@ views:
 
 Field-level `visible_when` already exists on UI schema v1. Section `visible_when` is the same shape, applied by `FormLayout`.
 
-If `views` is omitted, the renderer uses [automatic detection](views.md).
+If `views` is omitted, the renderer uses [automatic detection](views.md). `views.card` is opt-in: when omitted, there is no Cards tab. List columns stay `{ field, width?, widget? }`.

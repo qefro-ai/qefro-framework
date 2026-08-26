@@ -44,7 +44,7 @@ export function FormLayout({
                 const isBool = field.widget === "checkbox" || field.widget === "switch";
                 const invalid = Boolean(fieldErrors[field.name]);
                 return (
-                  <div key={field.name} className={`field-cell width-${width}`}>
+                  <div key={field.name} className={`field-cell width-${width}${invalid ? " is-invalid" : ""}`}>
                     {isBool ? null : (
                       <label htmlFor={inputId}>
                         {field.label}
@@ -59,6 +59,7 @@ export function FormLayout({
                       disabled: readonly,
                       id: inputId,
                       invalid,
+                      fieldErrors,
                       onChange: (value) => onChange(field.name, value),
                     })}
                     {help && (
@@ -135,7 +136,7 @@ function Tabbed({
             type="button"
             role="tab"
             aria-selected={active === tab}
-            className={active === tab ? "" : "ghost"}
+            className={active === tab ? "is-active" : "ghost"}
             onClick={() => setActive(tab)}
           >
             {tab}

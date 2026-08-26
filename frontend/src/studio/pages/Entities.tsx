@@ -7,6 +7,8 @@ import FieldEditor from "../editors/FieldEditor";
 import FormulaEditor from "../editors/FormulaEditor";
 import FormPreview from "../preview/FormPreview";
 import ViewsPreview from "../preview/ViewsPreview";
+import ViewsEditor from "../editors/ViewsEditor";
+import LayoutEditor from "../editors/LayoutEditor";
 
 type EntityPayload = {
   entity?: Record<string, unknown>;
@@ -225,18 +227,30 @@ export default function Entities({ caps }: { caps: string[] }) {
         />
       )}
       {tab === "layout" && ui && (
-        <ul>
-          {ui.fields
-            .filter((f) => f.form)
-            .map((f) => (
-              <li key={f.name}>
-                {f.label} · {f.widget}
-                {f.section ? ` · ${f.section}` : ""}
-              </li>
-            ))}
-        </ul>
+        <LayoutEditor
+          entity={entity}
+          ui={ui}
+          canPublish={can(caps, "studio.publish")}
+          onSaved={async () => {
+            setDetail(await api.studioEntity(entity));
+            setMessage("Published layout.");
+          }}
+        />
       )}
-      {tab === "views" && ui && <ViewsPreview entity={ui} />}
+      {tab === "views" && ui && (
+        <>
+          <ViewsEditor
+            entity={entity}
+            ui={ui}
+            canPublish={can(caps, "studio.publish")}
+            onSaved={async () => {
+              setDetail(await api.studioEntity(entity));
+              setMessage("Published views.");
+            }}
+          />
+          <ViewsPreview entity={ui} />
+        </>
+      )}
       {tab === "preview" && ui && <FormPreview entity={ui} />}
       {tab === "source" && (
         <SourceView jsonText={detail?.json ?? ""} yamlText={detail?.yaml ?? ""} />

@@ -11,7 +11,7 @@ export default function FormPreview({ entity }: { entity: UiEntity }) {
   const [values, setValues] = useState<Record<string, unknown>>({});
 
   return (
-    <div className="card">
+    <div className="card studio-preview">
       <h3>{entity.label} preview</h3>
       <p className="muted">Same generic form renderer as the application UI.</p>
       <FormLayout
