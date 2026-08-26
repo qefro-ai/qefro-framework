@@ -2,7 +2,7 @@
 
 Qefro applications are first-class, versioned packages. Framework core does not hardcode restaurant or CRM behavior.
 
-To create an app from scratch and run it with the generic UI, see [Build a fullstack application](fullstack.md). Packaging and install: [App packaging](app-packaging.md). Lifecycle: [App lifecycle](app-lifecycle.md). YAML vs Rust: [App development](app-development.md).
+To create an app from scratch and run it with the generic UI, see [Create an application](creating-an-app.md). Longer shop tutorial: [Build a fullstack application](fullstack.md). Packaging and install: [App packaging](app-packaging.md). Lifecycle: [App lifecycle](app-lifecycle.md). YAML vs Rust: [App development](app-development.md).
 
 ## Layout
 

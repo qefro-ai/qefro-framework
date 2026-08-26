@@ -69,6 +69,8 @@ Step-by-step (customers, products, orders with line items): **[Build a fullstack
 
 ## Create an application
 
+Step-by-step: **[Create an application](docs/creating-an-app.md)**. Shop tutorial: [Build a fullstack application](docs/fullstack.md).
+
 ```bash
 qefro app new myshop
 cd apps/myshop
@@ -215,6 +217,7 @@ Integration tests that need PostgreSQL skip when `DATABASE_URL` is unset. Fronte
 ## Docs
 
 - [Getting started](docs/getting-started.md)
+- [Create an application](docs/creating-an-app.md)
 - [V1 compatibility](docs/v1-compatibility.md)
 - [Build a fullstack application](docs/fullstack.md)
 - [Qefro Studio](docs/studio.md)

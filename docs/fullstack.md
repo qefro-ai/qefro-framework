@@ -4,7 +4,7 @@ Qefro is one Axum process, one PostgreSQL database, and one generic React UI. Yo
 
 Define the business once — as YAML files or as Rust `EntityDef`s. The runtime generates schema, CRUD APIs, validation, tenant isolation, list/form/detail screens, and (when you add them) workflows, numbering, print, and reports.
 
-This guide builds a small shop: customers, products, and orders with line items.
+This guide builds a small shop: customers, products, and orders with line items. For a shorter path from `qefro app new` to a running generic UI, see [Create an application](creating-an-app.md).
 
 ## What the stack is
 

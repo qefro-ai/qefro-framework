@@ -19,6 +19,8 @@ qefro doctor
 
 ## Create an application
 
+Step-by-step (scaffold, entities, permissions, views, run the generic UI): **[Create an application](creating-an-app.md)**.
+
 ```bash
 qefro app new myshop
 # edit apps/myshop/entities, workflows, permissions, reports
@@ -48,6 +50,7 @@ cd frontend && npm install && npm run dev
 | --- | --- |
 | Architecture | [architecture.md](architecture.md) |
 | Compatibility | [v1-compatibility.md](v1-compatibility.md) |
+| Create an app | [creating-an-app.md](creating-an-app.md) |
 | Building apps | [app-development.md](app-development.md) |
 | Entities | [entities.md](entities.md) |
 | Fields / relations | [entities.md](entities.md), [child-tables.md](child-tables.md) |
