@@ -175,6 +175,35 @@ impl EntityRegistry {
         Ok(())
     }
 
+    /// Replace a boot-registered entity. Used after application modules land
+    /// so Person can gain inverse one-to-many fields for `person_id`.
+    pub fn replace(&mut self, mut def: EntityDef) -> QefroResult<()> {
+        def.normalize();
+        def.validate_idents()?;
+        if let Some(old) = self.by_name.remove(&def.name) {
+            self.by_slug.remove(&old.slug);
+            self.by_table.remove(&old.table);
+        }
+        self.by_slug.insert(def.slug.clone(), def.name.clone());
+        self.by_table.insert(def.table.clone(), def.name.clone());
+        self.by_name.insert(def.name.clone(), Arc::new(def));
+        Ok(())
+    }
+
+    /// Attach Person ← business-entity inverses for every `person_id` field.
+    pub fn wire_identity_inverses(&mut self) -> QefroResult<()> {
+        let Ok(person) = self.get(crate::identity::PERSON_ENTITY) else {
+            return Ok(());
+        };
+        let mut person = (*person).clone();
+        let listed = self.list();
+        let backrefs = crate::identity::person_backrefs(listed.iter().map(|e| e.as_ref()));
+        if crate::identity::apply_person_backrefs(&mut person, backrefs) {
+            self.replace(person)?;
+        }
+        Ok(())
+    }
+
     fn validate_formulas(&self, entity: &EntityDef) -> QefroResult<()> {
         for field in &entity.fields {
             if !field.computed {
@@ -209,7 +238,10 @@ impl EntityRegistry {
                         )));
                     }
                 } else if entity.get_field(&dep).is_none()
-                    && !entity.fields.iter().any(|f| f.is_child_table() && f.name == dep)
+                    && !entity
+                        .fields
+                        .iter()
+                        .any(|f| f.is_child_table() && f.name == dep)
                 {
                     return Err(QefroError::bad_request(format!(
                         "formula on '{}.{}' references unknown field '{dep}'",
@@ -264,7 +296,11 @@ mod tests {
             .build();
         reg.overlay_put(updated).unwrap();
         assert_eq!(
-            reg.get("Customer").unwrap().get_field("name").unwrap().label,
+            reg.get("Customer")
+                .unwrap()
+                .get_field("name")
+                .unwrap()
+                .label,
             "Guest"
         );
     }
@@ -283,5 +319,35 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("unknown entity 'Table'"));
         assert!(msg.contains("DiningTable"));
+    }
+
+    #[test]
+    fn wire_identity_inverses_adds_person_backrefs() {
+        let mut reg = EntityRegistry::new();
+        reg.register(crate::identity::person_entity()).unwrap();
+        reg.register(
+            EntityDef::new("Customer")
+                .table_name("customers")
+                .slug_name("customers")
+                .field(FieldDef::string("name").required())
+                .field(FieldDef::string("email").required())
+                .field(FieldDef::string("phone").nullable())
+                .field(FieldDef::many_to_one("person_id", "Person").nullable())
+                .build(),
+        )
+        .unwrap();
+        reg.wire_identity_inverses().unwrap();
+        let person = reg.get("Person").unwrap();
+        let back = person.get_field("customers").expect("customers inverse");
+        assert_eq!(
+            back.relation.as_ref().unwrap().inverse_field.as_deref(),
+            Some("person_id")
+        );
+        assert!(person.get_field("name").is_some());
+        let customer = reg.get("Customer").unwrap();
+        assert!(customer.get_field("name").is_some());
+        assert!(customer.get_field("email").is_some());
+        assert!(customer.get_field("phone").is_some());
+        assert!(customer.get_field("person_id").unwrap().nullable);
     }
 }

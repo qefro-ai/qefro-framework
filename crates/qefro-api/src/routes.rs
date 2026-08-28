@@ -28,7 +28,6 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/auth/logout", post(logout))
         .route("/api/v1/auth/me", get(me))
         .route("/api/v1/auth/switch-tenant", post(switch_tenant))
-        .route("/api/v1/users", post(create_user))
         .route("/api/v1/tenants", get(list_tenants).post(create_tenant))
         .route("/api/v1/meta/entities", get(meta_entities))
         .route("/api/v1/meta/entities/{name}", get(meta_entity))
@@ -49,15 +48,33 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/events", get(list_events))
         .merge(crate::platform::public_router())
         .merge(crate::platform::router())
-        .route("/api/v1/tenants/me/config", get(get_tenant_config).patch(patch_tenant_config))
+        .route(
+            "/api/v1/tenants/me/config",
+            get(get_tenant_config).patch(patch_tenant_config),
+        )
         .route("/api/v1/tenant", get(get_tenant).patch(patch_tenant))
-        .route("/api/v1/tenant/branding", get(get_branding).patch(patch_branding))
+        .route(
+            "/api/v1/tenant/branding",
+            get(get_branding).patch(patch_branding),
+        )
         .route("/api/v1/tenant/apps", get(get_apps).patch(patch_apps))
-        .route("/api/v1/tenant/features", get(get_features).patch(patch_features))
+        .route(
+            "/api/v1/tenant/features",
+            get(get_features).patch(patch_features),
+        )
         .route("/api/v1/files", post(upload_file))
-        .route("/api/v1/files/{key}", get(download_file).delete(delete_file))
-        .route("/api/v1/saved-filters", get(list_saved_filters).post(create_saved_filter))
-        .route("/api/v1/saved-filters/{id}", axum::routing::delete(delete_saved_filter))
+        .route(
+            "/api/v1/files/{key}",
+            get(download_file).delete(delete_file),
+        )
+        .route(
+            "/api/v1/saved-filters",
+            get(list_saved_filters).post(create_saved_filter),
+        )
+        .route(
+            "/api/v1/saved-filters/{id}",
+            axum::routing::delete(delete_saved_filter),
+        )
         .route("/api/v1/dashboards/{name}", get(get_dashboard))
         .route("/api/v1/reports", get(meta_reports))
         .route("/api/v1/reports/{name}", get(get_report))
@@ -107,7 +124,12 @@ async fn meta_version() -> Json<Value> {
 
 async fn metrics(State(state): State<AppState>) -> Json<Value> {
     let (http_requests, http_errors, http_latency_ms_total) = crate::metrics::http_snapshot();
-    let jobs_pending = state.entities.job_queue().pending_count().await.unwrap_or(0);
+    let jobs_pending = state
+        .entities
+        .job_queue()
+        .pending_count()
+        .await
+        .unwrap_or(0);
     let outbox_pending = state.entities.outbox().pending_count().await.unwrap_or(0);
     Json(json!({
         "http_requests": http_requests,
@@ -156,7 +178,10 @@ async fn login(
     State(state): State<AppState>,
     Json(body): Json<LoginBody>,
 ) -> Result<Json<AuthToken>, ApiError> {
-    if !state.login_limiter.allow(&format!("login:{}", body.email.to_ascii_lowercase())) {
+    if !state
+        .login_limiter
+        .allow(&format!("login:{}", body.email.to_ascii_lowercase()))
+    {
         return Err(QefroError::rate_limited("too many login attempts").into());
     }
     let token = state
@@ -227,35 +252,6 @@ async fn create_tenant(
         return Err(QefroError::forbidden("only Admin can create tenants").into());
     }
     Ok(Json(state.tenants.create(&body.name, &body.slug).await?))
-}
-
-#[derive(Deserialize)]
-struct CreateUserBody {
-    name: String,
-    email: String,
-    password: String,
-    #[serde(default)]
-    roles: Vec<String>,
-}
-
-async fn create_user(
-    State(state): State<AppState>,
-    Auth(ctx): Auth,
-    Json(body): Json<CreateUserBody>,
-) -> Result<(StatusCode, Json<qefro_auth::User>), ApiError> {
-    if !ctx.is_admin() {
-        return Err(QefroError::forbidden("only Admin can create users").into());
-    }
-    let roles = if body.roles.is_empty() {
-        vec!["Staff".into()]
-    } else {
-        body.roles
-    };
-    let user = state
-        .auth
-        .create_user_in_tenant(ctx.tenant_id, &body.name, &body.email, &body.password, roles)
-        .await?;
-    Ok((StatusCode::CREATED, Json(user)))
 }
 
 async fn meta_entities(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
@@ -329,8 +325,27 @@ async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<
         } else {
             config.ui_config.navigation.clone()
         },
+        "hidden_entities": if config.ui_config.hidden_entities.is_empty() {
+            state.default_hidden_entities.clone()
+        } else {
+            config.ui_config.hidden_entities.clone()
+        },
         "terminology": config.ui_config.terminology,
-        "default_dashboard": config.ui_config.default_dashboard,
+        "default_dashboard": if config
+            .ui_config
+            .default_dashboard
+            .as_ref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+        {
+            config.ui_config.default_dashboard.clone()
+        } else {
+            state
+                .dashboards_live()
+                .into_iter()
+                .find(|d| ctx.allows_app(d.module.as_deref()))
+                .map(|d| d.name)
+        },
         "reports": state
             .reports_live()
             .into_iter()
@@ -442,16 +457,42 @@ async fn invoke_tool(
 }
 
 async fn list_events(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
-    let events = state.entities.events().recent_for_tenant(ctx.tenant_id, 100).await;
+    let events = state
+        .entities
+        .events()
+        .recent_for_tenant(ctx.tenant_id, 100)
+        .await;
     Json(json!({ "items": events }))
 }
 
 fn reject_reserved(slug: &str) -> Result<(), ApiError> {
     const RESERVED: &[&str] = &[
-        "auth", "meta", "tenants", "tenant", "agent", "audit", "health", "ready", "events", "docs",
-        "tools", "dashboards", "settings", "users", "operations", "jobs",
-        "files", "saved-filters", "reports", "print", "studio",
-        "search", "notifications", "webhooks", "attachments", "realtime", "public",
+        "auth",
+        "meta",
+        "tenants",
+        "tenant",
+        "agent",
+        "audit",
+        "health",
+        "ready",
+        "events",
+        "docs",
+        "tools",
+        "dashboards",
+        "settings",
+        "operations",
+        "jobs",
+        "files",
+        "saved-filters",
+        "reports",
+        "print",
+        "studio",
+        "search",
+        "notifications",
+        "webhooks",
+        "attachments",
+        "realtime",
+        "public",
     ];
     if RESERVED.contains(&slug) {
         Err(QefroError::not_found(format!("entity '{slug}' not found")).into())
@@ -534,10 +575,7 @@ async fn transition_entity(
     ))
 }
 
-async fn list_operations(
-    State(state): State<AppState>,
-    Auth(ctx): Auth,
-) -> Json<Value> {
+async fn list_operations(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
     let operations: Vec<_> = state
         .entities
         .list_operations(&ctx)
@@ -683,7 +721,9 @@ async fn run_report(
         return Err(QefroError::not_found(format!("report '{name}' not found")).into());
     }
     let filters = body.get("filters").cloned().unwrap_or(json!([]));
-    Ok(Json(state.entities.run_report(&ctx, &report, filters).await?))
+    Ok(Json(
+        state.entities.run_report(&ctx, &report, filters).await?,
+    ))
 }
 
 async fn print_document(
@@ -797,7 +837,9 @@ async fn get_branding(
     Auth(ctx): Auth,
 ) -> Result<Json<Value>, ApiError> {
     let config = state.tenants.get_config(ctx.tenant_id).await?;
-    Ok(Json(serde_json::to_value(config.branding).unwrap_or(json!({}))))
+    Ok(Json(
+        serde_json::to_value(config.branding).unwrap_or(json!({})),
+    ))
 }
 
 async fn patch_branding(
@@ -812,7 +854,9 @@ async fn patch_branding(
     let mut config = state.tenants.get_config(ctx.tenant_id).await?;
     config.branding = branding;
     let config = state.tenants.upsert_config(ctx.tenant_id, &config).await?;
-    Ok(Json(serde_json::to_value(config.branding).unwrap_or(json!({}))))
+    Ok(Json(
+        serde_json::to_value(config.branding).unwrap_or(json!({})),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -942,7 +986,10 @@ async fn upload_file(
         content_type: content_type.clone(),
         size: bytes.len() as i64,
     };
-    state.blobs.insert(ctx.tenant_id, ctx.user_id, &meta).await?;
+    state
+        .blobs
+        .insert(ctx.tenant_id, ctx.user_id, &meta)
+        .await?;
     Ok(Json(json!({
         "key": meta.key,
         "filename": meta.filename,
@@ -1004,10 +1051,7 @@ fn allowed_mime(ct: &str) -> bool {
         || ct.starts_with("text/")
         || matches!(
             ct,
-            "application/pdf"
-                | "application/json"
-                | "application/octet-stream"
-                | "application/zip"
+            "application/pdf" | "application/json" | "application/octet-stream" | "application/zip"
         )
 }
 
@@ -1069,7 +1113,11 @@ async fn delete_saved_filter(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn ensure_entity_app(state: &AppState, ctx: &qefro_core::OpContext, name: &str) -> Result<(), ApiError> {
+fn ensure_entity_app(
+    state: &AppState,
+    ctx: &qefro_core::OpContext,
+    name: &str,
+) -> Result<(), ApiError> {
     let entity = state.entities.registry().get(name)?;
     if !ctx.allows_app(entity.module.as_deref()) {
         return Err(QefroError::not_found(format!("entity '{name}' not found")).into());

@@ -17,7 +17,12 @@ pub fn validate_report(entity: &EntityDef, report: &ReportDef) -> QefroResult<()
                 "unknown or unauthorized report field '{name}'"
             )));
         }
-        qefro_core::ident::assert_safe_ident(&entity.get_field(name).map(|f| f.column_name()).unwrap_or_else(|| name.clone()))?;
+        qefro_core::ident::assert_safe_ident(
+            &entity
+                .get_field(name)
+                .map(|f| f.column_name())
+                .unwrap_or_else(|| name.clone()),
+        )?;
     }
     for (field, agg) in &report.aggregations {
         let agg = agg.to_ascii_uppercase();
@@ -27,7 +32,9 @@ pub fn validate_report(entity: &EntityDef, report: &ReportDef) -> QefroResult<()
             )));
         }
         if field.contains(';') || field.contains(' ') || field.contains("--") {
-            return Err(QefroError::bad_request("arbitrary SQL is not allowed in reports"));
+            return Err(QefroError::bad_request(
+                "arbitrary SQL is not allowed in reports",
+            ));
         }
         if agg != "COUNT" {
             let def = entity.get_field(field).ok_or_else(|| {
@@ -247,12 +254,12 @@ pub async fn execute_report(
         let mut obj = serde_json::Map::new();
         for (i, (name, kind)) in select_fields.iter().enumerate() {
             if kind == "group" {
-                let v: Option<String> = sqlx::Row::try_get(&row, i)
-                    .map_err(|e| QefroError::database(e.to_string()))?;
+                let v: Option<String> =
+                    sqlx::Row::try_get(&row, i).map_err(|e| QefroError::database(e.to_string()))?;
                 obj.insert(name.clone(), json!(v.unwrap_or_else(|| "(empty)".into())));
             } else {
-                let v: f64 = sqlx::Row::try_get(&row, i)
-                    .map_err(|e| QefroError::database(e.to_string()))?;
+                let v: f64 =
+                    sqlx::Row::try_get(&row, i).map_err(|e| QefroError::database(e.to_string()))?;
                 obj.insert(name.clone(), json!(v));
             }
         }

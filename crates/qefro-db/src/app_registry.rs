@@ -23,7 +23,12 @@ pub struct AppRegistryRow {
     pub updated_at: DateTime<Utc>,
 }
 
-pub async fn upsert_app(pool: &PgPool, manifest: &AppManifest, status: &str, sha256: Option<&str>) -> QefroResult<()> {
+pub async fn upsert_app(
+    pool: &PgPool,
+    manifest: &AppManifest,
+    status: &str,
+    sha256: Option<&str>,
+) -> QefroResult<()> {
     let deps = serde_json::to_value(&manifest.dependencies).unwrap_or(json!({}));
     sqlx::query(
         r#"
@@ -93,7 +98,9 @@ pub async fn set_status(pool: &PgPool, name: &str, status: &str) -> QefroResult<
         .map_err(|e| QefroError::database(e.to_string()))?
         .rows_affected();
     if n == 0 {
-        return Err(QefroError::not_found(format!("app '{name}' is not in the registry")));
+        return Err(QefroError::not_found(format!(
+            "app '{name}' is not in the registry"
+        )));
     }
     Ok(())
 }
@@ -134,7 +141,10 @@ pub async fn list_apps(pool: &PgPool) -> QefroResult<Vec<AppRegistryRow>> {
     .map_err(|e| QefroError::database(e.to_string()))
 }
 
-pub async fn version_history(pool: &PgPool, name: &str) -> QefroResult<Vec<(String, DateTime<Utc>)>> {
+pub async fn version_history(
+    pool: &PgPool,
+    name: &str,
+) -> QefroResult<Vec<(String, DateTime<Utc>)>> {
     sqlx::query_as::<_, (String, DateTime<Utc>)>(
         "SELECT version, installed_at FROM qefro_app_versions WHERE name = $1 ORDER BY installed_at",
     )
@@ -338,7 +348,11 @@ pub async fn pending_migrations(
     let applied = applied_migrations(pool, app).await?;
     Ok(migrations
         .iter()
-        .filter(|m| !applied.iter().any(|a| a == &format!("{}:{}", m.version, m.id)))
+        .filter(|m| {
+            !applied
+                .iter()
+                .any(|a| a == &format!("{}:{}", m.version, m.id))
+        })
         .cloned()
         .collect())
 }
@@ -357,7 +371,12 @@ pub async fn enabled_tenant_count(pool: &PgPool, app: &str) -> QefroResult<i64> 
     Ok(count)
 }
 
-pub async fn seed_applied(pool: &PgPool, tenant_id: Uuid, app: &str, kind: &str) -> QefroResult<bool> {
+pub async fn seed_applied(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    app: &str,
+    kind: &str,
+) -> QefroResult<bool> {
     let row: Option<(chrono::DateTime<Utc>,)> = sqlx::query_as(
         "SELECT applied_at FROM qefro_app_seeds WHERE tenant_id = $1 AND app = $2 AND kind = $3",
     )
@@ -370,7 +389,12 @@ pub async fn seed_applied(pool: &PgPool, tenant_id: Uuid, app: &str, kind: &str)
     Ok(row.is_some())
 }
 
-pub async fn mark_seed_applied(pool: &PgPool, tenant_id: Uuid, app: &str, kind: &str) -> QefroResult<()> {
+pub async fn mark_seed_applied(
+    pool: &PgPool,
+    tenant_id: Uuid,
+    app: &str,
+    kind: &str,
+) -> QefroResult<()> {
     sqlx::query(
         r#"
         INSERT INTO qefro_app_seeds (tenant_id, app, kind, applied_at)

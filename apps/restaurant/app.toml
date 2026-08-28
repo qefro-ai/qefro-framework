@@ -9,3 +9,19 @@ framework_version = ">=1.0,<2.0"
 source = "builtin"
 
 [dependencies]
+
+[[navigation]]
+label = "Reservations"
+entity = "Reservation"
+
+[[navigation]]
+label = "Tables"
+entity = "DiningTable"
+
+[[navigation]]
+label = "Orders"
+entity = "Order"
+
+[[navigation]]
+label = "Customers"
+entity = "Customer"

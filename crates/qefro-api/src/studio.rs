@@ -11,8 +11,8 @@ use qefro_core::{
     QefroError, CAP_EDIT, CAP_MANAGE_APPS, CAP_MANAGE_PERMISSIONS, CAP_MANAGE_WORKFLOWS,
     CAP_PUBLISH, CAP_VIEW, FORMULA_FUNCTIONS, FRAMEWORK_VERSION,
 };
-use qefro_db::{to_yaml, DraftRequest, PublishRequest};
 use qefro_db::app_registry;
+use qefro_db::{to_yaml, DraftRequest, PublishRequest};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -67,10 +67,7 @@ async fn caps(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
     }))
 }
 
-async fn overview(
-    State(state): State<AppState>,
-    Auth(ctx): Auth,
-) -> Result<Json<Value>, ApiError> {
+async fn overview(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<Value>, ApiError> {
     require(&ctx, &state.env, CAP_VIEW)?;
     let installed = qefro_core::load_installed();
     let entities = state.entities.registry().list();
@@ -86,8 +83,7 @@ async fn overview(
             .dependencies
             .keys()
             .filter(|dep| {
-                !qefro_core::is_framework_dep(dep)
-                    && !state.modules.iter().any(|m| m.name == **dep)
+                !qefro_core::is_framework_dep(dep) && !state.modules.iter().any(|m| m.name == **dep)
             })
             .cloned()
             .collect();
@@ -106,7 +102,11 @@ async fn overview(
             "disabled": disabled,
         }));
     }
-    let recent = state.entities.audit().list(&ctx, Some("studio"), None, 10).await?;
+    let recent = state
+        .entities
+        .audit()
+        .list(&ctx, Some("studio"), None, 10)
+        .await?;
     Ok(Json(json!({
         "installed_apps": apps.len(),
         "entities": entities.len(),
@@ -169,48 +169,41 @@ async fn get_app(
         .map(|m| m.name.clone())
         .collect();
     body["entities"] = json!(entities);
-    body["workflows"] = json!(
-        state
+    body["workflows"] = json!(state
+        .entities
+        .workflows()
+        .list()
+        .into_iter()
+        .filter(|w| state
             .entities
-            .workflows()
-            .list()
-            .into_iter()
-            .filter(|w| state
-                .entities
-                .registry()
-                .try_get(&w.entity)
-                .and_then(|e| e.module.clone())
-                == Some(app.clone()))
-            .map(|w| w.name)
-            .collect::<Vec<_>>()
-    );
-    body["reports"] = json!(
-        state
-            .reports_live()
-            .into_iter()
-            .filter(|r| r.module.as_deref() == Some(app.as_str()))
-            .map(|r| r.name)
-            .collect::<Vec<_>>()
-    );
-    body["dashboards"] = json!(
-        state
-            .dashboards_live()
-            .into_iter()
-            .filter(|d| d.module.as_deref() == Some(app.as_str()))
-            .map(|d| d.name)
-            .collect::<Vec<_>>()
-    );
-    body["print_formats"] = json!(
-        state
-            .print_formats_live()
-            .into_iter()
-            .filter(|p| p.module.as_deref() == Some(app.as_str()))
-            .map(|p| p.name)
-            .collect::<Vec<_>>()
-    );
+            .registry()
+            .try_get(&w.entity)
+            .and_then(|e| e.module.clone())
+            == Some(app.clone()))
+        .map(|w| w.name)
+        .collect::<Vec<_>>());
+    body["reports"] = json!(state
+        .reports_live()
+        .into_iter()
+        .filter(|r| r.module.as_deref() == Some(app.as_str()))
+        .map(|r| r.name)
+        .collect::<Vec<_>>());
+    body["dashboards"] = json!(state
+        .dashboards_live()
+        .into_iter()
+        .filter(|d| d.module.as_deref() == Some(app.as_str()))
+        .map(|d| d.name)
+        .collect::<Vec<_>>());
+    body["print_formats"] = json!(state
+        .print_formats_live()
+        .into_iter()
+        .filter(|p| p.module.as_deref() == Some(app.as_str()))
+        .map(|p| p.name)
+        .collect::<Vec<_>>());
     body["navigation"] = json!(module.navigation);
     body["reverse_dependencies"] = json!(reverse);
-    body["source_managed"] = json!(module.source.is_empty() || module.source == "catalog" || module.source == "rust");
+    body["source_managed"] =
+        json!(module.source.is_empty() || module.source == "catalog" || module.source == "rust");
     Ok(Json(body))
 }
 
@@ -248,7 +241,9 @@ async fn disable_app(
     let reverse: Vec<_> = state
         .modules
         .iter()
-        .filter(|m| m.dependencies.contains_key(&app) && !qefro_core::load_installed().is_disabled(&m.name))
+        .filter(|m| {
+            m.dependencies.contains_key(&app) && !qefro_core::load_installed().is_disabled(&m.name)
+        })
         .map(|m| m.name.clone())
         .collect();
     if !reverse.is_empty() {
@@ -339,9 +334,11 @@ async fn get_entity(
     let referrers = entity_referrers(state.entities.registry(), &def.name);
     let yaml = to_yaml(&*def)?;
     let json_body = serde_json::to_value(&*def).unwrap_or(json!({}));
-    let source = if def.module.as_ref().and_then(|m| {
-        state.modules.iter().find(|mod_| &mod_.name == m)
-    }).map(|m| m.source.as_str() == "yaml")
+    let source = if def
+        .module
+        .as_ref()
+        .and_then(|m| state.modules.iter().find(|mod_| &mod_.name == m))
+        .map(|m| m.source.as_str() == "yaml")
         .unwrap_or(false)
     {
         "yaml"
@@ -546,7 +543,9 @@ async fn preview_print_format(
     let sample = sample_record(&entity);
     let items = sample_items(&entity);
     let html = qefro_db::print::render_html(&entity, &def, &sample, &items, &config);
-    Ok(Json(json!({ "html": html, "sample": sample, "items": items })))
+    Ok(Json(
+        json!({ "html": html, "sample": sample, "items": items }),
+    ))
 }
 
 fn sample_record(entity: &qefro_core::EntityDef) -> Value {
@@ -657,7 +656,10 @@ async fn search(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, ApiError> {
     require(&ctx, &state.env, CAP_VIEW)?;
-    let q = params.get("q").map(|s| s.to_lowercase()).unwrap_or_default();
+    let q = params
+        .get("q")
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
     if q.is_empty() {
         return Ok(Json(json!({ "results": [] })));
     }
@@ -726,7 +728,9 @@ async fn list_drafts(
     Auth(ctx): Auth,
 ) -> Result<Json<Value>, ApiError> {
     require(&ctx, &state.env, CAP_VIEW)?;
-    Ok(Json(json!({ "drafts": state.studio.list_drafts(&ctx).await? })))
+    Ok(Json(
+        json!({ "drafts": state.studio.list_drafts(&ctx).await? }),
+    ))
 }
 
 async fn create_draft(
@@ -747,7 +751,9 @@ async fn get_draft(
 ) -> Result<Json<Value>, ApiError> {
     require(&ctx, &state.env, CAP_VIEW)?;
     let draft = state.studio.get_draft(&ctx, id).await?;
-    let analysis = state.studio.analyze(&draft.kind, &draft.target, &draft.payload)?;
+    let analysis = state
+        .studio
+        .analyze(&draft.kind, &draft.target, &draft.payload)?;
     Ok(Json(json!({ "draft": draft, "preview": analysis })))
 }
 

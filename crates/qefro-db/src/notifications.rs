@@ -220,17 +220,17 @@ async fn recipient_users(
     def: &NotificationDef,
 ) -> QefroResult<Vec<Uuid>> {
     let mut users = Vec::new();
-    let rows: Vec<(Uuid, Vec<String>)> = sqlx::query_as(
-        "SELECT user_id, roles FROM user_tenants WHERE tenant_id = $1",
-    )
-    .bind(event.tenant_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| QefroError::database(e.to_string()))?;
+    let rows: Vec<(Uuid, Vec<String>)> =
+        sqlx::query_as("SELECT user_id, roles FROM user_tenants WHERE tenant_id = $1")
+            .bind(event.tenant_id)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
     for (user_id, roles) in rows {
-        let match_role = def.recipients.iter().any(|r| {
-            roles.iter().any(|have| have.eq_ignore_ascii_case(r))
-        });
+        let match_role = def
+            .recipients
+            .iter()
+            .any(|r| roles.iter().any(|have| have.eq_ignore_ascii_case(r)));
         if match_role {
             users.push(user_id);
         }

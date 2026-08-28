@@ -15,3 +15,13 @@ Two transports, one mutation path. This is the only way agent tools cannot bypas
 ## 004. In-process events
 
 A trait (`EventBus`) hides the implementation. Redis/NATS can be added without changing `customer.created` publishers.
+
+## 005. Person ≠ User ≠ Customer (1.1 identity foundation)
+
+Identity, authentication, and business records are three types:
+
+```
+Person (canonical identity once linked) ≠ User (optional login) ≠ Customer/Patient/Employee (business)
+```
+
+Person is a tenant-scoped individual. User wraps the existing `users` / `user_tenants` / JWT session tables. Customer, Patient, and Employee remain app entities that may reference Person via nullable `person_id`. When linked, Person is the source of truth for name/email/phone; business rows keep their own columns for unlinked and legacy data. Qefro does not clone Frappe’s User/Contact/party model, and does not add an Identity API or invitation product in 1.1. See [identity.md](identity.md).

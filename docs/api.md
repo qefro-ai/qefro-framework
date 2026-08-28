@@ -15,7 +15,7 @@ Base URL: `/api/v1`
 
 Register body: `{ name, email, password, tenant_name, tenant_slug }`
 
-Create user body: `{ name, email, password, roles }`
+Create user body: `{ name, email, password, roles }`. Same path as `POST /users` (the User entity). Password is write-only and never returned. See [Identity](identity.md).
 
 ## Tenants
 

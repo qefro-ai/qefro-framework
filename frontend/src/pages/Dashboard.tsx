@@ -43,10 +43,13 @@ export default function Dashboard({
   const [segment, setSegment] = useState<{ field: string; value: string } | null>(null);
   const theme = useTenantTheme();
 
-  const quick = useMemo(
-    () => entities.filter((e) => e.standalone !== false && !e.singleton && !e.child_of).slice(0, 6),
-    [entities],
-  );
+  const quick = useMemo(() => {
+    const all = entities.filter((e) => e.standalone !== false && !e.singleton && !e.child_of);
+    const nav = config?.ui_config.navigation ?? [];
+    if (nav.length === 0) return all.slice(0, 6);
+    const bySlug = new Map(all.map((e) => [e.slug, e]));
+    return nav.map((slug) => bySlug.get(slug)).filter(Boolean).slice(0, 6) as UiEntity[];
+  }, [entities, config]);
 
   const dateFieldsRef = useRef<string[]>([]);
   const extraKey = `${datePreset}|${status}|${branch}|${segment?.field ?? ""}=${segment?.value ?? ""}`;

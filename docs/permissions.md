@@ -35,3 +35,7 @@ Studio routes require capabilities (`studio.view`, `studio.edit`, publish, manag
 ## Attachments, reports, webhooks, notifications
 
 These APIs load the owning record (or require Admin) through `EntityService` first. Webhook secrets are never returned. Notification lists are tenant-scoped.
+
+## Identity
+
+Person is a tenant-owned individual (canonical name/email/phone once `person_id` is set). User is the existing auth login (roles, membership, enabled). Customer / Patient / Employee are business records and must not be modeled as User. See [identity.md](identity.md).

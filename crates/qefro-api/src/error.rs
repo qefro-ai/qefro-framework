@@ -32,9 +32,7 @@ fn nest_field_errors(fields: &[qefro_core::FieldError]) -> serde_json::Value {
                 cursor.insert(part.to_string(), json!(err.message.clone()));
                 break;
             }
-            let next = cursor
-                .entry(part.to_string())
-                .or_insert_with(|| json!({}));
+            let next = cursor.entry(part.to_string()).or_insert_with(|| json!({}));
             cursor = next.as_object_mut().unwrap();
         }
     }

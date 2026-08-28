@@ -67,4 +67,29 @@ describe("Breadcrumbs", () => {
     expect(screen.getByText("Widget").closest(".crumb")).toHaveClass("is-current");
     expect(screen.getByText("SO-1001").closest(".crumb")).toHaveClass("is-keep");
   });
+
+  it("nests setup entities under Settings", () => {
+    const branch: UiEntity = {
+      entity: "Branch",
+      label: "Branch",
+      label_plural: "Branches",
+      slug: "branches",
+      searchable: true,
+      fields: [],
+    };
+    render(
+      <MemoryRouter initialEntries={["/branches"]}>
+        <BreadcrumbRecordProvider>
+          <Routes>
+            <Route
+              path="/:slug"
+              element={<Breadcrumbs entities={[order, branch]} navSlugs={["orders"]} />}
+            />
+          </Routes>
+        </BreadcrumbRecordProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
+    expect(screen.getByText("Branches")).toBeInTheDocument();
+  });
 });

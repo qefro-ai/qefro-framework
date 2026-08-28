@@ -5,7 +5,7 @@ mod permissions;
 mod workflows;
 
 use qefro_api::InstalledApp;
-use qefro_core::{AppModule, NotificationDef, ReportDef, WebhookDef};
+use qefro_core::{AppModule, NavItem, NotificationDef, ReportDef, WebhookDef};
 use qefro_permissions::PermissionGrant;
 use qefro_workflow::WorkflowDef;
 
@@ -14,6 +14,10 @@ pub fn module() -> AppModule {
         .version("1.0.0")
         .label("Restaurant")
         .description("Tables, reservations, menus, orders, and payments")
+        .nav(NavItem::new("Reservations", "Reservation"))
+        .nav(NavItem::new("Tables", "DiningTable"))
+        .nav(NavItem::new("Orders", "Order"))
+        .nav(NavItem::new("Customers", "Customer"))
         .entity(entities::customer())
         .entity(entities::restaurant())
         .entity(entities::restaurant_settings())
@@ -105,6 +109,53 @@ mod tests {
         assert_eq!(widget("attachment"), "file");
         assert_eq!(widget("lines"), "child_table");
         assert!(ui.tabs.contains(&"Details".into()));
-        assert!(ui.fields.iter().any(|f| f.name == "line_total" && f.computed));
+        assert!(ui
+            .fields
+            .iter()
+            .any(|f| f.name == "line_total" && f.computed));
+    }
+
+    #[test]
+    fn ops_navigation_hides_setup_entities() {
+        let module = crate::module();
+        assert_eq!(
+            module.default_nav_slugs(),
+            vec!["reservations", "tables", "orders", "customers"]
+        );
+        let hidden = module.default_hidden_slugs();
+        for slug in [
+            "restaurants",
+            "restaurant-settings",
+            "branches",
+            "menu-categories",
+            "menu-items",
+            "payments",
+            "ui-showcases",
+        ] {
+            assert!(
+                hidden.iter().any(|s| s == slug),
+                "missing {slug} in {hidden:?}"
+            );
+        }
+        assert!(!hidden.iter().any(|s| s == "reservations"));
+        assert!(!hidden.iter().any(|s| s == "order-items"));
+    }
+
+    #[test]
+    fn customer_keeps_contact_columns_and_nullable_person() {
+        let customer = crate::entities::customer();
+        assert!(customer.get_field("name").unwrap().required);
+        assert!(customer.get_field("email").unwrap().required);
+        assert!(customer.get_field("phone").is_some());
+        let person = customer.get_field("person_id").unwrap();
+        assert!(!person.required);
+        assert!(person.nullable);
+        assert_eq!(person.ui.section.as_deref(), Some("Identity"));
+        assert!(person.ui.help.as_ref().is_some_and(|h| h.contains("Walk-ins")));
+        assert!(person.ui.list);
+        assert_eq!(customer.fields[0].name, "person_id");
+        let columns = &customer.views.as_ref().unwrap().list.as_ref().unwrap().columns;
+        assert!(columns.iter().any(|c| c.field == "person_id"));
+        assert!(columns.iter().any(|c| c.field == "name"));
     }
 }

@@ -10,6 +10,7 @@ description = "PostgreSQL access, schema generation, and entity CRUD for Qefro F
 
 [dependencies]
 qefro-core.workspace = true
+qefro-auth.workspace = true
 qefro-events.workspace = true
 qefro-permissions.workspace = true
 qefro-workflow.workspace = true

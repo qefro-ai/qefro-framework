@@ -410,6 +410,24 @@ fn input_schema(entity: &EntityDef, partial: bool) -> Value {
         if field.computed {
             continue;
         }
+        if field.secret {
+            properties.insert(
+                field.name.clone(),
+                json!({
+                    "type": "string",
+                    "writeOnly": true,
+                    "description": field.label,
+                }),
+            );
+            if field.required && !partial {
+                required.push(Value::String(field.name.clone()));
+            }
+            continue;
+        }
+        if field.ephemeral {
+            properties.insert(field.name.clone(), json_schema_for_field(field));
+            continue;
+        }
         if !field.stores_column() && !field.is_child_table() {
             continue;
         }

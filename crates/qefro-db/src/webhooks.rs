@@ -70,7 +70,11 @@ impl WebhookLog {
         Ok(())
     }
 
-    pub async fn list(&self, tenant_id: Uuid, webhook: Option<&str>) -> QefroResult<Vec<WebhookDelivery>> {
+    pub async fn list(
+        &self,
+        tenant_id: Uuid,
+        webhook: Option<&str>,
+    ) -> QefroResult<Vec<WebhookDelivery>> {
         if let Some(name) = webhook {
             sqlx::query_as::<_, WebhookDelivery>(
                 r#"

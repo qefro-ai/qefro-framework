@@ -76,7 +76,12 @@ impl Entitlements {
 
     /// Tenant `enabled_apps` intersected with the plan. Empty tenant list means
     /// all installed apps that the plan allows.
-    pub fn resolve_apps(&self, installed: &[String], enabled: &[String], plan: Option<&str>) -> Vec<String> {
+    pub fn resolve_apps(
+        &self,
+        installed: &[String],
+        enabled: &[String],
+        plan: Option<&str>,
+    ) -> Vec<String> {
         let plan = self.plan(plan);
         let candidates: Vec<String> = if enabled.is_empty() {
             installed.to_vec()

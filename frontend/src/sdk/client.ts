@@ -68,7 +68,14 @@ export class ApiError extends Error {
   }
 }
 
-export type Expanded = { id: string; label: string; slug: string; entity: string };
+export type Expanded = {
+  id: string;
+  label: string;
+  slug: string;
+  entity: string;
+  enabled?: boolean;
+  _expanded?: Record<string, Expanded>;
+};
 
 export function tokenHeader(): Record<string, string> {
   const token = localStorage.getItem(TOKEN_KEY);
@@ -119,6 +126,7 @@ export class QefroClient {
       timezone?: string;
       currency?: string;
       navigation?: string[];
+      hidden_entities?: string[];
       terminology?: Record<string, string>;
       default_dashboard?: string | null;
     }>("/api/v1/meta/ui");

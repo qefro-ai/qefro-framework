@@ -52,6 +52,38 @@ describe("FieldValue", () => {
     expect(screen.getByRole("link", { name: "Ada" })).toHaveAttribute("href", "/customers/c1");
   });
 
+  it("shows a nested login path from person expansion", () => {
+    wrap(
+      <FieldValue
+        row={{
+          person_id: "p1",
+          _expanded: {
+            person_id: {
+              id: "p1",
+              label: "Ada Lovelace",
+              slug: "people",
+              entity: "Person",
+              _expanded: {
+                user_id: {
+                  id: "u1",
+                  label: "ada@ex.com",
+                  slug: "users",
+                  entity: "User",
+                  enabled: false,
+                },
+              },
+            },
+          },
+        }}
+        field={field({ name: "person_id", widget: "relation", relation: "Person" })}
+        linkRelations
+      />,
+    );
+    expect(screen.getByRole("link", { name: "Ada Lovelace" })).toHaveAttribute("href", "/people/p1");
+    expect(screen.getByRole("link", { name: "ada@ex.com" })).toHaveAttribute("href", "/users/u1");
+    expect(screen.getByText("(disabled)")).toBeInTheDocument();
+  });
+
   it("formats currency with the tenant currency", () => {
     wrap(
       <FieldValue row={{ total: 12.5 }} field={field({ name: "total", widget: "currency", type: "decimal" })} />,

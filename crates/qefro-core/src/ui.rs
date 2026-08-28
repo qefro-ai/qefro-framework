@@ -142,8 +142,9 @@ fn values_equal(left: &Value, right: &Value) -> bool {
         return true;
     }
     match (left, right) {
-        (Value::String(a), other) => a == &other.to_string().trim_matches('"').to_string()
-            || other.as_str() == Some(a),
+        (Value::String(a), other) => {
+            a == &other.to_string().trim_matches('"').to_string() || other.as_str() == Some(a)
+        }
         (other, Value::String(b)) => other.as_str() == Some(b),
         _ => false,
     }
@@ -356,6 +357,9 @@ impl UiConfig {
     }
     pub fn json() -> UiFieldMeta {
         UiFieldMeta::widget("json")
+    }
+    pub fn password() -> UiFieldMeta {
+        UiFieldMeta::widget("password")
     }
     /// Application-specific widget registered on the frontend.
     pub fn named(name: impl Into<String>) -> UiFieldMeta {
@@ -591,7 +595,10 @@ impl UiEntityMeta {
             self.label = label.clone();
         }
         let plural_key = format!("{}.plural", self.entity);
-        if let Some(plural) = terms.get(&plural_key).or_else(|| terms.get(&self.label_plural)) {
+        if let Some(plural) = terms
+            .get(&plural_key)
+            .or_else(|| terms.get(&self.label_plural))
+        {
             self.label_plural = plural.clone();
         } else if terms.contains_key(&self.entity) {
             self.label_plural = format!("{}s", self.label);
@@ -659,6 +666,8 @@ pub struct UiFieldView {
     pub permission_level: u8,
     #[serde(default)]
     pub allow_on_submit: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub secret: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub child_entity: Option<String>,
 }
@@ -750,7 +759,11 @@ impl DashboardCard {
         }
     }
 
-    pub fn sum(title: impl Into<String>, entity: impl Into<String>, field: impl Into<String>) -> Self {
+    pub fn sum(
+        title: impl Into<String>,
+        entity: impl Into<String>,
+        field: impl Into<String>,
+    ) -> Self {
         Self {
             title: title.into(),
             entity: entity.into(),
@@ -967,7 +980,8 @@ mod tests {
             image: None,
             fields: vec!["status".into()],
         };
-        let round = serde_json::from_value::<CardViewSpec>(serde_json::to_value(&card).unwrap()).unwrap();
+        let round =
+            serde_json::from_value::<CardViewSpec>(serde_json::to_value(&card).unwrap()).unwrap();
         assert_eq!(round.title.as_deref(), Some("name"));
         assert!(round.enabled);
     }

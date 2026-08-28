@@ -1,6 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-use qefro_core::{OpContext, QefroError, QefroResult};
+use qefro_core::{OpContext, QefroError, QefroResult, USER_ENTITY};
+use serde_json::{json, Value};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -11,8 +12,14 @@ pub struct User {
     pub id: Uuid,
     pub email: String,
     pub name: String,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,7 +128,7 @@ impl AuthService {
     ) -> QefroResult<AuthToken> {
         let email = email.trim().to_ascii_lowercase();
         let row = sqlx::query_as::<_, UserRow>(
-            "SELECT id, email, name, password_hash, created_at, updated_at FROM users WHERE email = $1",
+            "SELECT id, email, name, password_hash, enabled, created_at, updated_at FROM users WHERE email = $1",
         )
         .bind(&email)
         .fetch_optional(&self.pool)
@@ -129,13 +136,17 @@ impl AuthService {
         .map_err(|e| QefroError::database(e.to_string()))?
         .ok_or_else(|| QefroError::unauthorized("invalid credentials"))?;
 
+        if !row.enabled {
+            return Err(QefroError::unauthorized("invalid credentials"));
+        }
+
         if !verify_password(password, &row.password_hash)? {
             return Err(QefroError::unauthorized("invalid credentials"));
         }
 
         let memberships = sqlx::query_as::<_, Membership>(
             r#"
-            SELECT t.id as tenant_id, t.slug, ut.roles
+            SELECT t.id as tenant_id, t.slug, ut.roles, ut.enabled
             FROM user_tenants ut
             JOIN tenants t ON t.id = ut.tenant_id
             WHERE ut.user_id = $1
@@ -160,6 +171,10 @@ impl AuthService {
             memberships[0].clone()
         };
 
+        if !membership.enabled {
+            return Err(QefroError::forbidden("user is disabled in this tenant"));
+        }
+
         self.issue_token(row.id, membership.tenant_id, membership.roles)
             .await
     }
@@ -167,7 +182,7 @@ impl AuthService {
     pub async fn switch_tenant(&self, user_id: Uuid, tenant_id: Uuid) -> QefroResult<AuthToken> {
         let membership = sqlx::query_as::<_, Membership>(
             r#"
-            SELECT t.id as tenant_id, t.slug, ut.roles
+            SELECT t.id as tenant_id, t.slug, ut.roles, ut.enabled
             FROM user_tenants ut
             JOIN tenants t ON t.id = ut.tenant_id
             WHERE ut.user_id = $1 AND ut.tenant_id = $2
@@ -179,6 +194,9 @@ impl AuthService {
         .await
         .map_err(|e| QefroError::database(e.to_string()))?
         .ok_or_else(|| QefroError::forbidden("not a member of that tenant"))?;
+        if !membership.enabled {
+            return Err(QefroError::forbidden("user is disabled in this tenant"));
+        }
         self.issue_token(user_id, membership.tenant_id, membership.roles)
             .await
     }
@@ -217,14 +235,41 @@ impl AuthService {
             return Err(QefroError::unauthorized("token mismatch"));
         }
 
-        let mut ctx = OpContext::new(claims.tid, claims.sub, claims.roles);
+        let membership = sqlx::query_as::<_, Membership>(
+            r#"
+            SELECT t.id as tenant_id, t.slug, ut.roles, ut.enabled
+            FROM user_tenants ut
+            JOIN tenants t ON t.id = ut.tenant_id
+            WHERE ut.user_id = $1 AND ut.tenant_id = $2
+            "#,
+        )
+        .bind(claims.sub)
+        .bind(claims.tid)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?
+        .ok_or_else(|| QefroError::unauthorized("session expired"))?;
+        if !membership.enabled {
+            return Err(QefroError::unauthorized("session expired"));
+        }
+        let enabled: bool = sqlx::query_scalar("SELECT enabled FROM users WHERE id = $1")
+            .bind(claims.sub)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?
+            .unwrap_or(false);
+        if !enabled {
+            return Err(QefroError::unauthorized("session expired"));
+        }
+
+        let mut ctx = OpContext::new(claims.tid, claims.sub, membership.roles);
         ctx.session_id = Some(claims.sid);
         Ok(ctx)
     }
 
     pub async fn get_user(&self, id: Uuid) -> QefroResult<User> {
         sqlx::query_as::<_, User>(
-            "SELECT id, email, name, created_at, updated_at FROM users WHERE id = $1",
+            "SELECT id, email, name, enabled, created_at, updated_at FROM users WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -281,6 +326,232 @@ impl AuthService {
         .map_err(map_db)?;
         self.add_membership(user_id, tenant_id, roles).await?;
         self.get_user(user_id).await
+    }
+
+    /// Tenant-scoped User record for EntityService. Never includes password_hash.
+    pub async fn get_tenant_user(&self, tenant_id: Uuid, id: Uuid) -> QefroResult<Value> {
+        let row = sqlx::query_as::<_, TenantUserRow>(
+            r#"
+            SELECT u.id, u.email, u.name, u.created_at, u.updated_at,
+                   (u.enabled AND ut.enabled) AS enabled, ut.roles
+            FROM user_tenants ut
+            JOIN users u ON u.id = ut.user_id
+            WHERE ut.tenant_id = $1 AND u.id = $2
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?
+        .ok_or_else(|| QefroError::not_found("user not found"))?;
+        Ok(tenant_user_json(&row))
+    }
+
+    pub async fn list_tenant_users(
+        &self,
+        tenant_id: Uuid,
+        search: Option<&str>,
+        page: u32,
+        page_size: u32,
+    ) -> QefroResult<(Vec<Value>, i64)> {
+        let page = page.max(1);
+        let page_size = page_size.clamp(1, 200);
+        let offset = (page - 1) * page_size;
+        let like = search
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("%{s}%"));
+        let total: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM user_tenants ut
+            JOIN users u ON u.id = ut.user_id
+            WHERE ut.tenant_id = $1
+              AND ($2::text IS NULL OR u.name ILIKE $2 OR u.email ILIKE $2)
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(like.as_deref())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+        let rows = sqlx::query_as::<_, TenantUserRow>(
+            r#"
+            SELECT u.id, u.email, u.name, u.created_at, u.updated_at,
+                   (u.enabled AND ut.enabled) AS enabled, ut.roles
+            FROM user_tenants ut
+            JOIN users u ON u.id = ut.user_id
+            WHERE ut.tenant_id = $1
+              AND ($2::text IS NULL OR u.name ILIKE $2 OR u.email ILIKE $2)
+            ORDER BY u.created_at DESC
+            LIMIT $3 OFFSET $4
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(like.as_deref())
+        .bind(page_size as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok((rows.iter().map(tenant_user_json).collect(), total))
+    }
+
+    pub async fn create_tenant_user(&self, ctx: &OpContext, data: &Value) -> QefroResult<Value> {
+        let name = data
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| QefroError::bad_request("name is required"))?;
+        let email = data
+            .get("email")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| QefroError::bad_request("email is required"))?;
+        let password = data
+            .get("password")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| QefroError::bad_request("password is required"))?;
+        if password.len() < 8 {
+            return Err(QefroError::bad_request(
+                "password must be at least 8 characters",
+            ));
+        }
+        let roles = parse_roles(data.get("roles"));
+        if roles.iter().any(|r| r.eq_ignore_ascii_case("Admin")) && !ctx.is_admin() {
+            return Err(QefroError::forbidden("only Admin can assign the Admin role"));
+        }
+        let user = self
+            .create_user_in_tenant(ctx.tenant_id, name, email, password, roles)
+            .await?;
+        if let Some(enabled) = data.get("enabled").and_then(|v| v.as_bool()) {
+            if !enabled {
+                self.set_membership_enabled(ctx, user.id, false).await?;
+            }
+        }
+        self.get_tenant_user(ctx.tenant_id, user.id).await
+    }
+
+    pub async fn update_tenant_user(
+        &self,
+        ctx: &OpContext,
+        id: Uuid,
+        patch: &Value,
+    ) -> QefroResult<Value> {
+        let _ = self.get_tenant_user(ctx.tenant_id, id).await?;
+        if let Some(name) = patch.get("name").and_then(|v| v.as_str()) {
+            sqlx::query("UPDATE users SET name = $1, updated_at = now() WHERE id = $2")
+                .bind(name)
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| QefroError::database(e.to_string()))?;
+        }
+        if let Some(email) = patch.get("email").and_then(|v| v.as_str()) {
+            let email = email.trim().to_ascii_lowercase();
+            sqlx::query("UPDATE users SET email = $1, updated_at = now() WHERE id = $2")
+                .bind(email)
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_db)?;
+        }
+        if let Some(password) = patch.get("password").and_then(|v| v.as_str()) {
+            if !password.is_empty() {
+                if password.len() < 8 {
+                    return Err(QefroError::bad_request(
+                        "password must be at least 8 characters",
+                    ));
+                }
+                let hash = hash_password(password)?;
+                sqlx::query(
+                    "UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2",
+                )
+                .bind(hash)
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| QefroError::database(e.to_string()))?;
+            }
+        }
+        if patch.get("roles").is_some() {
+            if !ctx.is_admin() {
+                return Err(QefroError::forbidden("only Admin can assign roles"));
+            }
+            let roles = parse_roles(patch.get("roles"));
+            sqlx::query(
+                "UPDATE user_tenants SET roles = $1 WHERE user_id = $2 AND tenant_id = $3",
+            )
+            .bind(&roles)
+            .bind(id)
+            .bind(ctx.tenant_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        }
+        if let Some(enabled) = patch.get("enabled").and_then(|v| v.as_bool()) {
+            self.set_membership_enabled(ctx, id, enabled).await?;
+        }
+        self.get_tenant_user(ctx.tenant_id, id).await
+    }
+
+    pub async fn set_membership_enabled(
+        &self,
+        ctx: &OpContext,
+        id: Uuid,
+        enabled: bool,
+    ) -> QefroResult<()> {
+        if id == ctx.user_id && !enabled {
+            return Err(QefroError::bad_request("cannot disable your own account"));
+        }
+        let result = sqlx::query(
+            "UPDATE user_tenants SET enabled = $1 WHERE user_id = $2 AND tenant_id = $3",
+        )
+        .bind(enabled)
+        .bind(id)
+        .bind(ctx.tenant_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+        if result.rows_affected() == 0 {
+            return Err(QefroError::not_found("user not found"));
+        }
+        if !enabled {
+            sqlx::query(
+                "UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL",
+            )
+            .bind(id)
+            .bind(ctx.tenant_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub async fn remove_tenant_membership(&self, ctx: &OpContext, id: Uuid) -> QefroResult<Value> {
+        if id == ctx.user_id {
+            return Err(QefroError::bad_request(
+                "cannot remove your own tenant membership",
+            ));
+        }
+        let current = self.get_tenant_user(ctx.tenant_id, id).await?;
+        sqlx::query("DELETE FROM user_tenants WHERE user_id = $1 AND tenant_id = $2")
+            .bind(id)
+            .bind(ctx.tenant_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        sqlx::query(
+            "UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL",
+        )
+        .bind(id)
+        .bind(ctx.tenant_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok(current)
     }
 
     async fn issue_token(
@@ -344,6 +615,7 @@ struct UserRow {
     #[allow(dead_code)]
     name: String,
     password_hash: String,
+    enabled: bool,
     #[allow(dead_code)]
     created_at: DateTime<Utc>,
     #[allow(dead_code)]
@@ -355,6 +627,81 @@ struct Membership {
     tenant_id: Uuid,
     slug: String,
     roles: Vec<String>,
+    enabled: bool,
+}
+
+#[derive(sqlx::FromRow)]
+struct TenantUserRow {
+    id: Uuid,
+    email: String,
+    name: String,
+    enabled: bool,
+    roles: Vec<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+fn tenant_user_json(row: &TenantUserRow) -> Value {
+    json!({
+        "id": row.id,
+        "email": row.email,
+        "name": row.name,
+        "enabled": row.enabled,
+        "roles": row.roles,
+        "created_at": row.created_at,
+        "updated_at": row.updated_at,
+    })
+}
+
+fn parse_roles(value: Option<&Value>) -> Vec<String> {
+    let mut roles: Vec<String> = match value {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty())
+            .collect(),
+        Some(Value::String(s)) => s
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    };
+    let mut unique = Vec::new();
+    for role in roles.drain(..) {
+        if unique.iter().all(|existing: &String| !existing.eq_ignore_ascii_case(&role)) {
+            unique.push(role);
+        }
+    }
+    if unique.is_empty() {
+        vec!["Staff".into()]
+    } else {
+        unique
+    }
+}
+
+/// Extension point for inviting a person to create a login. V1 does not send
+/// mail or persist invitation rows — apps supply an implementation.
+#[async_trait::async_trait]
+pub trait InvitationSender: Send + Sync {
+    async fn send(&self, ctx: &OpContext, email: &str, roles: &[String]) -> QefroResult<()>;
+}
+
+/// Documented no-op. Replace with SMTP / queue in the application.
+pub struct NoopInvitationSender;
+
+#[async_trait::async_trait]
+impl InvitationSender for NoopInvitationSender {
+    async fn send(&self, _ctx: &OpContext, _email: &str, _roles: &[String]) -> QefroResult<()> {
+        Err(QefroError::bad_request(
+            "invitations are not configured; create a User through EntityService (POST /api/v1/users)",
+        ))
+    }
+}
+
+#[allow(dead_code)]
+fn _identity_entity_name() -> &'static str {
+    USER_ENTITY
 }
 
 #[derive(sqlx::FromRow)]

@@ -3,3 +3,19 @@ version = "0.2.0"
 label = "Restaurant"
 description = "Tables, reservations, menus, orders, and payments"
 depends_on = ["qefro-framework"]
+
+[[navigation]]
+label = "Reservations"
+entity = "Reservation"
+
+[[navigation]]
+label = "Tables"
+entity = "DiningTable"
+
+[[navigation]]
+label = "Orders"
+entity = "Order"
+
+[[navigation]]
+label = "Customers"
+entity = "Customer"

@@ -105,7 +105,8 @@ impl EntityService {
         mapping: &[ImportMapping],
     ) -> QefroResult<ImportPreview> {
         let entity = self.registry().get(entity_name)?;
-        self.permissions().check(ctx, &entity.name, Action::Create)?;
+        self.permissions()
+            .check(ctx, &entity.name, Action::Create)?;
         if csv.len() > 2 * 1024 * 1024 {
             return Err(QefroError::payload_too_large("CSV exceeds 2 MiB"));
         }

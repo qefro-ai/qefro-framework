@@ -74,11 +74,16 @@ async fn copy_document(ctx: &mut OperationCtx<'_, '_>) -> QefroResult<Value> {
         .unwrap_or_default()
         .to_string();
     for field in ctx.entity.fields.clone() {
-        let Some(rel) = field.relation.clone() else { continue };
+        let Some(rel) = field.relation.clone() else {
+            continue;
+        };
         if rel.kind != RelationKind::ChildTable {
             continue;
         }
-        let inverse = rel.inverse_field.clone().unwrap_or_else(|| "parent_id".into());
+        let inverse = rel
+            .inverse_field
+            .clone()
+            .unwrap_or_else(|| "parent_id".into());
         let rows = ctx
             .list(&rel.target_entity, &inverse, json!(id.to_string()))
             .await?;
@@ -112,7 +117,9 @@ pub fn register_document_operations(
 ) {
     use std::sync::Arc;
     for entity in registry.list() {
-        let Some(doc) = &entity.document else { continue };
+        let Some(doc) = &entity.document else {
+            continue;
+        };
         if doc.submit_enabled
             && operations.try_get(&entity.name, "submit").is_none()
             && operations.try_get(&entity.name, "confirm").is_none()
@@ -121,7 +128,10 @@ pub fn register_document_operations(
                 OperationDef::new("submit", &entity.name)
                     .label("Submit")
                     .transition("submit")
-                    .event(format!("{}.submitted", qefro_core::snake_case(&entity.name))),
+                    .event(format!(
+                        "{}.submitted",
+                        qefro_core::snake_case(&entity.name)
+                    )),
                 Arc::new(SubmitDocument),
             );
         }
@@ -131,15 +141,15 @@ pub fn register_document_operations(
                     .label("Cancel")
                     .confirm()
                     .style("danger")
-                    .event(format!("{}.cancelled", qefro_core::snake_case(&entity.name))),
+                    .event(format!(
+                        "{}.cancelled",
+                        qefro_core::snake_case(&entity.name)
+                    )),
                 Arc::new(CancelDocument),
             );
         }
         if doc.duplicate_enabled && operations.try_get(&entity.name, "duplicate").is_none() {
-            operations.register(
-                duplicate_def(&entity.name),
-                Arc::new(DuplicateDocument),
-            );
+            operations.register(duplicate_def(&entity.name), Arc::new(DuplicateDocument));
         }
         if doc.amend_enabled && operations.try_get(&entity.name, "amend").is_none() {
             operations.register(amend_def(&entity.name), Arc::new(AmendDocument));

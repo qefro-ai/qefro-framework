@@ -66,8 +66,9 @@ export type UiField = {
   computed?: boolean;
   formula?: string;
   permission_level?: number;
-  allow_on_submit?: boolean;
-  child_entity?: string;
+    pub allow_on_submit?: boolean;
+    secret?: boolean;
+    child_entity?: string;
 };
 
 export type UiEntity = {
@@ -80,6 +81,8 @@ export type UiEntity = {
   workflow?: string;
   display_field?: string;
   module?: string;
+  icon?: string;
+  description?: string;
   fields: UiField[];
   tabs?: string[];
   sections?: string[];

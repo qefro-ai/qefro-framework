@@ -484,14 +484,12 @@ impl EntityRepository {
             qb.push(quote_ident("deleted_at")?);
             qb.push(" IS NULL");
         }
-        let rows = qb
-            .build()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(map_db_err)?;
+        let rows = qb.build().fetch_all(&self.pool).await.map_err(map_db_err)?;
         let mut items = Vec::new();
         for row in rows {
-            let value: Value = row.try_get(0).map_err(|e| QefroError::database(e.to_string()))?;
+            let value: Value = row
+                .try_get(0)
+                .map_err(|e| QefroError::database(e.to_string()))?;
             enforce_tenant(entity, ctx, &value)?;
             items.push(value);
         }
@@ -573,7 +571,9 @@ impl EntityRepository {
             .map_err(|e| QefroError::database(e.to_string()))?;
         let mut items = Vec::new();
         for row in rows {
-            let value: Value = row.try_get(0).map_err(|e| QefroError::database(e.to_string()))?;
+            let value: Value = row
+                .try_get(0)
+                .map_err(|e| QefroError::database(e.to_string()))?;
             enforce_tenant(entity, ctx, &value)?;
             items.push(value);
         }
@@ -715,11 +715,7 @@ impl EntityRepository {
         qb.push(") RETURNING to_jsonb(");
         qb.push(table_ident(entity)?);
         qb.push(".*)");
-        let row = qb
-            .build()
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(map_db_err)?;
+        let row = qb.build().fetch_one(&mut **tx).await.map_err(map_db_err)?;
         let value: Value = row
             .try_get(0)
             .map_err(|e| QefroError::database(e.to_string()))?;
@@ -755,10 +751,7 @@ impl EntityRepository {
                 qb.push(" = ");
                 qb.push_bind(ctx.tenant_id);
             }
-            qb.build()
-                .execute(&mut **tx)
-                .await
-                .map_err(map_db_err)?;
+            qb.build().execute(&mut **tx).await.map_err(map_db_err)?;
         } else {
             let mut qb = QueryBuilder::<Postgres>::new("DELETE FROM ");
             qb.push(table_ident(entity)?);
@@ -772,10 +765,7 @@ impl EntityRepository {
                 qb.push(" = ");
                 qb.push_bind(ctx.tenant_id);
             }
-            qb.build()
-                .execute(&mut **tx)
-                .await
-                .map_err(map_db_err)?;
+            qb.build().execute(&mut **tx).await.map_err(map_db_err)?;
         }
         Ok(existing)
     }

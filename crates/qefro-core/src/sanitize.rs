@@ -7,8 +7,25 @@ pub fn sanitize_html(input: &str) -> String {
     ammonia::Builder::new()
         .tags(
             [
-                "p", "br", "strong", "b", "em", "i", "u", "h1", "h2", "h3", "h4", "ul", "ol", "li",
-                "a", "blockquote", "code", "pre", "span",
+                "p",
+                "br",
+                "strong",
+                "b",
+                "em",
+                "i",
+                "u",
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "ul",
+                "ol",
+                "li",
+                "a",
+                "blockquote",
+                "code",
+                "pre",
+                "span",
             ]
             .into(),
         )

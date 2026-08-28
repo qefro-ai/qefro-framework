@@ -4,13 +4,27 @@ label_plural: Customers
 table: customers
 soft_delete: true
 audit: true
+description: Guest record. Optionally link a Person; keep name, email, and phone for walk-ins.
 fields:
+  - name: person_id
+    type: relation
+    nullable: true
+    label: Person
+    relation:
+      target_entity: Person
+      kind: many_to_one
+    ui:
+      section: Identity
+      help: Optional. Link a Person for a known individual. Walk-ins leave this empty and use name, email, and phone on this Customer.
+      list: true
   - name: name
     type: string
     required: true
     searchable: true
     validation:
       max_length: 200
+    ui:
+      section: Contact
   - name: email
     type: string
     required: true
@@ -18,6 +32,10 @@ fields:
     searchable: true
     validation:
       email: true
+    ui:
+      section: Contact
   - name: phone
     type: string
     nullable: true
+    ui:
+      section: Contact

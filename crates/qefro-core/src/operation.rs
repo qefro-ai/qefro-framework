@@ -88,7 +88,10 @@ impl OperationDef {
         let mut op = Self::new(kind, entity);
         op.kind = kind.to_string();
         op.tool_name = match kind {
-            "find" => format!("find_{}", crate::ident::to_plural_slug(entity).replace('-', "_")),
+            "find" => format!(
+                "find_{}",
+                crate::ident::to_plural_slug(entity).replace('-', "_")
+            ),
             _ => format!("{}_{}", kind, snake_case(entity)),
         };
         op.permission = format!("{}.{}", snake_case(entity), kind);

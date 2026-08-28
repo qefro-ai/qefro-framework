@@ -1,7 +1,8 @@
+use qefro_core::ui::{ListColumnSpec, SortSpec};
 use qefro_core::{
     CalendarViewSpec, ChildTableDef, DocumentConfig, EntityActionDef, EntityDef, EntityViews,
-    FieldDef, KanbanCardSpec, KanbanViewSpec, LinkDef, NamingConfig, PrintFormat, PublicFormDef,
-    UiConfig,
+    FieldDef, KanbanCardSpec, KanbanViewSpec, LinkDef, ListViewSpec, NamingConfig, PrintFormat,
+    PublicFormDef, UiConfig,
 };
 use serde_json::json;
 
@@ -11,12 +12,22 @@ pub fn customer() -> EntityDef {
         .label_plural("Customers")
         .table_name("customers")
         .icon("users")
+        .description("Guest record. Optionally link a Person; keep name, email, and phone for walk-ins.")
+        .field(
+            FieldDef::many_to_one("person_id", "Person")
+                .nullable()
+                .label("Person")
+                .help("Optional. Link a Person for a known individual. Walk-ins leave this empty and use name, email, and phone on this Customer. When linked, Person is the source of truth for those fields. A User is only needed if they should sign in.")
+                .section("Identity")
+                .filterable(),
+        )
         .field(
             FieldDef::string("name")
                 .required()
                 .searchable()
                 .max_length(200)
-                .filterable(),
+                .filterable()
+                .section("Contact"),
         )
         .field(
             FieldDef::string("email")
@@ -24,11 +35,60 @@ pub fn customer() -> EntityDef {
                 .email()
                 .unique()
                 .searchable()
-                .filterable(),
+                .filterable()
+                .section("Contact"),
         )
-        .field(FieldDef::string("phone").nullable().phone().searchable())
-        .field(FieldDef::text("notes").nullable().list(false).permission_level(1))
-        .field(FieldDef::one_to_many("reservations", "Reservation", "customer_id"))
+        .field(
+            FieldDef::string("phone")
+                .nullable()
+                .phone()
+                .searchable()
+                .section("Contact"),
+        )
+        .field(
+            FieldDef::text("notes")
+                .nullable()
+                .list(false)
+                .permission_level(1)
+                .section("Contact"),
+        )
+        .views(EntityViews {
+            list: Some(ListViewSpec {
+                columns: vec![
+                    ListColumnSpec {
+                        field: "name".into(),
+                        width: None,
+                        widget: None,
+                    },
+                    ListColumnSpec {
+                        field: "email".into(),
+                        width: None,
+                        widget: None,
+                    },
+                    ListColumnSpec {
+                        field: "phone".into(),
+                        width: None,
+                        widget: None,
+                    },
+                    ListColumnSpec {
+                        field: "person_id".into(),
+                        width: None,
+                        widget: Some("relation".into()),
+                    },
+                ],
+                default_sort: Some(SortSpec {
+                    field: "name".into(),
+                    direction: Some("asc".into()),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .field(FieldDef::one_to_many(
+            "reservations",
+            "Reservation",
+            "customer_id",
+        ))
         .field(FieldDef::one_to_many("orders", "Order", "customer_id"))
         .build()
 }
@@ -38,6 +98,7 @@ pub fn restaurant() -> EntityDef {
         .label("Restaurant")
         .label_plural("Restaurants")
         .table_name("restaurants")
+        .description("Locations, branding, and contact details")
         .field(FieldDef::string("name").required().searchable())
         .field(
             FieldDef::string("timezone")
@@ -59,7 +120,11 @@ pub fn restaurant() -> EntityDef {
                 .section("Branding"),
         )
         .field(FieldDef::one_to_many("branches", "Branch", "restaurant_id"))
-        .field(FieldDef::one_to_many("menu_categories", "MenuCategory", "restaurant_id"))
+        .field(FieldDef::one_to_many(
+            "menu_categories",
+            "MenuCategory",
+            "restaurant_id",
+        ))
         .build()
 }
 
@@ -69,6 +134,7 @@ pub fn restaurant_settings() -> EntityDef {
         .label_plural("Restaurant Settings")
         .table_name("restaurant_settings")
         .slug_name("restaurant-settings")
+        .description("Tax, currency, and timezone defaults")
         .field(FieldDef::string("restaurant_name").searchable().nullable())
         .field(
             FieldDef::string("timezone")
@@ -90,6 +156,7 @@ pub fn branch() -> EntityDef {
         .label_plural("Branches")
         .table_name("branches")
         .slug_name("branches")
+        .description("Addresses and dining rooms")
         .field(FieldDef::string("name").required().searchable())
         .field(
             FieldDef::many_to_one("restaurant_id", "Restaurant")
@@ -108,6 +175,7 @@ pub fn table() -> EntityDef {
         .label_plural("Tables")
         .table_name("dining_tables")
         .slug_name("tables")
+        .icon("layout")
         .display_field("code")
         .field(
             FieldDef::string("code")
@@ -133,7 +201,11 @@ pub fn table() -> EntityDef {
                 .default_value(json!("available"))
                 .filterable(),
         )
-        .field(FieldDef::one_to_many("reservations", "Reservation", "table_id"))
+        .field(FieldDef::one_to_many(
+            "reservations",
+            "Reservation",
+            "table_id",
+        ))
         .field(FieldDef::one_to_many("orders", "Order", "table_id"))
         .build()
 }
@@ -143,6 +215,7 @@ pub fn menu_category() -> EntityDef {
         .label("Menu Category")
         .label_plural("Menu Categories")
         .table_name("menu_categories")
+        .description("Groups on the menu")
         .field(FieldDef::string("name").required().searchable())
         .field(FieldDef::many_to_one("restaurant_id", "Restaurant").required())
         .field(
@@ -159,6 +232,7 @@ pub fn menu_item() -> EntityDef {
         .label("Menu Item")
         .label_plural("Menu Items")
         .table_name("menu_items")
+        .description("Dishes, prices, and availability")
         .field(FieldDef::string("name").required().searchable())
         .field(FieldDef::text("description").nullable().list(false))
         .field(
@@ -166,7 +240,12 @@ pub fn menu_item() -> EntityDef {
                 .required()
                 .label("Category"),
         )
-        .field(FieldDef::decimal("price").required().min(0.0).with_currency())
+        .field(
+            FieldDef::decimal("price")
+                .required()
+                .min(0.0)
+                .with_currency(),
+        )
         .field(
             FieldDef::string("image")
                 .nullable()
@@ -187,10 +266,15 @@ pub fn reservation() -> EntityDef {
         .label("Reservation")
         .label_plural("Reservations")
         .table_name("reservations")
+        .icon("calendar")
         .workflow("reservation")
         .attachments()
         .action(EntityActionDef::new("confirm").label("Confirm"))
-        .action(EntityActionDef::new("cancel").label("Cancel").confirm("Cancel this reservation?"))
+        .action(
+            EntityActionDef::new("cancel")
+                .label("Cancel")
+                .confirm("Cancel this reservation?"),
+        )
         .link(LinkDef::new("Orders", "Order", "reservation_id"))
         .public_form(
             PublicFormDef::new("book-table")
@@ -307,6 +391,7 @@ pub fn order() -> EntityDef {
         .label("Order")
         .label_plural("Orders")
         .table_name("orders")
+        .icon("receipt")
         .workflow("order")
         .views(EntityViews {
             kanban: Some(KanbanViewSpec {
@@ -401,9 +486,7 @@ pub fn order() -> EntityDef {
                 .min(0.0)
                 .default_value(json!(0)),
         )
-        .field(
-            FieldDef::currency("grand_total").computed("subtotal + tax - discount"),
-        )
+        .field(FieldDef::currency("grand_total").computed("subtotal + tax - discount"))
         .field(FieldDef::currency("total").computed("grand_total"))
         .field(FieldDef::text("notes").nullable().list(false))
         .field(
@@ -456,12 +539,18 @@ pub fn payment() -> EntityDef {
         .label("Payment")
         .label_plural("Payments")
         .table_name("payments")
+        .description("Tendered payments against orders")
         .field(
             FieldDef::many_to_one("order_id", "Order")
                 .required()
                 .label("Order"),
         )
-        .field(FieldDef::decimal("amount").required().min(0.0).with_currency())
+        .field(
+            FieldDef::decimal("amount")
+                .required()
+                .min(0.0)
+                .with_currency(),
+        )
         .field(
             FieldDef::enum_values("method", vec!["cash", "card", "other"])
                 .required()

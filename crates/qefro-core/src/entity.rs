@@ -69,6 +69,10 @@ pub struct EntityDef {
     /// Presentation-only. Does not affect permissions, workflow, or validation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub views: Option<crate::ui::EntityViews>,
+    /// Schema is owned elsewhere (auth `users` table). EntityService still
+    /// exposes this entity; `apply_schema` does not emit DDL for it.
+    #[serde(default)]
+    pub skip_ddl: bool,
 }
 
 fn default_true() -> bool {
@@ -108,6 +112,7 @@ impl EntityDef {
             links: Vec::new(),
             public_form: None,
             views: None,
+            skip_ddl: false,
         }
     }
 
@@ -262,6 +267,13 @@ impl EntityDef {
         self
     }
 
+    /// Do not generate or migrate a table for this entity. Used for User,
+    /// whose columns live in the auth schema.
+    pub fn skip_ddl(mut self) -> Self {
+        self.skip_ddl = true;
+        self
+    }
+
     pub fn build(mut self) -> Self {
         self.normalize();
         self
@@ -304,7 +316,9 @@ impl EntityDef {
             if !has_parent_fk {
                 self.fields.insert(
                     0,
-                    FieldDef::many_to_one("parent_id", parent).required().hidden(),
+                    FieldDef::many_to_one("parent_id", parent)
+                        .required()
+                        .hidden(),
                 );
             }
             if !self.fields.iter().any(|f| f.name == "sort_order") {
@@ -503,6 +517,7 @@ impl EntityDef {
                     formula: f.formula.clone(),
                     permission_level: f.permission_level,
                     allow_on_submit: f.allow_on_submit,
+                    secret: f.secret,
                     child_entity: f.relation.as_ref().and_then(|r| {
                         if f.is_child_table() {
                             Some(r.target_entity.clone())

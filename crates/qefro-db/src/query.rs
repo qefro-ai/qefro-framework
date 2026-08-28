@@ -84,7 +84,7 @@ pub fn push_bind_owned(
                     s.clone()
                 };
                 qb.push_bind(normalized);
-            },
+            }
             Some(FieldType::Boolean) => {
                 qb.push_bind(matches!(s.as_str(), "true" | "1" | "yes"));
             }

@@ -25,19 +25,13 @@ pub fn render_html(
         .primary_color
         .clone()
         .unwrap_or_else(|| "#111827".into());
-    let title = format
-        .title
-        .clone()
-        .unwrap_or_else(|| entity.label.clone());
+    let title = format.title.clone().unwrap_or_else(|| entity.label.clone());
     let doc_no = record
         .get("doc_no")
         .or_else(|| record.get("name"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let status = record
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let status = record.get("status").and_then(|v| v.as_str()).unwrap_or("");
     let mut html = String::new();
     let _ = write!(
         html,
@@ -131,7 +125,11 @@ pub fn render_pdf(title: &str, lines: &[String]) -> Vec<u8> {
         content.push_str(" Tj 0 -16 Td ");
     }
     content.push_str("ET");
-    let stream = format!("<< /Length {} >>\nstream\n{}\nendstream\n", content.len(), content);
+    let stream = format!(
+        "<< /Length {} >>\nstream\n{}\nendstream\n",
+        content.len(),
+        content
+    );
     let objects = [
         "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n".to_string(),
         "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n".to_string(),
@@ -146,7 +144,10 @@ pub fn render_pdf(title: &str, lines: &[String]) -> Vec<u8> {
         pdf.push_str(obj);
     }
     let xref = pdf.len();
-    pdf.push_str(&format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1));
+    pdf.push_str(&format!(
+        "xref\n0 {}\n0000000000 65535 f \n",
+        objects.len() + 1
+    ));
     for off in offsets {
         pdf.push_str(&format!("{off:010} 00000 n \n"));
     }
@@ -173,7 +174,11 @@ pub fn pdf_lines(entity: &EntityDef, record: &Value, children: &[Value]) -> Vec<
         }
     }
     for (i, row) in children.iter().enumerate() {
-        lines.push(format!("Item {}: {}", i + 1, display_value(row.get("amount").unwrap_or(&Value::Null))));
+        lines.push(format!(
+            "Item {}: {}",
+            i + 1,
+            display_value(row.get("amount").unwrap_or(&Value::Null))
+        ));
     }
     lines
 }
@@ -227,5 +232,11 @@ fn pdf_escape(s: &str) -> String {
         .chars()
         .map(|c| if c.is_ascii() { c } else { '?' })
         .collect();
-    format!("({})", cleaned.replace('\\', "\\\\").replace('(', "\\(").replace(')', "\\)"))
+    format!(
+        "({})",
+        cleaned
+            .replace('\\', "\\\\")
+            .replace('(', "\\(")
+            .replace(')', "\\)")
+    )
 }

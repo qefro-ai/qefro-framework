@@ -174,16 +174,21 @@ impl JobQueue {
             ))),
             None => {
                 tracing::warn!(job = %job.name, "no job handler registered");
-                Err(QefroError::not_found(format!("job handler '{}' not found", job.name)))
+                Err(QefroError::not_found(format!(
+                    "job handler '{}' not found",
+                    job.name
+                )))
             }
         };
         match result {
             Ok(()) => {
-                sqlx::query("UPDATE jobs SET status = 'succeeded', updated_at = now() WHERE id = $1")
-                    .bind(job.id)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|e| QefroError::database(e.to_string()))?;
+                sqlx::query(
+                    "UPDATE jobs SET status = 'succeeded', updated_at = now() WHERE id = $1",
+                )
+                .bind(job.id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| QefroError::database(e.to_string()))?;
             }
             Err(err) => {
                 let attempts = job.attempts + 1;

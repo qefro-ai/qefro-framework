@@ -22,7 +22,9 @@ pub enum FieldType {
     Date,
     Time,
     Uuid,
-    Enum { values: Vec<String> },
+    Enum {
+        values: Vec<String>,
+    },
     Json,
     Relation,
     /// Nested child collection. Does not store a column on the parent.
@@ -145,6 +147,13 @@ pub struct FieldDef {
     /// Remains writable while the document is in a lock state.
     #[serde(default)]
     pub allow_on_submit: bool,
+    /// Never returned by EntityService, search, audit payloads, or meta GET.
+    /// Write-only on create/update (passwords).
+    #[serde(default)]
+    pub secret: bool,
+    /// No database column. UI/action flags such as `create_account`.
+    #[serde(default)]
+    pub ephemeral: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -241,6 +250,8 @@ impl FieldDef {
             formula: None,
             permission_level: 0,
             allow_on_submit: false,
+            secret: false,
+            ephemeral: false,
         }
     }
 
@@ -627,6 +638,31 @@ impl FieldDef {
         self
     }
 
+    /// Write-only. Stripped from every outbound record. No database column.
+    pub fn write_only(mut self) -> Self {
+        self.secret = true;
+        self.ephemeral = true;
+        self.ui.list = false;
+        self.ui.detail = false;
+        self.ui.form = true;
+        self.required = false;
+        self.nullable = true;
+        self
+    }
+
+    /// In-memory / request-only field. `apply_schema` does not add a column.
+    pub fn ephemeral(mut self) -> Self {
+        self.ephemeral = true;
+        self.ui.list = false;
+        self.ui.detail = false;
+        self
+    }
+
+    pub fn secret(mut self) -> Self {
+        self.secret = true;
+        self
+    }
+
     fn ui_display_entity(mut self, entity: String) -> Self {
         self.ui.widget_options.entity = Some(entity);
         self
@@ -635,6 +671,9 @@ impl FieldDef {
     pub fn stores_column(&self) -> bool {
         if self.system {
             return true;
+        }
+        if self.secret || self.ephemeral {
+            return false;
         }
         if matches!(self.field_type, FieldType::ChildTable) {
             return false;

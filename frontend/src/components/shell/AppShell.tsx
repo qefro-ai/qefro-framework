@@ -12,6 +12,7 @@ export function AppShell({
   appName,
   logo,
   navEntities,
+  allEntities,
   studio,
   userName,
   userEmail,
@@ -21,6 +22,7 @@ export function AppShell({
   appName: string;
   logo?: string | null;
   navEntities: UiEntity[];
+  allEntities?: UiEntity[];
   studio: boolean;
   userName: string;
   userEmail: string;
@@ -174,11 +176,11 @@ export function AppShell({
       </aside>
       <main id="main" className="main" tabIndex={-1}>
         <BreadcrumbRecordProvider>
-          <Breadcrumbs entities={navEntities} />
+          <Breadcrumbs entities={allEntities ?? navEntities} navSlugs={navEntities.map((e) => e.slug)} />
           {children}
         </BreadcrumbRecordProvider>
       </main>
-      <CommandPalette entities={navEntities} studio={studio} open={palette} onOpenChange={setPalette} />
+      <CommandPalette entities={allEntities ?? navEntities} studio={studio} open={palette} onOpenChange={setPalette} />
       {helpOpen ? (
         <div className="palette-backdrop" onClick={() => setHelpOpen(false)}>
           <div className="palette" role="dialog" aria-label="Keyboard shortcuts" onClick={(e) => e.stopPropagation()}>

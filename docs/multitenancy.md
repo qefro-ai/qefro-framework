@@ -11,7 +11,7 @@ Every tenant-owned row includes `tenant_id`. That value is taken from the authen
 - List queries always include `WHERE tenant_id = $1`.
 - `GET /api/v1/tenants` returns the current tenant only.
 
-See [Tenant customization](tenants.md) and [Security](security.md).
+See [Tenant customization](tenants.md), [Identity](identity.md), and [Security](security.md).
 
 ## Configuration
 
@@ -28,4 +28,4 @@ Stored in `tenant_settings` with a short in-memory cache keyed by `tenant_id`. T
 
 ## Roles
 
-Register creates an Admin for a new tenant. Admins can `POST /api/v1/users` to add Staff/Manager members. RBAC is evaluated in `EntityService` for both REST and tools. Workers use a separate `Worker` role and cannot inherit Admin.
+Register creates an Admin for a new tenant. Admins create further Users through EntityService (`POST /api/v1/users` or the generic Users UI). A User is a login, not a Customer. See [Identity](identity.md).

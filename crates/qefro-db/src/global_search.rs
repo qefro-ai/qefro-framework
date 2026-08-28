@@ -37,7 +37,43 @@ impl EntityService {
             if !ctx.allows_app(entity.module.as_deref()) {
                 continue;
             }
-            if self.permissions().check(ctx, &entity.name, Action::List).is_err() {
+            if self
+                .permissions()
+                .check(ctx, &entity.name, Action::List)
+                .is_err()
+            {
+                continue;
+            }
+            if entity.name == qefro_core::USER_ENTITY {
+                if let Some(auth) = self.identity_service() {
+                    if let Ok((items, _)) = auth
+                        .list_tenant_users(ctx.tenant_id, Some(q), 1, per as u32)
+                        .await
+                    {
+                        for value in items {
+                            let id = value
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            let label = entity.display_label(&value);
+                            hits.push(SearchHit {
+                                entity: entity.name.clone(),
+                                slug: entity.slug.clone(),
+                                id,
+                                label: label.clone(),
+                                snippet: value
+                                    .get("email")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(&label)
+                                    .to_string(),
+                            });
+                        }
+                    }
+                }
+                continue;
+            }
+            if entity.skip_ddl {
                 continue;
             }
             let searchable: Vec<_> = entity
@@ -89,7 +125,10 @@ impl EntityService {
                 .await
                 .map_err(|e| QefroError::database(e.to_string()))?;
             for row in rows {
-                let mut value: Value = row.try_get(0).map_err(|e| QefroError::database(e.to_string()))?;
+                let mut value: Value = row
+                    .try_get(0)
+                    .map_err(|e| QefroError::database(e.to_string()))?;
+                qefro_core::strip_secrets(Some(&entity), &mut value);
                 self.strip_search_fields(ctx, &entity, &mut value);
                 let id = value
                     .get("id")
@@ -100,7 +139,10 @@ impl EntityService {
                 let snippet = searchable
                     .iter()
                     .filter_map(|f| {
-                        value.get(&f.name).and_then(|v| v.as_str()).map(|s| s.to_string())
+                        value
+                            .get(&f.name)
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
                     })
                     .find(|s| !s.is_empty())
                     .unwrap_or_else(|| label.clone());
@@ -123,6 +165,7 @@ impl EntityService {
         entity: &qefro_core::EntityDef,
         record: &mut Value,
     ) {
+        qefro_core::strip_secrets(Some(entity), record);
         let Some(obj) = record.as_object_mut() else {
             return;
         };

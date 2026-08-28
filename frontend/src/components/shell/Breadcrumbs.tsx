@@ -2,7 +2,13 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import type { UiEntity } from "../../sdk/client";
 import { useBreadcrumbRecord } from "./breadcrumbContext";
 
-export function Breadcrumbs({ entities }: { entities: UiEntity[] }) {
+export function Breadcrumbs({
+  entities,
+  navSlugs,
+}: {
+  entities: UiEntity[];
+  navSlugs?: string[];
+}) {
   const location = useLocation();
   const params = useParams();
   const { record } = useBreadcrumbRecord();
@@ -21,6 +27,10 @@ export function Breadcrumbs({ entities }: { entities: UiEntity[] }) {
   else {
     const meta = entities.find((e) => e.slug === parts[0]);
     if (meta) {
+      const inNav = !navSlugs || navSlugs.length === 0 || navSlugs.includes(meta.slug);
+      if (!inNav && !meta.child_of) {
+        crumbs.push({ to: "/settings", label: "Settings" });
+      }
       if (meta.child_of && record?.parent) {
         crumbs.push({ to: `/${record.parent.slug}`, label: record.parent.entityLabel });
         crumbs.push({

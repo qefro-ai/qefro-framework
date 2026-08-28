@@ -89,6 +89,19 @@ pub const ROLE_CUSTOMER: &str = "Customer";
 pub const ROLE_HR: &str = "HR";
 pub const ROLE_PUBLIC: &str = "Public";
 
+/// Grants for framework Person / User. Admin is added via `ensure_admin`.
+pub fn identity_grants() -> Vec<PermissionGrant> {
+    vec![
+        PermissionGrant::read(ROLE_MANAGER, "User"),
+        PermissionGrant::crud(ROLE_MANAGER, "Person"),
+        PermissionGrant::new(
+            ROLE_STAFF,
+            "Person",
+            vec![Action::Create, Action::Read, Action::Update, Action::List],
+        ),
+    ]
+}
+
 /// Role access to fields at or below `level`. Level 0 is always allowed for
 /// callers who already passed entity RBAC.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

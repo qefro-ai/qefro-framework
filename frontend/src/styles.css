@@ -233,7 +233,8 @@ legend { font-weight: 650; padding: 0 0.35rem; }
   display: block;
   box-shadow: var(--shadow);
 }
-.card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.card strong { display: block; margin-top: 0.35rem; font-size: 1.05rem; letter-spacing: -0.02em; }
+.card p { margin: 0.35rem 0 0; }
 .card-value { font-size: 1.9rem; margin-top: 0.4rem; font-weight: 700; letter-spacing: -0.04em; }
 .filters { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1rem; }
 .filters label { min-width: 160px; }

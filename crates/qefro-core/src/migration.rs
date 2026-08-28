@@ -35,7 +35,11 @@ pub fn sql_is_destructive(sql: &str) -> bool {
         || compact.contains("ALTER TABLE") && compact.contains(" DROP ")
 }
 
-pub fn parse_migration_file(text: &str, fallback_id: &str, fallback_version: &str) -> QefroResult<AppMigration> {
+pub fn parse_migration_file(
+    text: &str,
+    fallback_id: &str,
+    fallback_version: &str,
+) -> QefroResult<AppMigration> {
     let mut m: AppMigration = serde_yaml::from_str(text)
         .map_err(|e| QefroError::bad_request(format!("invalid migration yaml: {e}")))?;
     if m.id.trim().is_empty() {
@@ -57,6 +61,8 @@ mod tests {
     #[test]
     fn flags_drop_column() {
         assert!(sql_is_destructive("ALTER TABLE orders DROP COLUMN notes"));
-        assert!(!sql_is_destructive("ALTER TABLE orders ADD COLUMN source TEXT"));
+        assert!(!sql_is_destructive(
+            "ALTER TABLE orders ADD COLUMN source TEXT"
+        ));
     }
 }

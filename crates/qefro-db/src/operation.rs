@@ -1,7 +1,9 @@
 use crate::jobs::JobQueue;
 use crate::repository::{record_id, EntityRepository};
 use async_trait::async_trait;
-use qefro_core::{EntityRegistry, HookRegistry, MeteringEvent, OpContext, OperationDef, QefroError, QefroResult};
+use qefro_core::{
+    EntityRegistry, HookRegistry, MeteringEvent, OpContext, OperationDef, QefroError, QefroResult,
+};
 use qefro_events::DomainEvent;
 use qefro_permissions::{Action, PermissionRegistry};
 use qefro_search::{Filter, Query};
@@ -54,16 +56,14 @@ impl OperationRegistry {
 
     pub fn try_get(&self, entity: &str, name: &str) -> Option<Arc<OperationBinding>> {
         self.by_entity.get(entity).and_then(|m| {
-            m.get(name)
-                .cloned()
-                .or_else(|| {
-                    m.values()
-                        .find(|b| {
-                            b.def.tool_name == name
-                                || b.def.workflow_transition.as_deref() == Some(name)
-                        })
-                        .cloned()
-                })
+            m.get(name).cloned().or_else(|| {
+                m.values()
+                    .find(|b| {
+                        b.def.tool_name == name
+                            || b.def.workflow_transition.as_deref() == Some(name)
+                    })
+                    .cloned()
+            })
         })
     }
 
@@ -162,9 +162,12 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
     }
 
     pub fn apply_transition(&mut self, name: &str) -> QefroResult<String> {
-        let wf = self.workflows.for_entity(&self.entity.name).ok_or_else(|| {
-            QefroError::not_found(format!("no workflow for {}", self.entity.name))
-        })?;
+        let wf = self
+            .workflows
+            .for_entity(&self.entity.name)
+            .ok_or_else(|| {
+                QefroError::not_found(format!("no workflow for {}", self.entity.name))
+            })?;
         let from = self
             .record
             .get(&wf.field)
@@ -335,18 +338,7 @@ pub async fn execute_operation(
         .map_err(|e| QefroError::database(e.to_string()))?;
 
     let outcome = execute_in_transaction(
-        &mut tx,
-        repo,
-        registry,
-        workflows,
-        hooks,
-        &binding,
-        &entity,
-        ctx,
-        id,
-        input,
-        audit,
-        jobs,
+        &mut tx, repo, registry, workflows, hooks, &binding, &entity, ctx, id, input, audit, jobs,
     )
     .await;
 
@@ -423,9 +415,9 @@ async fn execute_in_transaction(
     let current = repo.get_tx(tx, entity, ctx, id, true).await?;
 
     if let Some(tname) = &binding.def.workflow_transition {
-        let wf = workflows.for_entity(&entity.name).ok_or_else(|| {
-            QefroError::not_found(format!("no workflow for {}", entity.name))
-        })?;
+        let wf = workflows
+            .for_entity(&entity.name)
+            .ok_or_else(|| QefroError::not_found(format!("no workflow for {}", entity.name)))?;
         let from = current
             .get(&wf.field)
             .and_then(|v| v.as_str())
@@ -456,9 +448,9 @@ async fn execute_in_transaction(
     };
 
     if let Some(tname) = &binding.def.workflow_transition {
-        let wf = workflows.for_entity(&entity.name).ok_or_else(|| {
-            QefroError::not_found(format!("no workflow for {}", entity.name))
-        })?;
+        let wf = workflows
+            .for_entity(&entity.name)
+            .ok_or_else(|| QefroError::not_found(format!("no workflow for {}", entity.name)))?;
         let original = current
             .get(&wf.field)
             .and_then(|v| v.as_str())

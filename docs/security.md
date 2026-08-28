@@ -53,7 +53,7 @@ Background jobs rebuild `OpContext` with role `Worker`, not `Admin` or `System`.
 
 ## Secrets and logs
 
-Do not log passwords, access tokens, `DATABASE_URL`, or JWT secrets. HTTP 5xx uses `QefroError::public_message`. Structured logs include `request_id`, `tenant_id`, `user_id`, path, duration, and status. Every response may echo `x-request-id`.
+Do not log passwords, access tokens, `DATABASE_URL`, or JWT secrets. HTTP 5xx uses `QefroError::public_message`. Structured logs include `request_id`, `tenant_id`, `user_id`, path, duration, and status. Every response may echo `x-request-id`. User `password_hash` and session tokens are never returned by EntityService or `/meta/ui`. See [Identity](identity.md).
 
 ## Rate limits
 

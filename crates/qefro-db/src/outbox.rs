@@ -53,11 +53,7 @@ impl Outbox {
         Ok(())
     }
 
-    pub async fn dispatch_pending(
-        &self,
-        bus: &dyn EventBus,
-        limit: i64,
-    ) -> QefroResult<usize> {
+    pub async fn dispatch_pending(&self, bus: &dyn EventBus, limit: i64) -> QefroResult<usize> {
         let mut tx = self
             .pool
             .begin()

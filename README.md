@@ -4,7 +4,7 @@ Rust-native, metadata-driven framework for building secure, multi-tenant busines
 
 Define entities, workflows, permissions, and **business operations**. The runtime generates PostgreSQL schema, REST APIs, validation, audit logs, a generic UI, agent tools, events, and a Postgres job queue. Authorization always runs on the server. Agents never get a database connection.
 
-**V1.0** is the production-ready stable release. See [Getting started](docs/getting-started.md) and [V1 compatibility](docs/v1-compatibility.md).
+**V1.1** adds the identity foundation (Person ≠ User ≠ Customer) on the V1.0 compatibility contract. See [Getting started](docs/getting-started.md), [Identity](docs/identity.md), and [V1 compatibility](docs/v1-compatibility.md).
 
 ## Install
 
@@ -105,13 +105,14 @@ qefro migrate --app restaurant
 qefro dev --app restaurant
 ```
 
-1. Open the UI and sign in (or register a tenant).
-2. Create a Restaurant, Branch, Table, and Customer.
-3. Create a Reservation. The customer and table fields are relation pickers, not raw UUIDs.
-4. Use **Confirm → Seat Customer → Complete** (each button is a business operation: table occupancy is updated atomically with reservation status).
-5. The dashboard cards (today's reservations, table occupancy, orders, sales) come from application metadata.
-6. Discover tools: `GET /api/v1/tools` (already permission-filtered), including `confirm_reservation`.
-7. Invoke `confirm_reservation` through `POST /api/v1/agent/tools/confirm_reservation/invoke`. Same `EntityService` path as REST.
+1. Open the UI and sign in (or register a tenant). Ops nav is Reservations, Tables, Orders, Customers, plus Settings.
+2. Create a Restaurant, Branch, and Table (setup lives under **Settings**). People and Users are also under Settings, not the floor menu.
+3. Create a Customer. Walk-in: fill name, email, and phone and leave **Person** empty — no User row. Linked guest: create a Person in Settings → People, then set Customer → Person. Customer still stores its own name/email/phone for unlinked and legacy rows.
+4. Create a Reservation. The customer and table fields are relation pickers, not raw UUIDs.
+5. Use **Confirm → Seat Customer → Complete** (each button is a business operation: table occupancy is updated atomically with reservation status).
+6. The dashboard cards (today's reservations, table occupancy, orders, sales) come from application metadata.
+7. Discover tools: `GET /api/v1/tools` (already permission-filtered), including `confirm_reservation`.
+8. Invoke `confirm_reservation` through `POST /api/v1/agent/tools/confirm_reservation/invoke`. Same `EntityService` path as REST.
 
 ## CLI
 
@@ -252,6 +253,7 @@ Or `make check`. Integration tests require `DATABASE_URL` (they fail closed if i
 - [Reports](docs/reports.md)
 - [Agents](docs/agents.md)
 - [Multi-tenancy](docs/multitenancy.md)
+- [Identity (Person ≠ User ≠ business)](docs/identity.md)
 - [Tenants](docs/tenants.md)
 - [Permissions](docs/permissions.md)
 - [Security](docs/security.md)

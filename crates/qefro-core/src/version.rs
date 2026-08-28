@@ -24,7 +24,9 @@ pub const FRAMEWORK_COMPAT_REQ: &str = ">=1.0,<2.0";
 pub fn parse_version(raw: &str) -> QefroResult<Version> {
     let trimmed = raw.trim().trim_start_matches('v');
     Version::parse(trimmed).map_err(|_| {
-        QefroError::bad_request(format!("invalid version '{raw}' (expected semver, e.g. 1.2.0)"))
+        QefroError::bad_request(format!(
+            "invalid version '{raw}' (expected semver, e.g. 1.2.0)"
+        ))
     })
 }
 

@@ -266,7 +266,9 @@ pub fn classify_entity_change(before: &EntityDef, after: &EntityDef) -> ChangeAn
             "Renaming an entity requires a database migration. Qefro will not rewrite the table."
                 .into(),
         );
-        analysis.diff.push(format!("~ name {} → {}", before.name, after.name));
+        analysis
+            .diff
+            .push(format!("~ name {} → {}", before.name, after.name));
     }
     let before_fields: HashMap<&str, &FieldDef> =
         before.fields.iter().map(|f| (f.name.as_str(), f)).collect();
@@ -284,10 +286,9 @@ pub fn classify_entity_change(before: &EntityDef, after: &EntityDef) -> ChangeAn
                     analysis
                         .warnings
                         .push(format!("Adding field '{name}' requires ADD COLUMN."));
-                    analysis.diff.push(format!(
-                        "+ field {name} ({})",
-                        field.field_type.as_str()
-                    ));
+                    analysis
+                        .diff
+                        .push(format!("+ field {name} ({})", field.field_type.as_str()));
                     if !field.ui.widget.is_empty() {
                         analysis
                             .diff
@@ -307,10 +308,9 @@ pub fn classify_entity_change(before: &EntityDef, after: &EntityDef) -> ChangeAn
         analysis.warnings.push(format!(
             "Deleting field '{name}' is potentially destructive. The column will not be dropped."
         ));
-        analysis.diff.push(format!(
-            "- field {name} ({})",
-            field.field_type.as_str()
-        ));
+        analysis
+            .diff
+            .push(format!("- field {name} ({})", field.field_type.as_str()));
     }
     analysis
 }
@@ -335,10 +335,8 @@ fn classify_field(before: &FieldDef, after: &FieldDef, analysis: &mut ChangeAnal
             after.field_type.as_str()
         ));
     }
-    if let (
-        FieldType::Enum { values: old },
-        FieldType::Enum { values: new },
-    ) = (&before.field_type, &after.field_type)
+    if let (FieldType::Enum { values: old }, FieldType::Enum { values: new }) =
+        (&before.field_type, &after.field_type)
     {
         for v in new {
             if !old.contains(v) {
@@ -381,9 +379,10 @@ fn classify_field(before: &FieldDef, after: &FieldDef, analysis: &mut ChangeAnal
         }
     }
     if before.label != after.label {
-        analysis
-            .diff
-            .push(format!("~ {}.label {:?} → {:?}", after.name, before.label, after.label));
+        analysis.diff.push(format!(
+            "~ {}.label {:?} → {:?}",
+            after.name, before.label, after.label
+        ));
     }
     if before.ui.widget != after.ui.widget {
         analysis.diff.push(format!(
@@ -445,10 +444,20 @@ pub fn entity_referrers(registry: &EntityRegistry, name: &str) -> Vec<EntityRef>
 pub fn preview_formula(formula: &str, record: &Value) -> QefroResult<f64> {
     let expr = parse_formula(formula)?;
     let children = HashMap::new();
-    eval_formula(&expr, &FormulaContext { record, children: &children })
+    eval_formula(
+        &expr,
+        &FormulaContext {
+            record,
+            children: &children,
+        },
+    )
 }
 
-pub fn validate_formula_on_entity(entity: &EntityDef, field: &str, formula: &str) -> QefroResult<()> {
+pub fn validate_formula_on_entity(
+    entity: &EntityDef,
+    field: &str,
+    formula: &str,
+) -> QefroResult<()> {
     let expr = parse_formula(formula)?;
     let deps = crate::formula::formula_dependencies(&expr);
     for dep in deps {
@@ -465,7 +474,10 @@ pub fn validate_formula_on_entity(entity: &EntityDef, field: &str, formula: &str
             let _ = child;
             let _ = child_field;
         } else if entity.get_field(&dep).is_none()
-            && !entity.fields.iter().any(|f| f.is_child_table() && f.name == dep)
+            && !entity
+                .fields
+                .iter()
+                .any(|f| f.is_child_table() && f.name == dep)
         {
             return Err(QefroError::bad_request(format!(
                 "formula on '{field}' references unknown field '{dep}'"
@@ -481,7 +493,9 @@ pub fn validate_formula_on_entity(entity: &EntityDef, field: &str, formula: &str
     Ok(())
 }
 
-pub const FORMULA_FUNCTIONS: &[&str] = &["SUM", "MIN", "MAX", "COUNT", "ROUND", "+", "-", "*", "/", "%", "()"];
+pub const FORMULA_FUNCTIONS: &[&str] = &[
+    "SUM", "MIN", "MAX", "COUNT", "ROUND", "+", "-", "*", "/", "%", "()",
+];
 
 /// Live overlay for reports, dashboards, and print formats. Entity/workflow/
 /// permission overlays live on those registries.
@@ -524,15 +538,21 @@ impl StudioCatalog {
     }
 
     pub fn merge_reports(&self, base: &[ReportDef]) -> Vec<ReportDef> {
-        merge_named(base, self.reports.read().ok().as_deref(), |r| r.name.clone())
+        merge_named(base, self.reports.read().ok().as_deref(), |r| {
+            r.name.clone()
+        })
     }
 
     pub fn merge_dashboards(&self, base: &[DashboardDef]) -> Vec<DashboardDef> {
-        merge_named(base, self.dashboards.read().ok().as_deref(), |d| d.name.clone())
+        merge_named(base, self.dashboards.read().ok().as_deref(), |d| {
+            d.name.clone()
+        })
     }
 
     pub fn merge_print_formats(&self, base: &[PrintFormat]) -> Vec<PrintFormat> {
-        merge_named(base, self.print_formats.read().ok().as_deref(), |p| p.name.clone())
+        merge_named(base, self.print_formats.read().ok().as_deref(), |p| {
+            p.name.clone()
+        })
     }
 }
 
@@ -541,7 +561,11 @@ fn merge_named<T: Clone>(
     overlay: Option<&HashMap<String, T>>,
     name: impl Fn(&T) -> String,
 ) -> Vec<T> {
-    let mut map: HashMap<String, T> = base.iter().cloned().map(|item| (name(&item), item)).collect();
+    let mut map: HashMap<String, T> = base
+        .iter()
+        .cloned()
+        .map(|item| (name(&item), item))
+        .collect();
     if let Some(overlay) = overlay {
         for (k, v) in overlay {
             map.insert(k.clone(), v.clone());
@@ -601,10 +625,7 @@ mod tests {
             .build();
         let after = EntityDef::new("Reservation")
             .field(FieldDef::string("notes"))
-            .field(
-                FieldDef::enum_("source", vec!["Website", "WhatsApp", "Walk-in"])
-                    .nullable(),
-            )
+            .field(FieldDef::enum_("source", vec!["Website", "WhatsApp", "Walk-in"]).nullable())
             .build();
         let a = classify_entity_change(&before, &after);
         assert_eq!(a.impact, SchemaImpact::Additive);

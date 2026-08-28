@@ -1,12 +1,21 @@
-import { FormEvent, useEffect, useState } from "react";
-import { api, ApiError, type TenantConfig } from "../api";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { api, ApiError, type TenantConfig, type UiEntity } from "../api";
+import { settingsEntities } from "../metadata/navigation";
 import { usePrefsOptional } from "../prefsContext";
+import { PageHeader } from "../components/ui/PageHeader";
 
 export default function Settings({
   config,
+  entities = [],
+  navSlugs = [],
+  hiddenEntities = [],
   onSaved,
 }: {
   config: TenantConfig | null;
+  entities?: UiEntity[];
+  navSlugs?: string[];
+  hiddenEntities?: string[];
   onSaved: (next: TenantConfig) => void;
 }) {
   const [companyName, setCompanyName] = useState("");
@@ -26,6 +35,12 @@ export default function Settings({
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
   const prefs = usePrefsOptional();
+  const setup = useMemo(
+    () => settingsEntities(entities, navSlugs, hiddenEntities),
+    [entities, navSlugs, hiddenEntities],
+  );
+  const singletons = setup.filter((e) => e.singleton);
+  const collections = setup.filter((e) => !e.singleton);
 
   useEffect(() => {
     if (!config) return;
@@ -104,6 +119,31 @@ export default function Settings({
 
   return (
     <div className="page">
+      {setup.length > 0 ? (
+        <>
+          <PageHeader
+            kicker="Application"
+            title="Setup"
+            description="Configuration and setup records. Day-to-day work stays in the main menu."
+          />
+          <div className="cards">
+            {singletons.map((entity) => (
+              <Link key={entity.slug} className="card" to={`/${entity.slug}`}>
+                <div className="muted">Configuration</div>
+                <strong>{entity.label}</strong>
+                {entity.description ? <p className="muted">{entity.description}</p> : null}
+              </Link>
+            ))}
+            {collections.map((entity) => (
+              <Link key={entity.slug} className="card" to={`/${entity.slug}`}>
+                <div className="muted">{entity.module || "Setup"}</div>
+                <strong>{entity.label_plural}</strong>
+                {entity.description ? <p className="muted">{entity.description}</p> : null}
+              </Link>
+            ))}
+          </div>
+        </>
+      ) : null}
       <div className="badge">Tenant</div>
       <h2>Workspace settings</h2>
       <p className="muted">

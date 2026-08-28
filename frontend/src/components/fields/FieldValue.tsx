@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import type { UiEntity, UiField } from "../../metadata/types";
-import { expandedLabel } from "../../sdk/client";
+import { expandedLabel, type Expanded } from "../../sdk/client";
 import { relativeTime } from "../../format";
 import { formatMoney, utcToDatetimeLocal } from "../../metadata/timezone";
 import { useTenantTheme } from "../../metadata/context";
@@ -76,12 +76,36 @@ function relationValue(
   linkRelations: boolean,
   entities?: UiEntity[],
 ) {
-  const expanded = row._expanded as
-    | Record<string, { id: string; label: string; slug: string }>
-    | undefined;
+  const expanded = row._expanded as Record<string, Expanded> | undefined;
   const rel = expanded?.[name];
-  if (linkRelations && rel?.slug && rel.id && (!entities || entities.some((e) => e.slug === rel.slug))) {
+  const main = relationLink(rel, linkRelations, entities) ?? expandedLabel(row, name) ?? displayValue(row, name) ?? null;
+  const nested = rel?._expanded;
+  if (!nested || typeof nested !== "object") return main;
+  const extras = Object.values(nested).filter((n) => n?.id && n.slug);
+  if (!extras.length) return main;
+  return (
+    <span className="rel-path">
+      {main}
+      {extras.map((n) => (
+        <span key={n.id}>
+          {" · "}
+          {relationLink(n, linkRelations, entities) ?? n.label}
+          {n.enabled === false ? <span className="muted"> (disabled)</span> : null}
+          {n.enabled === true ? <span className="muted"> (enabled)</span> : null}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function relationLink(
+  rel: Expanded | undefined,
+  linkRelations: boolean,
+  entities?: UiEntity[],
+) {
+  if (!rel) return null;
+  if (linkRelations && rel.slug && rel.id && (!entities || entities.some((e) => e.slug === rel.slug))) {
     return <Link to={`/${rel.slug}/${rel.id}`}>{rel.label}</Link>;
   }
-  return rel?.label ?? expandedLabel(row, name) ?? displayValue(row, name) ?? null;
+  return rel.label ?? null;
 }

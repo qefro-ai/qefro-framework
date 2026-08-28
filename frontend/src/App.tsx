@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import StudioApp from "./studio/StudioApp";
 import { api, ApiError, clearToken, hasToken, METADATA_EVENT, onAuthChange, type TenantConfig, type UiEntity } from "./api";
 import { TenantThemeContext } from "./metadata/context";
+import { primaryNavEntities } from "./metadata/navigation";
 import { PrefsProvider } from "./prefsContext";
 import { AppShell } from "./components/shell/AppShell";
 import "./widgets";
@@ -35,6 +36,11 @@ export default function App() {
 function Shell() {
   const [entities, setEntities] = useState<UiEntity[]>([]);
   const [config, setConfig] = useState<TenantConfig | null>(null);
+  const [uiMeta, setUiMeta] = useState<{
+    navigation: string[];
+    hidden_entities: string[];
+    default_dashboard?: string | null;
+  }>({ navigation: [], hidden_entities: [] });
   const [userName, setUserName] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
@@ -50,6 +56,11 @@ function Shell() {
         .ui()
         .then((d) => {
           setEntities(d.entities);
+          setUiMeta({
+            navigation: d.navigation ?? [],
+            hidden_entities: d.hidden_entities ?? [],
+            default_dashboard: d.default_dashboard,
+          });
           if (d.branding) {
             setConfig((prev) =>
               prev
@@ -58,7 +69,7 @@ function Shell() {
                     branding: d.branding ?? {},
                     ui_config: {
                       navigation: d.navigation ?? [],
-                      hidden_entities: [],
+                      hidden_entities: d.hidden_entities ?? [],
                       default_dashboard: d.default_dashboard,
                       terminology: d.terminology,
                     },
@@ -119,18 +130,34 @@ function Shell() {
     }
   }, [config]);
 
-  const navEntities = useMemo(() => {
-    const hidden = new Set(config?.ui_config.hidden_entities ?? []);
-    const ordered = config?.ui_config.navigation ?? [];
-    const visible = entities.filter(
-      (e) => !hidden.has(e.slug) && !hidden.has(e.entity) && e.standalone !== false,
-    );
-    if (ordered.length === 0) return visible;
-    const bySlug = new Map(visible.map((e) => [e.slug, e]));
-    const picked = ordered.map((s) => bySlug.get(s)).filter(Boolean) as UiEntity[];
-    const rest = visible.filter((e) => !ordered.includes(e.slug));
-    return [...picked, ...rest];
-  }, [entities, config]);
+  const navEntities = useMemo(
+    () => primaryNavEntities(entities, uiMeta.navigation, uiMeta.hidden_entities),
+    [entities, uiMeta],
+  );
+  const resolvedConfig = useMemo(() => {
+    if (!config) {
+      return {
+        branding: {},
+        ui_config: {
+          navigation: uiMeta.navigation,
+          hidden_entities: uiMeta.hidden_entities,
+          default_dashboard: uiMeta.default_dashboard,
+        },
+        enabled_apps: [],
+      } as TenantConfig;
+    }
+    return {
+      ...config,
+      ui_config: {
+        ...config.ui_config,
+        navigation: uiMeta.navigation.length ? uiMeta.navigation : config.ui_config.navigation,
+        hidden_entities: uiMeta.hidden_entities.length
+          ? uiMeta.hidden_entities
+          : config.ui_config.hidden_entities,
+        default_dashboard: uiMeta.default_dashboard ?? config.ui_config.default_dashboard,
+      },
+    };
+  }, [config, uiMeta]);
 
   const appName = config?.branding.company_name || config?.branding.app_name || "Workspace";
   const theme = {
@@ -141,9 +168,33 @@ function Shell() {
 
   const routes = (
     <Routes>
-      <Route path="/" element={<Dashboard entities={entities} config={config} />} />
+      <Route path="/" element={<Dashboard entities={entities} config={resolvedConfig} />} />
       <Route path="/login" element={<Navigate to="/" replace />} />
-      <Route path="/settings" element={<Settings config={config} onSaved={setConfig} />} />
+      <Route
+        path="/settings"
+        element={
+          <Settings
+            config={config}
+            entities={entities}
+            navSlugs={uiMeta.navigation}
+            hiddenEntities={uiMeta.hidden_entities}
+            onSaved={(next) => {
+              setConfig(next);
+              api
+                .ui()
+                .then((d) => {
+                  setEntities(d.entities);
+                  setUiMeta({
+                    navigation: d.navigation ?? [],
+                    hidden_entities: d.hidden_entities ?? [],
+                    default_dashboard: d.default_dashboard,
+                  });
+                })
+                .catch(() => undefined);
+            }}
+          />
+        }
+      />
       <Route path="/reports" element={<Reports />} />
       <Route path="/p/:tenant/:form" element={<PublicForm />} />
       <Route path="/:slug" element={<EntityList entities={entities} />} />
@@ -171,6 +222,7 @@ function Shell() {
           appName={appName}
           logo={config?.branding.logo}
           navEntities={navEntities}
+          allEntities={entities}
           studio={studio}
           userName={userName}
           userEmail={userEmail}

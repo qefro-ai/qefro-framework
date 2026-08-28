@@ -1,6 +1,7 @@
+use qefro_core::ui::{ListColumnSpec, SortSpec};
 use qefro_core::{
     CalendarViewSpec, ChildTableDef, EntityDef, EntityViews, FieldDef, KanbanCardSpec,
-    KanbanViewSpec, UiConfig,
+    KanbanViewSpec, ListViewSpec, UiConfig,
 };
 use serde_json::json;
 
@@ -11,17 +12,74 @@ pub fn crm_customer() -> EntityDef {
         .table_name("crm_customers")
         .slug_name("crm-customers")
         .icon("briefcase")
+        .description("Account record. Optionally link a Person when the account is a known individual.")
+        .field(
+            FieldDef::many_to_one("person_id", "Person")
+                .nullable()
+                .label("Person")
+                .help("Optional. Set when this account is a known individual. CRM Contact is a company contact, not a Person. When linked, Person is the source of truth for name, email, and phone. This row still stores its own fields for unlinked and legacy records.")
+                .section("Identity")
+                .filterable(),
+        )
         .field(
             FieldDef::string("name")
                 .required()
                 .searchable()
                 .max_length(200)
-                .filterable(),
+                .filterable()
+                .section("Contact"),
         )
-        .field(FieldDef::string("email").nullable().email().searchable())
-        .field(FieldDef::string("phone").nullable())
+        .field(
+            FieldDef::string("email")
+                .nullable()
+                .email()
+                .searchable()
+                .section("Contact"),
+        )
+        .field(
+            FieldDef::string("phone")
+                .nullable()
+                .section("Contact"),
+        )
         .field(FieldDef::string("industry").nullable().filterable())
         .field(FieldDef::text("notes").nullable().list(false))
+        .views(EntityViews {
+            list: Some(ListViewSpec {
+                columns: vec![
+                    ListColumnSpec {
+                        field: "name".into(),
+                        width: None,
+                        widget: None,
+                    },
+                    ListColumnSpec {
+                        field: "email".into(),
+                        width: None,
+                        widget: None,
+                    },
+                    ListColumnSpec {
+                        field: "phone".into(),
+                        width: None,
+                        widget: None,
+                    },
+                    ListColumnSpec {
+                        field: "person_id".into(),
+                        width: None,
+                        widget: Some("relation".into()),
+                    },
+                    ListColumnSpec {
+                        field: "industry".into(),
+                        width: None,
+                        widget: None,
+                    },
+                ],
+                default_sort: Some(SortSpec {
+                    field: "name".into(),
+                    direction: Some("asc".into()),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
         .field(FieldDef::one_to_many("contacts", "Contact", "customer_id"))
         .field(FieldDef::one_to_many("opportunities", "Opportunity", "customer_id"))
         .field(FieldDef::one_to_many("activities", "Activity", "customer_id"))

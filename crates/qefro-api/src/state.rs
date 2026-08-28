@@ -30,6 +30,7 @@ pub struct AppState {
     pub login_limiter: Arc<MemoryRateLimiter>,
     pub installed_apps: Vec<String>,
     pub default_navigation: Vec<String>,
+    pub default_hidden_entities: Vec<String>,
     pub blob_store: Arc<dyn BlobStore>,
     pub blobs: Arc<BlobMetaStore>,
     pub saved_filters: Arc<SavedFilterStore>,

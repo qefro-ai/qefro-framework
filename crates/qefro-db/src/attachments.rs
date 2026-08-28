@@ -125,7 +125,9 @@ pub fn validate_upload(filename: &str, mime: &str, size: i64) -> QefroResult<()>
         return Err(QefroError::bad_request("file exceeds size limit"));
     }
     if !ALLOWED_MIME.iter().any(|m| *m == mime) && !mime.starts_with("image/") {
-        return Err(QefroError::bad_request(format!("mime type '{mime}' is not allowed")));
+        return Err(QefroError::bad_request(format!(
+            "mime type '{mime}' is not allowed"
+        )));
     }
     Ok(())
 }

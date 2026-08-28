@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     name TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -24,6 +25,7 @@ CREATE TABLE IF NOT EXISTS user_tenants (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     roles TEXT[] NOT NULL DEFAULT ARRAY['Staff']::TEXT[],
+    enabled BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (user_id, tenant_id)
 );
@@ -92,6 +94,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS jobs_idemp_uidx
 
 ALTER TABLE tenant_settings ADD COLUMN IF NOT EXISTS feature_flags JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE tenant_settings ADD COLUMN IF NOT EXISTS plan TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE user_tenants ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT true;
 
 CREATE TABLE IF NOT EXISTS saved_filters (
     id UUID PRIMARY KEY,
@@ -420,6 +424,9 @@ pub async fn apply_schema(pool: &PgPool, registry: &EntityRegistry) -> QefroResu
     }
 
     for entity in registry.list() {
+        if entity.skip_ddl {
+            continue;
+        }
         let ddl = entity_ddl(&entity)?;
         let stmts = split_sql(&ddl);
         if let Some(create) = stmts.first() {
@@ -432,6 +439,9 @@ pub async fn apply_schema(pool: &PgPool, registry: &EntityRegistry) -> QefroResu
     apply_missing_columns(pool, registry).await?;
     apply_column_nullability(pool, registry).await?;
     for entity in registry.list() {
+        if entity.skip_ddl {
+            continue;
+        }
         let ddl = entity_ddl(&entity)?;
         for stmt in split_sql(&ddl).into_iter().skip(1) {
             sqlx::query(stmt)
@@ -449,6 +459,9 @@ pub async fn apply_schema(pool: &PgPool, registry: &EntityRegistry) -> QefroResu
 
 async fn apply_missing_columns(pool: &PgPool, registry: &EntityRegistry) -> QefroResult<()> {
     for entity in registry.list() {
+        if entity.skip_ddl {
+            continue;
+        }
         let table = quote_ident(&entity.table)?;
         for field in entity.stored_fields() {
             let col = quote_ident(&field.column_name())?;
@@ -456,10 +469,9 @@ async fn apply_missing_columns(pool: &PgPool, registry: &EntityRegistry) -> Qefr
                 "ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {}",
                 field.field_type.sql_type()
             );
-            sqlx::query(&sql)
-                .execute(pool)
-                .await
-                .map_err(|e| QefroError::database(format!("add column {}.{}: {e}", entity.name, field.name)))?;
+            sqlx::query(&sql).execute(pool).await.map_err(|e| {
+                QefroError::database(format!("add column {}.{}: {e}", entity.name, field.name))
+            })?;
         }
     }
     Ok(())
@@ -482,6 +494,9 @@ const SYSTEM_COLUMNS: &[&str] = &[
 async fn apply_column_nullability(pool: &PgPool, registry: &EntityRegistry) -> QefroResult<()> {
     use std::collections::HashSet;
     for entity in registry.list() {
+        if entity.skip_ddl {
+            continue;
+        }
         ident_check(&entity.table)?;
         let table = quote_ident(&entity.table)?;
         let rows: Vec<(String, String)> = sqlx::query_as(
@@ -516,10 +531,9 @@ async fn apply_column_nullability(pool: &PgPool, registry: &EntityRegistry) -> Q
             }
             let col = quote_ident(&name)?;
             let sql = format!("ALTER TABLE {table} ALTER COLUMN {col} DROP NOT NULL");
-            sqlx::query(&sql)
-                .execute(pool)
-                .await
-                .map_err(|e| QefroError::database(format!("relax {}.{}: {e}", entity.table, name)))?;
+            sqlx::query(&sql).execute(pool).await.map_err(|e| {
+                QefroError::database(format!("relax {}.{}: {e}", entity.table, name))
+            })?;
         }
     }
     Ok(())
@@ -529,6 +543,9 @@ async fn apply_column_nullability(pool: &PgPool, registry: &EntityRegistry) -> Q
 /// enum CHECKs so status values can grow without leftover rejections.
 async fn apply_enum_checks(pool: &PgPool, registry: &EntityRegistry) -> QefroResult<()> {
     for entity in registry.list() {
+        if entity.skip_ddl {
+            continue;
+        }
         ident_check(&entity.table)?;
         for field in entity.stored_fields() {
             let FieldType::Enum { values } = &field.field_type else {
@@ -586,6 +603,9 @@ async fn apply_enum_checks(pool: &PgPool, registry: &EntityRegistry) -> QefroRes
 
 async fn apply_foreign_keys(pool: &PgPool, registry: &EntityRegistry) -> QefroResult<()> {
     for entity in registry.list() {
+        if entity.skip_ddl {
+            continue;
+        }
         for field in entity.stored_fields() {
             let Some(rel) = &field.relation else { continue };
             if rel.kind != RelationKind::ManyToOne {
@@ -606,10 +626,7 @@ async fn apply_foreign_keys(pool: &PgPool, registry: &EntityRegistry) -> QefroRe
             );
             // DROP + ADD in one round-trip can fail on first run; do separately.
             let drop = format!("ALTER TABLE {table} DROP CONSTRAINT IF EXISTS \"{constraint}\"");
-            let on_delete = if entity
-                .child_of
-                .as_ref()
-                .map(|c| c.parent_entity.as_str())
+            let on_delete = if entity.child_of.as_ref().map(|c| c.parent_entity.as_str())
                 == Some(rel.target_entity.as_str())
             {
                 " ON DELETE CASCADE"
@@ -634,6 +651,9 @@ async fn apply_foreign_keys(pool: &PgPool, registry: &EntityRegistry) -> QefroRe
 
 async fn apply_junction_tables(pool: &PgPool, registry: &EntityRegistry) -> QefroResult<()> {
     for entity in registry.list() {
+        if entity.skip_ddl {
+            continue;
+        }
         for field in &entity.fields {
             let Some(rel) = &field.relation else { continue };
             if rel.kind != RelationKind::ManyToMany {

@@ -5,11 +5,14 @@ use crate::state::AppState;
 use anyhow::Context;
 use qefro_agent::ToolRegistry;
 use qefro_auth::AuthService;
-use qefro_core::{AppModule, EntityRegistry, HookRegistry, LocalBlobStore, OperationDef, StudioCatalog};
+use qefro_core::{
+    AppModule, EntityRegistry, HookRegistry, LocalBlobStore, OperationDef, StudioCatalog,
+};
 use qefro_db::{
-    apply_schema, connect, AttachmentStore, BlobMetaStore, EmailNotifyJob, EntityService, JobHandler,
-    JobQueue, JobRegistry, LogNotificationJob, MetadataChangeService, NotificationStore,
-    OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore, WebhookLog,
+    apply_schema, connect, AttachmentStore, BlobMetaStore, EmailNotifyJob, EntityService,
+    JobHandler, JobQueue, JobRegistry, LogNotificationJob, MetadataChangeService,
+    NotificationStore, OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore,
+    WebhookLog,
 };
 use qefro_events::InProcessEventBus;
 use qefro_permissions::{PermissionGrant, PermissionRegistry};
@@ -132,7 +135,11 @@ impl InstalledApp {
         self
     }
 
-    pub fn operation(mut self, def: OperationDef, handler: impl OperationHandler + 'static) -> Self {
+    pub fn operation(
+        mut self,
+        def: OperationDef,
+        handler: impl OperationHandler + 'static,
+    ) -> Self {
         self.operations.push((def, Arc::new(handler)));
         self
     }
@@ -232,9 +239,9 @@ impl QefroRuntime {
     }
 
     pub fn entity(&self, name: &str) -> Option<&qefro_core::EntityDef> {
-        self.entities().into_iter().find(|e| {
-            e.name.eq_ignore_ascii_case(name) || e.slug.eq_ignore_ascii_case(name)
-        })
+        self.entities()
+            .into_iter()
+            .find(|e| e.name.eq_ignore_ascii_case(name) || e.slug.eq_ignore_ascii_case(name))
     }
 
     pub fn routes_summary(&self) -> Vec<String> {
@@ -246,6 +253,8 @@ impl QefroRuntime {
             "POST /api/v1/auth/logout".into(),
             "GET /api/v1/auth/me".into(),
             "POST /api/v1/users".into(),
+            "GET/PATCH /api/v1/users/:id".into(),
+            "GET/POST /api/v1/people".into(),
             "GET /api/v1/meta/ui".into(),
             "GET /api/v1/meta/dashboards".into(),
             "GET /api/v1/meta/reports".into(),
@@ -296,6 +305,15 @@ impl QefroRuntime {
         let mut reports = Vec::new();
         let mut print_formats = Vec::new();
 
+        for entity in qefro_core::identity_entities() {
+            let name = entity.name.clone();
+            registry.register(entity)?;
+            permissions.ensure_admin(&name);
+        }
+        for grant in qefro_permissions::identity_grants() {
+            permissions.grant(grant);
+        }
+
         for app in &self.apps {
             app.module.install_entities(&mut registry)?;
             for grant in &app.permissions {
@@ -321,6 +339,8 @@ impl QefroRuntime {
                 print_formats.extend(entity.print_formats.clone());
             }
         }
+
+        registry.wire_identity_inverses()?;
 
         registry
             .validate_relations()
@@ -392,6 +412,10 @@ impl QefroRuntime {
         let operations = Arc::new(operations);
         let job_handlers = Arc::new(job_handlers);
         let jobs = Arc::new(JobQueue::new(pool.clone()));
+        let auth = Arc::new(AuthService::new(
+            pool.clone(),
+            self.config.jwt_secret.clone(),
+        ));
 
         let mut notification_defs = Vec::new();
         let mut webhook_defs = Vec::new();
@@ -410,7 +434,8 @@ impl QefroRuntime {
                 events,
             )
             .with_operations(operations.clone())
-            .with_jobs(jobs.clone(), job_handlers.clone()),
+            .with_jobs(jobs.clone(), job_handlers.clone())
+            .with_identity(auth.clone()),
         );
         entities
             .events()
@@ -434,10 +459,6 @@ impl QefroRuntime {
             tools.register_operation(&binding.def);
         }
         let tools = Arc::new(tools);
-        let auth = Arc::new(AuthService::new(
-            pool.clone(),
-            self.config.jwt_secret.clone(),
-        ));
         let tenants = Arc::new(TenantService::new(pool.clone()));
         let installed_set = qefro_core::load_installed();
         let installed_apps: Vec<String> = manifests
@@ -450,6 +471,13 @@ impl QefroRuntime {
             .iter()
             .flat_map(|a| a.module.default_nav_slugs())
             .collect();
+        let mut default_hidden_entities: Vec<String> =
+            vec![qefro_core::PERSON_SLUG.into(), qefro_core::USER_SLUG.into()];
+        default_hidden_entities.extend(
+            self.apps
+                .iter()
+                .flat_map(|a| a.module.default_hidden_slugs()),
+        );
         let blob_store: Arc<dyn qefro_core::BlobStore> =
             Arc::new(LocalBlobStore::new(&self.config.storage_path));
         let blobs = Arc::new(BlobMetaStore::new(pool.clone()));
@@ -482,6 +510,7 @@ impl QefroRuntime {
             )),
             installed_apps,
             default_navigation,
+            default_hidden_entities,
             blob_store,
             blobs,
             saved_filters,

@@ -5,8 +5,8 @@
 //! can be discovered without modifying framework core.
 
 use crate::app::{AppManifest, NavItem};
-use crate::error::{QefroError, QefroResult};
 use crate::entity::EntityDef;
+use crate::error::{QefroError, QefroResult};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -70,7 +70,9 @@ impl AppFileManifest {
                 }
                 continue;
             }
-            self.dependencies.entry(name.clone()).or_insert_with(|| "*".into());
+            self.dependencies
+                .entry(name.clone())
+                .or_insert_with(|| "*".into());
         }
     }
 }
@@ -279,7 +281,9 @@ pub fn list_data_files(dir: &Path) -> QefroResult<Vec<PathBuf>> {
         return Ok(paths);
     }
     for entry in fs::read_dir(dir).map_err(|e| QefroError::internal(e.to_string()))? {
-        let path = entry.map_err(|e| QefroError::internal(e.to_string()))?.path();
+        let path = entry
+            .map_err(|e| QefroError::internal(e.to_string()))?
+            .path();
         let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
         if matches!(ext, "yaml" | "yml" | "json") {
             paths.push(path);
@@ -340,7 +344,9 @@ pub fn mark_installed(
 pub fn disable_app(name: &str) -> QefroResult<InstalledSet> {
     let mut set = load_installed();
     if !set.installed.iter().any(|n| n == name) {
-        return Err(QefroError::not_found(format!("app '{name}' is not installed")));
+        return Err(QefroError::not_found(format!(
+            "app '{name}' is not installed"
+        )));
     }
     if !set.disabled.iter().any(|n| n == name) {
         set.disabled.push(name.to_string());
@@ -356,7 +362,9 @@ pub fn disable_app(name: &str) -> QefroResult<InstalledSet> {
 pub fn enable_app(name: &str) -> QefroResult<InstalledSet> {
     let mut set = load_installed();
     if !set.installed.iter().any(|n| n == name) {
-        return Err(QefroError::not_found(format!("app '{name}' is not installed")));
+        return Err(QefroError::not_found(format!(
+            "app '{name}' is not installed"
+        )));
     }
     set.disabled.retain(|n| n != name);
     if let Some(rec) = set.records.get_mut(name) {

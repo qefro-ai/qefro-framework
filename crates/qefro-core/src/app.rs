@@ -154,6 +154,62 @@ impl AppModule {
             })
             .collect()
     }
+
+    /// Standalone entities omitted from this module's default navigation.
+    /// Empty when the module does not declare navigation, so other apps stay visible.
+    pub fn default_hidden_slugs(&self) -> Vec<String> {
+        if self.navigation.is_empty() {
+            return Vec::new();
+        }
+        let nav_slugs: std::collections::HashSet<String> =
+            self.default_nav_slugs().into_iter().collect();
+        let nav_names: std::collections::HashSet<&str> = self
+            .navigation
+            .iter()
+            .map(|item| item.entity.as_str())
+            .collect();
+        self.entities
+            .iter()
+            .filter(|entity| entity.standalone && entity.child_of.is_none())
+            .filter(|entity| {
+                !nav_slugs.contains(&entity.slug)
+                    && !nav_names.contains(entity.name.as_str())
+                    && !nav_names.contains(entity.slug.as_str())
+            })
+            .map(|entity| entity.slug.clone())
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::entity::EntityDef;
+
+    #[test]
+    fn hidden_slugs_are_standalone_entities_not_in_nav() {
+        let module = AppModule::new("shop")
+            .nav(NavItem::new("Orders", "Order"))
+            .entity(EntityDef::new("Order").build())
+            .entity(EntityDef::new("Product").build())
+            .entity(
+                EntityDef::new("OrderItem")
+                    .child_of("Order", "items")
+                    .build(),
+            )
+            .build();
+        assert_eq!(module.default_nav_slugs(), vec!["orders"]);
+        assert_eq!(module.default_hidden_slugs(), vec!["products"]);
+    }
+
+    #[test]
+    fn no_navigation_hides_nothing() {
+        let module = AppModule::new("shop")
+            .entity(EntityDef::new("Order").build())
+            .build();
+        assert!(module.default_nav_slugs().is_empty());
+        assert!(module.default_hidden_slugs().is_empty());
+    }
 }
 
 pub struct AppModuleBuilder {

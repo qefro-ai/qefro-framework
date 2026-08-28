@@ -12,7 +12,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::StreamExt;
-use qefro_core::{OpContext, QefroError, ROLE_PUBLIC, RateLimiter};
+use qefro_core::{OpContext, QefroError, RateLimiter, ROLE_PUBLIC};
 use qefro_db::{signed_headers, ImportMapping};
 use qefro_permissions::Action;
 use serde::Deserialize;
@@ -24,14 +24,20 @@ use uuid::Uuid;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/v1/settings/{slug}", get(get_settings).patch(patch_settings))
+        .route(
+            "/api/v1/settings/{slug}",
+            get(get_settings).patch(patch_settings),
+        )
         .route("/api/v1/search", get(global_search))
         .route("/api/v1/notifications", get(list_notifications))
         .route("/api/v1/notifications/{id}/read", post(read_notification))
         .route("/api/v1/webhooks", get(list_webhooks))
         .route("/api/v1/webhooks/{name}/deliveries", get(list_deliveries))
         .route("/api/v1/webhooks/{name}/test", post(test_webhook))
-        .route("/api/v1/attachments/{id}", get(get_attachment).delete(delete_attachment))
+        .route(
+            "/api/v1/attachments/{id}",
+            get(get_attachment).delete(delete_attachment),
+        )
         .route("/api/v1/realtime", get(realtime))
         .route(
             "/api/v1/{slug}/{id}/attachments",
@@ -42,11 +48,10 @@ pub fn router() -> Router<AppState> {
 }
 
 pub fn public_router() -> Router<AppState> {
-    Router::new()
-        .route(
-            "/api/v1/public/{tenant}/{form}",
-            get(public_form_meta).post(public_form_submit),
-        )
+    Router::new().route(
+        "/api/v1/public/{tenant}/{form}",
+        get(public_form_meta).post(public_form_submit),
+    )
 }
 
 async fn get_settings(
@@ -55,7 +60,9 @@ async fn get_settings(
     Path(slug): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let entity = state.entities.entity_by_slug(&slug)?;
-    Ok(Json(state.entities.get_singleton(&ctx, &entity.name).await?))
+    Ok(Json(
+        state.entities.get_singleton(&ctx, &entity.name).await?,
+    ))
 }
 
 async fn patch_settings(
@@ -170,7 +177,13 @@ async fn test_webhook(
     let body = json!({ "event": "webhook.test", "ok": true });
     let bytes = serde_json::to_vec(&body).unwrap_or_default();
     let ts = chrono::Utc::now().timestamp();
-    let headers = signed_headers(hook.secret_env.as_deref(), "webhook.test", event_id, ts, &bytes);
+    let headers = signed_headers(
+        hook.secret_env.as_deref(),
+        "webhook.test",
+        event_id,
+        ts,
+        &bytes,
+    );
     Ok(Json(json!({
         "webhook": hook.name,
         "target": hook.target,
@@ -360,7 +373,9 @@ async fn realtime(
                     return None;
                 }
             }
-            Some(Ok(Event::default().json_data(msg.payload).unwrap_or_else(|_| Event::default())))
+            Some(Ok(Event::default()
+                .json_data(msg.payload)
+                .unwrap_or_else(|_| Event::default())))
         }
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
@@ -405,11 +420,7 @@ async fn public_form_submit(
     let (ctx, entity, public) = resolve_public(&state, &tenant, &form).await?;
     if let Some(obj) = body.as_object_mut() {
         obj.remove("tenant_id");
-        let allowed: Vec<_> = obj
-            .keys()
-            .filter(|k| !public.allows(k))
-            .cloned()
-            .collect();
+        let allowed: Vec<_> = obj.keys().filter(|k| !public.allows(k)).cloned().collect();
         for k in allowed {
             obj.remove(&k);
         }
@@ -483,10 +494,7 @@ impl qefro_db::JobHandler for WebhookDeliverJob {
     }
 
     async fn run(&self, ctx: &OpContext, payload: &Value) -> qefro_core::QefroResult<()> {
-        let target = payload
-            .get("target")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let target = payload.get("target").and_then(|v| v.as_str()).unwrap_or("");
         let event = payload.get("event").and_then(|v| v.as_str()).unwrap_or("");
         let event_id = payload
             .get("event_id")

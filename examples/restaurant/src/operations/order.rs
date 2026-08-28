@@ -10,7 +10,9 @@ pub struct ConfirmOrder;
 impl OperationHandler for ConfirmOrder {
     async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> QefroResult<Value> {
         let id = ctx.record_id()?;
-        let items = ctx.list("OrderItem", "order_id", json!(id.to_string())).await?;
+        let items = ctx
+            .list("OrderItem", "order_id", json!(id.to_string()))
+            .await?;
         if items.is_empty() {
             return Err(OperationCtx::fail(
                 "empty_order",
@@ -22,7 +24,9 @@ impl OperationHandler for ConfirmOrder {
                 .get("menu_item_id")
                 .and_then(|v| v.as_str())
                 .and_then(|s| Uuid::parse_str(s).ok())
-                .ok_or_else(|| OperationCtx::fail("invalid_item", "Order item is missing a menu item"))?;
+                .ok_or_else(|| {
+                    OperationCtx::fail("invalid_item", "Order item is missing a menu item")
+                })?;
             let menu = ctx.get("MenuItem", menu_id).await?;
             if menu.get("available") == Some(&json!(false)) {
                 return Err(OperationCtx::fail(

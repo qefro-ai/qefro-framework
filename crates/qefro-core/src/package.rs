@@ -148,7 +148,12 @@ pub fn content_sha256(files: &[(String, Vec<u8>)]) -> String {
     hex::encode(hasher.finalize())
 }
 
-pub fn write_package(root: &Path, dest: &Path, name: &str, version: &str) -> QefroResult<PackageMeta> {
+pub fn write_package(
+    root: &Path,
+    dest: &Path,
+    name: &str,
+    version: &str,
+) -> QefroResult<PackageMeta> {
     let files = collect_package_files(root)?;
     if !files.iter().any(|(n, _)| n == "app.toml") {
         return Err(QefroError::bad_request("package is missing app.toml"));
@@ -165,8 +170,8 @@ pub fn write_package(root: &Path, dest: &Path, name: &str, version: &str) -> Qef
         metadata_schema: crate::version::METADATA_SCHEMA_VERSION,
         ui_schema: crate::ui::UI_SCHEMA_VERSION.into(),
     };
-    let meta_json = serde_json::to_vec_pretty(&meta)
-        .map_err(|e| QefroError::internal(e.to_string()))?;
+    let meta_json =
+        serde_json::to_vec_pretty(&meta).map_err(|e| QefroError::internal(e.to_string()))?;
 
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|e| QefroError::internal(e.to_string()))?;
@@ -196,9 +201,8 @@ pub fn write_package(root: &Path, dest: &Path, name: &str, version: &str) -> Qef
 }
 
 pub fn inspect_package(path: &Path) -> QefroResult<(PackageMeta, Vec<(String, Vec<u8>)>)> {
-    let file = File::open(path).map_err(|e| {
-        QefroError::bad_request(format!("cannot open {}: {e}", path.display()))
-    })?;
+    let file = File::open(path)
+        .map_err(|e| QefroError::bad_request(format!("cannot open {}: {e}", path.display())))?;
     let mut zip = ZipArchive::new(file)
         .map_err(|e| QefroError::bad_request(format!("invalid .qefro package: {e}")))?;
     if zip.len() > MAX_FILES + 1 {
@@ -219,17 +223,26 @@ pub fn inspect_package(path: &Path) -> QefroResult<(PackageMeta, Vec<(String, Ve
         let rel = Path::new(&name);
         assert_safe_relative(rel)?;
         if !seen.insert(name.clone()) {
-            return Err(QefroError::bad_request(format!("duplicate package file '{name}'")));
+            return Err(QefroError::bad_request(format!(
+                "duplicate package file '{name}'"
+            )));
         }
         if entry.size() > MAX_FILE_BYTES {
             return Err(QefroError::bad_request(format!("file too large: {name}")));
         }
         let compressed = entry.compressed_size();
-        if compressed > 0 && entry.size() > compressed.saturating_mul(100) && entry.size() > 1_000_000 {
-            return Err(QefroError::bad_request(format!("refusing zip-bomb entry: {name}")));
+        if compressed > 0
+            && entry.size() > compressed.saturating_mul(100)
+            && entry.size() > 1_000_000
+        {
+            return Err(QefroError::bad_request(format!(
+                "refusing zip-bomb entry: {name}"
+            )));
         }
         if name != PACKAGE_META && !allowed_package_member(&name) {
-            return Err(QefroError::bad_request(format!("unexpected package file '{name}'")));
+            return Err(QefroError::bad_request(format!(
+                "unexpected package file '{name}'"
+            )));
         }
         let mut buf = Vec::new();
         entry
@@ -240,16 +253,17 @@ pub fn inspect_package(path: &Path) -> QefroResult<(PackageMeta, Vec<(String, Ve
             return Err(QefroError::bad_request("package exceeds size limit"));
         }
         if name == PACKAGE_META {
-            meta = Some(
-                serde_json::from_slice(&buf)
-                    .map_err(|e| QefroError::bad_request(format!("invalid {PACKAGE_META}: {e}")))?,
-            );
+            meta =
+                Some(serde_json::from_slice(&buf).map_err(|e| {
+                    QefroError::bad_request(format!("invalid {PACKAGE_META}: {e}"))
+                })?);
         } else {
             files.push((name, buf));
         }
     }
     files.sort_by(|a, b| a.0.cmp(&b.0));
-    let meta = meta.ok_or_else(|| QefroError::bad_request("package is missing qefro-package.json"))?;
+    let meta =
+        meta.ok_or_else(|| QefroError::bad_request("package is missing qefro-package.json"))?;
     if meta.format != PACKAGE_FORMAT {
         return Err(QefroError::bad_request(format!(
             "unsupported package format {}",
@@ -298,7 +312,9 @@ fn allowed_package_member(name: &str) -> bool {
     if PACK_FILES.iter().any(|f| *f == name) {
         return true;
     }
-    PACK_DIRS.iter().any(|d| name == *d || name.starts_with(&format!("{d}/")))
+    PACK_DIRS
+        .iter()
+        .any(|d| name == *d || name.starts_with(&format!("{d}/")))
 }
 
 struct HashSetLite {

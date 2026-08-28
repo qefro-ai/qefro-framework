@@ -7,13 +7,13 @@
 use crate::audit::AuditLogger;
 use crate::schema::apply_schema;
 use chrono::{DateTime, Utc};
+use qefro_core::studio::{apply_field_ui_patch, is_production, validate_formula_on_entity};
+use qefro_core::ui::DashboardDef;
 use qefro_core::{
     classify_entity_change, detect_cycles, entity_referrers, find_app_root, snake_case,
     ChangeAnalysis, EntityDef, EntityRegistry, EntityViews, FieldDef, FieldUiPatch, OpContext,
     PrintFormat, QefroError, QefroResult, ReportDef, SchemaImpact, StudioCatalog,
 };
-use qefro_core::studio::{apply_field_ui_patch, is_production, validate_formula_on_entity};
-use qefro_core::ui::DashboardDef;
 use qefro_permissions::{PermissionGrant, PermissionRegistry};
 use qefro_workflow::WorkflowDef;
 use serde::{Deserialize, Serialize};
@@ -120,7 +120,11 @@ impl MetadataChangeService {
         let analysis = self.analyze(&req.kind, &req.target, &req.payload)?;
         let id = Uuid::new_v4();
         let summary = if req.summary.is_empty() {
-            analysis.diff.first().cloned().unwrap_or_else(|| req.kind.clone())
+            analysis
+                .diff
+                .first()
+                .cloned()
+                .unwrap_or_else(|| req.kind.clone())
         } else {
             req.summary
         };
@@ -198,7 +202,12 @@ impl MetadataChangeService {
         .map_err(|e| QefroError::database(e.to_string()))
     }
 
-    pub fn analyze(&self, kind: &str, target: &str, payload: &Value) -> QefroResult<ChangeAnalysis> {
+    pub fn analyze(
+        &self,
+        kind: &str,
+        target: &str,
+        payload: &Value,
+    ) -> QefroResult<ChangeAnalysis> {
         match kind {
             "entity" | "entity.replace" => {
                 let after: EntityDef = serde_json::from_value(payload.clone())
@@ -221,7 +230,9 @@ impl MetadataChangeService {
             "entity.field.ui" => {
                 let mut analysis = ChangeAnalysis::safe();
                 if let Some(name) = payload.get("name").and_then(|v| v.as_str()) {
-                    analysis.diff.push(format!("~ {target}.{name} presentation"));
+                    analysis
+                        .diff
+                        .push(format!("~ {target}.{name} presentation"));
                 }
                 Ok(analysis)
             }
@@ -250,7 +261,12 @@ impl MetadataChangeService {
         }
     }
 
-    pub fn validate_payload(&self, kind: &str, target: &str, payload: &Value) -> QefroResult<ChangeAnalysis> {
+    pub fn validate_payload(
+        &self,
+        kind: &str,
+        target: &str,
+        payload: &Value,
+    ) -> QefroResult<ChangeAnalysis> {
         let analysis = self.analyze(kind, target, payload)?;
         match kind {
             "entity" | "entity.replace" => {
@@ -329,11 +345,7 @@ impl MetadataChangeService {
         Ok(analysis)
     }
 
-    pub async fn publish(
-        &self,
-        ctx: &OpContext,
-        req: PublishRequest,
-    ) -> QefroResult<Value> {
+    pub async fn publish(&self, ctx: &OpContext, req: PublishRequest) -> QefroResult<Value> {
         let (kind, target, payload, summary, draft_id) = if let Some(id) = req.draft_id {
             let draft = self.get_draft(ctx, id).await?;
             (
@@ -344,13 +356,7 @@ impl MetadataChangeService {
                 Some(id),
             )
         } else {
-            (
-                req.kind,
-                req.target,
-                req.payload,
-                req.summary,
-                None,
-            )
+            (req.kind, req.target, req.payload, req.summary, None)
         };
         if kind.is_empty() || target.is_empty() {
             return Err(QefroError::bad_request("kind and target are required"));
@@ -392,7 +398,14 @@ impl MetadataChangeService {
         let action = format!("{kind}.updated");
         let _ = self
             .audit
-            .record(ctx, "studio", None, &action, before.as_ref(), after.as_ref())
+            .record(
+                ctx,
+                "studio",
+                None,
+                &action,
+                before.as_ref(),
+                after.as_ref(),
+            )
             .await;
         Ok(json!({
             "kind": kind,
@@ -451,12 +464,15 @@ impl MetadataChangeService {
 
     fn snapshot(&self, kind: &str, target: &str) -> Option<Value> {
         match kind {
-            "entity" | "entity.replace" | "entity.field" | "entity.field.upsert" | "entity.field.ui"
-            | "entity.views" => {
-                self.registry
-                    .try_get(target)
-                    .and_then(|e| serde_json::to_value(&*e).ok())
-            }
+            "entity"
+            | "entity.replace"
+            | "entity.field"
+            | "entity.field.upsert"
+            | "entity.field.ui"
+            | "entity.views" => self
+                .registry
+                .try_get(target)
+                .and_then(|e| serde_json::to_value(&*e).ok()),
             "workflow" => self
                 .workflows
                 .for_entity(target)
@@ -470,7 +486,10 @@ impl MetadataChangeService {
                     .collect();
                 serde_json::to_value(grants).ok()
             }
-            "report" => self.catalog.report(target).and_then(|r| serde_json::to_value(r).ok()),
+            "report" => self
+                .catalog
+                .report(target)
+                .and_then(|r| serde_json::to_value(r).ok()),
             "dashboard" => self
                 .catalog
                 .dashboard(target)
@@ -518,11 +537,14 @@ impl MetadataChangeService {
             "permissions" => {
                 let grants: Vec<PermissionGrant> = serde_json::from_value(payload.clone())
                     .or_else(|_| {
-                        payload.get("grants").cloned().ok_or_else(|| {
-                            QefroError::bad_request("permissions require grants")
-                        }).and_then(|v| {
-                            serde_json::from_value(v).map_err(|e| QefroError::bad_request(e.to_string()))
-                        })
+                        payload
+                            .get("grants")
+                            .cloned()
+                            .ok_or_else(|| QefroError::bad_request("permissions require grants"))
+                            .and_then(|v| {
+                                serde_json::from_value(v)
+                                    .map_err(|e| QefroError::bad_request(e.to_string()))
+                            })
                     })?;
                 self.permissions.overlay_entity(target, grants);
             }
@@ -690,9 +712,9 @@ fn analyze_views_overlay(target: &str, payload: &Value) -> QefroResult<ChangeAna
 }
 
 fn reject_non_presentation_view_keys(payload: &Value) -> QefroResult<()> {
-    let obj = payload.as_object().ok_or_else(|| {
-        QefroError::bad_request("entity.views payload must be an object")
-    })?;
+    let obj = payload
+        .as_object()
+        .ok_or_else(|| QefroError::bad_request("entity.views payload must be an object"))?;
     for key in obj.keys() {
         if VIEW_OVERLAY_REJECT.iter().any(|k| k == key) {
             return Err(QefroError::bad_request(format!(

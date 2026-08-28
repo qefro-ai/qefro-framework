@@ -267,9 +267,8 @@ impl WebhookDef {
 
 /// HMAC-SHA256 over `{timestamp}.{event_id}.{body}`.
 pub fn webhook_signature(secret: &str, timestamp: i64, event_id: &str, body: &[u8]) -> String {
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap_or_else(|_| {
-        HmacSha256::new_from_slice(b"qefro").expect("hmac key")
-    });
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+        .unwrap_or_else(|_| HmacSha256::new_from_slice(b"qefro").expect("hmac key"));
     mac.update(timestamp.to_string().as_bytes());
     mac.update(b".");
     mac.update(event_id.as_bytes());

@@ -6,11 +6,13 @@ use crate::operation::{
 };
 use crate::outbox::Outbox;
 use crate::repository::{record_id, EntityRepository, Page};
-use qefro_core::{
-    canonicalize_datetime, sanitize_html, validate_record, EntityRegistry, FieldError, FieldType,
-    HookRegistry, OpContext, OperationDef, QefroError, QefroResult,
-};
 use chrono::Utc;
+use qefro_auth::AuthService;
+use qefro_core::{
+    canonicalize_datetime, is_person_link_field, person_backref_field, sanitize_html,
+    strip_secrets, validate_record, EntityRegistry, FieldError, FieldType, HookRegistry, OpContext,
+    OperationDef, QefroError, QefroResult, PERSON_ENTITY, PERSON_LINK_FIELD, USER_ENTITY,
+};
 use qefro_events::{DomainEvent, EventBus, InProcessEventBus};
 use qefro_permissions::{Action, PermissionRegistry};
 use qefro_search::Query;
@@ -36,6 +38,7 @@ pub struct EntityService {
     jobs: Arc<JobQueue>,
     job_handlers: Arc<JobRegistry>,
     outbox: Outbox,
+    identity: Option<Arc<AuthService>>,
 }
 
 impl EntityService {
@@ -59,6 +62,7 @@ impl EntityService {
             events,
             operations: Arc::new(OperationRegistry::new()),
             job_handlers: Arc::new(JobRegistry::new()),
+            identity: None,
         }
     }
 
@@ -71,6 +75,15 @@ impl EntityService {
         self.jobs = jobs;
         self.job_handlers = handlers;
         self
+    }
+
+    pub fn with_identity(mut self, identity: Arc<AuthService>) -> Self {
+        self.identity = Some(identity);
+        self
+    }
+
+    pub(crate) fn identity_service(&self) -> Option<&AuthService> {
+        self.identity.as_deref()
     }
 
     pub fn registry(&self) -> &EntityRegistry {
@@ -202,10 +215,14 @@ impl EntityService {
         self.ensure_app(ctx, &entity)?;
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::List)?;
+        if entity.name == USER_ENTITY {
+            return self.list_users(ctx, query).await;
+        }
         let query = query.sanitize(&entity)?;
         let mut page = self.repo.list(&entity, ctx, &query).await?;
         for item in &mut page.items {
             coerce_numeric_json(&entity, item);
+            strip_secrets(Some(&entity), item);
             self.strip_forbidden_fields(ctx, &entity, item);
         }
         self.expand_many_to_one_batch(ctx, &entity, &mut page.items)
@@ -221,6 +238,10 @@ impl EntityService {
         self.ensure_app(ctx, &entity)?;
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Read)?;
+        if entity.name == USER_ENTITY {
+            let record = self.get_user(ctx, id).await?;
+            return self.present(ctx, &entity, record).await;
+        }
         let record = self.repo.get(&entity, ctx, id).await?;
         self.present(ctx, &entity, record).await
     }
@@ -235,6 +256,9 @@ impl EntityService {
         self.ensure_app(ctx, &entity)?;
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Create)?;
+        if entity.name == USER_ENTITY {
+            return self.create_user(ctx, data).await;
+        }
         if entity.singleton {
             if self.repo.get_singleton(&entity, ctx).await?.is_some() {
                 return Err(QefroError::conflict(format!(
@@ -245,6 +269,9 @@ impl EntityService {
         }
         reject_client_tenant(&data)?;
         self.reject_forbidden_writes(ctx, &entity, &data)?;
+        if entity.name == PERSON_ENTITY {
+            self.link_person_account(ctx, &mut data).await?;
+        }
         let children = extract_children(&entity, &mut data);
         strip_computed(&entity, &mut data);
         prepare_record(&entity, &mut data, ctx);
@@ -322,7 +349,15 @@ impl EntityService {
         if entity.audit {
             if let Err(e) = self
                 .audit
-                .record_tx(&mut tx, ctx, &entity.name, Some(id), "create", None, Some(&created))
+                .record_tx(
+                    &mut tx,
+                    ctx,
+                    &entity.name,
+                    Some(id),
+                    "create",
+                    None,
+                    Some(&created),
+                )
                 .await
             {
                 let _ = tx.rollback().await;
@@ -352,6 +387,9 @@ impl EntityService {
         self.ensure_app(ctx, &entity)?;
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Update)?;
+        if entity.name == USER_ENTITY {
+            return self.update_user(ctx, id, patch).await;
+        }
         reject_client_tenant(&patch)?;
         self.reject_forbidden_writes(ctx, &entity, &patch)?;
         let children = extract_children(&entity, &mut patch);
@@ -360,10 +398,7 @@ impl EntityService {
         sanitize_values(&entity, &mut patch);
         let current = self.repo.get(&entity, ctx, id).await?;
         if let Some(doc) = &entity.document {
-            let status = current
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let status = current.get("status").and_then(|v| v.as_str()).unwrap_or("");
             if doc.is_locked(status) {
                 self.reject_locked_writes(&entity, &patch, &children)?;
             }
@@ -461,6 +496,9 @@ impl EntityService {
         self.ensure_app(ctx, &entity)?;
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Delete)?;
+        if entity.name == USER_ENTITY {
+            return self.delete_user(ctx, id).await;
+        }
         let current = self.repo.get(&entity, ctx, id).await?;
         self.hooks
             .before_delete(ctx, &entity.name, &current)
@@ -489,7 +527,15 @@ impl EntityService {
         if entity.audit {
             if let Err(e) = self
                 .audit
-                .record_tx(&mut tx, ctx, &entity.name, Some(id), "delete", Some(&current), None)
+                .record_tx(
+                    &mut tx,
+                    ctx,
+                    &entity.name,
+                    Some(id),
+                    "delete",
+                    Some(&current),
+                    None,
+                )
                 .await
             {
                 let _ = tx.rollback().await;
@@ -573,6 +619,7 @@ impl EntityService {
         mut record: Value,
     ) -> QefroResult<Value> {
         coerce_numeric_json(entity, &mut record);
+        strip_secrets(Some(entity), &mut record);
         self.expand_many_to_one(ctx, entity, &mut record).await?;
         self.expand_one_to_many(ctx, entity, &mut record).await?;
         self.expand_child_tables(ctx, entity, &mut record).await?;
@@ -644,7 +691,9 @@ impl EntityService {
             .into_iter()
             .map(|mut d| {
                 if let Some(meta) = entity.actions.iter().find(|a| {
-                    a.name == d.name || a.operation == d.name || a.name == d.workflow_transition.clone().unwrap_or_default()
+                    a.name == d.name
+                        || a.operation == d.name
+                        || a.name == d.workflow_transition.clone().unwrap_or_default()
                 }) {
                     if !meta.label.is_empty() {
                         d.label = meta.label.clone();
@@ -700,19 +749,13 @@ impl EntityService {
         let mut links = Vec::new();
         let mut seen = std::collections::HashSet::new();
         let mut defs = entity.links.clone();
-        for field in &entity.fields {
-            if let Some(rel) = &field.relation {
-                if rel.kind == qefro_core::RelationKind::OneToMany {
-                    if let Some(inverse) = &rel.inverse_field {
-                        if seen.insert(rel.target_entity.clone()) {
-                            defs.push(qefro_core::LinkDef::new(
-                                field.ui.label.clone(),
-                                rel.target_entity.clone(),
-                                inverse.clone(),
-                            ));
-                        }
-                    }
-                }
+        for spec in self.one_to_many_specs(entity) {
+            if seen.insert(spec.target.name.clone()) {
+                defs.push(qefro_core::LinkDef::new(
+                    spec.label.clone(),
+                    spec.target.name.clone(),
+                    spec.inverse.clone(),
+                ));
             }
         }
         for link in defs {
@@ -722,7 +765,11 @@ impl EntityService {
             let Ok(target) = self.registry.get(&link.entity) else {
                 continue;
             };
-            if self.permissions.check(ctx, &target.name, Action::List).is_err() {
+            if self
+                .permissions
+                .check(ctx, &target.name, Action::List)
+                .is_err()
+            {
                 continue;
             }
             let mut query = qefro_search::Query::default();
@@ -835,7 +882,10 @@ impl EntityService {
                 errors.push(FieldError::new(
                     key,
                     "locked",
-                    format!("{} cannot be edited in a locked document state", field.label),
+                    format!(
+                        "{} cannot be edited in a locked document state",
+                        field.label
+                    ),
                 ));
             }
         }
@@ -849,7 +899,10 @@ impl EntityService {
             errors.push(FieldError::new(
                 name,
                 "locked",
-                format!("{} cannot be edited in a locked document state", field.label),
+                format!(
+                    "{} cannot be edited in a locked document state",
+                    field.label
+                ),
             ));
         }
         if errors.is_empty() {
@@ -907,7 +960,12 @@ impl EntityService {
             .ok_or_else(|| QefroError::not_found(format!("entity '{slug}' not found")))
     }
 
-    fn workflow_json(&self, ctx: &OpContext, entity: &qefro_core::EntityDef, record: &Value) -> Value {
+    fn workflow_json(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        record: &Value,
+    ) -> Value {
         let Some(wf) = self.workflows.for_entity(&entity.name) else {
             return json!(null);
         };
@@ -959,18 +1017,20 @@ impl EntityService {
             let Ok(target) = self.registry.get(&rel.target_entity) else {
                 continue;
             };
-            if self.permissions.check(ctx, &target.name, Action::Read).is_err() {
+            if self
+                .permissions
+                .check(ctx, &target.name, Action::Read)
+                .is_err()
+            {
                 continue;
             }
             if let Ok(related) = self.repo.get(&target, ctx, id).await {
+                let nested = self
+                    .nested_relation_expansions(ctx, &target, &related)
+                    .await?;
                 expansions.insert(
                     field.name.clone(),
-                    json!({
-                        "id": id,
-                        "label": target.display_label(&related),
-                        "slug": target.slug,
-                        "entity": target.name,
-                    }),
+                    relation_expansion(&target, id, &related, nested),
                 );
             }
         }
@@ -998,7 +1058,11 @@ impl EntityService {
             let Ok(target) = self.registry.get(&rel.target_entity) else {
                 continue;
             };
-            if self.permissions.check(ctx, &target.name, Action::Read).is_err() {
+            if self
+                .permissions
+                .check(ctx, &target.name, Action::Read)
+                .is_err()
+            {
                 continue;
             }
             let mut ids = HashSet::new();
@@ -1013,31 +1077,30 @@ impl EntityService {
                 .repo
                 .list_by_ids(&target, ctx, &ids.into_iter().collect::<Vec<_>>())
                 .await?;
+            let nested_by_id = self
+                .nested_relation_expansions_batch(ctx, &target, &fetched)
+                .await?;
             let mut labels = std::collections::HashMap::new();
             for related in fetched {
                 if let Ok(id) = record_id(&related) {
-                    labels.insert(id, (target.display_label(&related), related));
+                    labels.insert(id, related);
                 }
             }
             for record in records.iter_mut() {
                 let Some(id_str) = record.get(&field.name).and_then(|v| v.as_str()) else {
                     continue;
                 };
-                let Ok(id) = Uuid::parse_str(id_str) else { continue };
-                if let Some((label, _)) = labels.get(&id) {
+                let Ok(id) = Uuid::parse_str(id_str) else {
+                    continue;
+                };
+                if let Some(related) = labels.get(&id) {
                     if let Some(obj) = record.as_object_mut() {
-                        let expanded = obj
-                            .entry("_expanded")
-                            .or_insert_with(|| json!({}));
+                        let expanded = obj.entry("_expanded").or_insert_with(|| json!({}));
                         if let Some(map) = expanded.as_object_mut() {
+                            let nested = nested_by_id.get(&id).cloned().unwrap_or_default();
                             map.insert(
                                 field.name.clone(),
-                                json!({
-                                    "id": id,
-                                    "label": label,
-                                    "slug": target.slug,
-                                    "entity": target.name,
-                                }),
+                                relation_expansion(&target, id, related, nested),
                             );
                         }
                     }
@@ -1053,36 +1116,35 @@ impl EntityService {
         entity: &qefro_core::EntityDef,
         record: &mut Value,
     ) -> QefroResult<()> {
-        use qefro_core::RelationKind;
         use qefro_search::{Filter, Query};
         let Some(id) = record.get("id").and_then(|v| v.as_str()) else {
             return Ok(());
         };
         let mut related = serde_json::Map::new();
-        for field in &entity.fields {
-            let Some(rel) = &field.relation else { continue };
-            if rel.kind != RelationKind::OneToMany {
-                continue;
-            }
-            let Some(inverse) = &rel.inverse_field else { continue };
-            let Ok(target) = self.registry.get(&rel.target_entity) else {
-                continue;
-            };
-            if self.permissions.check(ctx, &target.name, Action::List).is_err() {
+        for spec in self.one_to_many_specs(entity) {
+            if self
+                .permissions
+                .check(ctx, &spec.target.name, Action::List)
+                .is_err()
+            {
                 continue;
             }
             let mut query = Query::default();
             query.page_size = 50;
             query.filters.push(Filter::Eq {
-                field: inverse.clone(),
+                field: spec.inverse.clone(),
                 value: json!(id),
             });
-            if let Ok(page) = self.repo.list(&target, ctx, &query).await {
+            if let Ok(mut page) = self.repo.list(&spec.target, ctx, &query).await {
+                for item in &mut page.items {
+                    strip_secrets(Some(&spec.target), item);
+                }
                 related.insert(
-                    field.name.clone(),
+                    spec.name.clone(),
                     json!({
-                        "entity": target.name,
-                        "slug": target.slug,
+                        "entity": spec.target.name,
+                        "slug": spec.target.slug,
+                        "label": spec.label,
                         "items": page.items,
                         "total": page.total,
                     }),
@@ -1097,6 +1159,163 @@ impl EntityService {
         Ok(())
     }
 
+    fn one_to_many_specs(&self, entity: &qefro_core::EntityDef) -> Vec<RelatedSpec> {
+        use qefro_core::RelationKind;
+        let mut specs = Vec::new();
+        let mut seen_targets = std::collections::HashSet::new();
+        for field in &entity.fields {
+            let Some(rel) = &field.relation else { continue };
+            if rel.kind != RelationKind::OneToMany {
+                continue;
+            }
+            let Some(inverse) = &rel.inverse_field else {
+                continue;
+            };
+            let Ok(target) = self.registry.get(&rel.target_entity) else {
+                continue;
+            };
+            if !seen_targets.insert(target.name.clone()) {
+                continue;
+            }
+            let label = if field.ui.label.is_empty() {
+                field.label.clone()
+            } else {
+                field.ui.label.clone()
+            };
+            specs.push(RelatedSpec {
+                name: field.name.clone(),
+                label,
+                target,
+                inverse: inverse.clone(),
+            });
+        }
+        if entity.name == PERSON_ENTITY {
+            for other in self.registry.list() {
+                if other.name == PERSON_ENTITY {
+                    continue;
+                }
+                if seen_targets.contains(&other.name) {
+                    continue;
+                }
+                if !other.fields.iter().any(is_person_link_field) {
+                    continue;
+                }
+                let field = person_backref_field(&other);
+                seen_targets.insert(other.name.clone());
+                specs.push(RelatedSpec {
+                    name: field.name,
+                    label: field.label,
+                    target: other,
+                    inverse: PERSON_LINK_FIELD.into(),
+                });
+            }
+        }
+        specs
+    }
+
+    async fn nested_relation_expansions(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        record: &Value,
+    ) -> QefroResult<serde_json::Map<String, Value>> {
+        use qefro_core::RelationKind;
+        let mut nested = serde_json::Map::new();
+        for field in &entity.fields {
+            let Some(rel) = &field.relation else { continue };
+            if rel.kind != RelationKind::ManyToOne {
+                continue;
+            }
+            let Some(id_str) = record.get(&field.name).and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Ok(id) = Uuid::parse_str(id_str) else {
+                continue;
+            };
+            let Ok(target) = self.registry.get(&rel.target_entity) else {
+                continue;
+            };
+            if self
+                .permissions
+                .check(ctx, &target.name, Action::Read)
+                .is_err()
+            {
+                continue;
+            }
+            if let Ok(related) = self.repo.get(&target, ctx, id).await {
+                nested.insert(
+                    field.name.clone(),
+                    relation_expansion(&target, id, &related, serde_json::Map::new()),
+                );
+            }
+        }
+        Ok(nested)
+    }
+
+    async fn nested_relation_expansions_batch(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        records: &[Value],
+    ) -> QefroResult<std::collections::HashMap<Uuid, serde_json::Map<String, Value>>> {
+        use qefro_core::RelationKind;
+        use std::collections::{HashMap, HashSet};
+        let mut nested_by_id: HashMap<Uuid, serde_json::Map<String, Value>> = HashMap::new();
+        for field in &entity.fields {
+            let Some(rel) = &field.relation else { continue };
+            if rel.kind != RelationKind::ManyToOne {
+                continue;
+            }
+            let Ok(target) = self.registry.get(&rel.target_entity) else {
+                continue;
+            };
+            if self
+                .permissions
+                .check(ctx, &target.name, Action::Read)
+                .is_err()
+            {
+                continue;
+            }
+            let mut nested_ids = HashSet::new();
+            let mut owners: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+            for related in records {
+                let Ok(owner_id) = record_id(related) else {
+                    continue;
+                };
+                let Some(id_str) = related.get(&field.name).and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Ok(nid) = Uuid::parse_str(id_str) else {
+                    continue;
+                };
+                nested_ids.insert(nid);
+                owners.entry(nid).or_default().push(owner_id);
+            }
+            if nested_ids.is_empty() {
+                continue;
+            }
+            let fetched = self
+                .repo
+                .list_by_ids(&target, ctx, &nested_ids.into_iter().collect::<Vec<_>>())
+                .await?;
+            for nested_row in fetched {
+                let Ok(nid) = record_id(&nested_row) else {
+                    continue;
+                };
+                let exp = relation_expansion(&target, nid, &nested_row, serde_json::Map::new());
+                if let Some(owner_ids) = owners.get(&nid) {
+                    for owner in owner_ids {
+                        nested_by_id
+                            .entry(*owner)
+                            .or_default()
+                            .insert(field.name.clone(), exp.clone());
+                    }
+                }
+            }
+        }
+        Ok(nested_by_id)
+    }
+
     async fn expand_child_tables(
         &self,
         ctx: &OpContext,
@@ -1104,7 +1323,11 @@ impl EntityService {
         record: &mut Value,
     ) -> QefroResult<()> {
         use qefro_core::RelationKind;
-        let Some(id) = record.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()) else {
+        let Some(id) = record
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+        else {
             return Ok(());
         };
         for field in &entity.fields {
@@ -1475,9 +1698,10 @@ impl EntityService {
             card.kind.as_str()
         };
         if matches!(kind, "chart" | "status_breakdown") {
-            let group_by = card.group_by.as_deref().ok_or_else(|| {
-                QefroError::bad_request("chart cards require group_by")
-            })?;
+            let group_by = card
+                .group_by
+                .as_deref()
+                .ok_or_else(|| QefroError::bad_request("chart cards require group_by"))?;
             let series = self
                 .repo
                 .aggregate_group(&entity, ctx, &query, group_by)
@@ -1529,6 +1753,133 @@ impl EntityService {
         }))
     }
 
+    fn identity(&self) -> QefroResult<&AuthService> {
+        self.identity
+            .as_deref()
+            .ok_or_else(|| QefroError::internal("identity directory is not configured"))
+    }
+
+    async fn list_users(&self, ctx: &OpContext, query: Query) -> QefroResult<Page> {
+        let (items, total) = self
+            .identity()?
+            .list_tenant_users(
+                ctx.tenant_id,
+                query.search.as_deref(),
+                query.page,
+                query.page_size,
+            )
+            .await?;
+        let entity = self.registry.get(USER_ENTITY)?;
+        let mut items = items;
+        for item in &mut items {
+            strip_secrets(Some(&entity), item);
+            self.strip_forbidden_fields(ctx, &entity, item);
+            self.attach_workflow(ctx, &entity, item);
+            self.attach_permissions(ctx, &entity, item);
+        }
+        Ok(Page {
+            items,
+            page: query.page.max(1),
+            page_size: query.page_size.clamp(1, 200),
+            total,
+        })
+    }
+
+    async fn get_user(&self, ctx: &OpContext, id: Uuid) -> QefroResult<Value> {
+        let mut record = self.identity()?.get_tenant_user(ctx.tenant_id, id).await?;
+        strip_secrets(None, &mut record);
+        Ok(record)
+    }
+
+    async fn create_user(&self, ctx: &OpContext, data: Value) -> QefroResult<Value> {
+        reject_client_tenant(&data)?;
+        let entity = self.registry.get(USER_ENTITY)?;
+        self.reject_forbidden_writes(ctx, &entity, &data)?;
+        let created = self.identity()?.create_tenant_user(ctx, &data).await?;
+        let id = record_id(&created)?;
+        if entity.audit {
+            self.audit
+                .record(ctx, USER_ENTITY, Some(id), "create", None, Some(&created))
+                .await?;
+        }
+        self.present(ctx, &entity, created).await
+    }
+
+    async fn update_user(&self, ctx: &OpContext, id: Uuid, patch: Value) -> QefroResult<Value> {
+        reject_client_tenant(&patch)?;
+        let entity = self.registry.get(USER_ENTITY)?;
+        self.reject_forbidden_writes(ctx, &entity, &patch)?;
+        let current = self.identity()?.get_tenant_user(ctx.tenant_id, id).await?;
+        let updated = self.identity()?.update_tenant_user(ctx, id, &patch).await?;
+        if entity.audit {
+            self.audit
+                .record(
+                    ctx,
+                    USER_ENTITY,
+                    Some(id),
+                    "update",
+                    Some(&current),
+                    Some(&updated),
+                )
+                .await?;
+        }
+        self.present(ctx, &entity, updated).await
+    }
+
+    async fn delete_user(&self, ctx: &OpContext, id: Uuid) -> QefroResult<Value> {
+        let entity = self.registry.get(USER_ENTITY)?;
+        let deleted = self.identity()?.remove_tenant_membership(ctx, id).await?;
+        if entity.audit {
+            self.audit
+                .record(ctx, USER_ENTITY, Some(id), "delete", Some(&deleted), None)
+                .await?;
+        }
+        Ok(deleted)
+    }
+
+    async fn link_person_account(&self, ctx: &OpContext, data: &mut Value) -> QefroResult<()> {
+        let create = data
+            .get("create_account")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !create {
+            if let Some(obj) = data.as_object_mut() {
+                obj.remove("create_account");
+                obj.remove("password");
+            }
+            return Ok(());
+        }
+        self.permissions.check(ctx, USER_ENTITY, Action::Create)?;
+        let name = data
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let email = data
+            .get("email")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let password = data
+            .get("password")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let payload = json!({
+            "name": name,
+            "email": email,
+            "password": password,
+            "roles": ["Staff"],
+        });
+        let user = self.identity()?.create_tenant_user(ctx, &payload).await?;
+        if let Some(obj) = data.as_object_mut() {
+            obj.insert("user_id".into(), user["id"].clone());
+            obj.remove("create_account");
+            obj.remove("password");
+        }
+        Ok(())
+    }
+
     fn ensure_app(&self, ctx: &OpContext, entity: &qefro_core::EntityDef) -> QefroResult<()> {
         if ctx.allows_app(entity.module.as_deref()) {
             Ok(())
@@ -1548,7 +1899,40 @@ impl EntityService {
     }
 }
 
-fn child_rows_query(child: &qefro_core::EntityDef, inverse: &str, parent_id: &str) -> qefro_search::Query {
+struct RelatedSpec {
+    name: String,
+    label: String,
+    target: Arc<qefro_core::EntityDef>,
+    inverse: String,
+}
+
+fn relation_expansion(
+    target: &qefro_core::EntityDef,
+    id: Uuid,
+    related: &Value,
+    nested: serde_json::Map<String, Value>,
+) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("id".into(), json!(id));
+    map.insert("label".into(), json!(target.display_label(related)));
+    map.insert("slug".into(), json!(target.slug.clone()));
+    map.insert("entity".into(), json!(target.name.clone()));
+    if let Some(enabled) = related.get("enabled") {
+        if !enabled.is_null() {
+            map.insert("enabled".into(), enabled.clone());
+        }
+    }
+    if !nested.is_empty() {
+        map.insert("_expanded".into(), Value::Object(nested));
+    }
+    Value::Object(map)
+}
+
+fn child_rows_query(
+    child: &qefro_core::EntityDef,
+    inverse: &str,
+    parent_id: &str,
+) -> qefro_search::Query {
     use qefro_search::{Filter, Query, Sort, SortDir};
     let mut query = Query::default();
     query.filters.push(Filter::Eq {

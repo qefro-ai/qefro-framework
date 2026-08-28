@@ -245,7 +245,9 @@ impl fmt::Display for QefroError {
             | Self::PayloadTooLarge { message }
             | Self::Database { message }
             | Self::Internal { message } => write!(f, "{message}"),
-            Self::Validation { message, .. } | Self::Locked { message, .. } => write!(f, "{message}"),
+            Self::Validation { message, .. } | Self::Locked { message, .. } => {
+                write!(f, "{message}")
+            }
         }
     }
 }

@@ -84,9 +84,10 @@ pub fn validate_bundle(bundle: &AppBundle, installed: &[InstalledAppRef]) -> Val
 
     for entity in &bundle.entities {
         if let Some(wf) = &entity.workflow {
-            let found = bundle.workflows.iter().any(|w| {
-                w.get("name").and_then(|v| v.as_str()) == Some(wf.as_str())
-            });
+            let found = bundle
+                .workflows
+                .iter()
+                .any(|w| w.get("name").and_then(|v| v.as_str()) == Some(wf.as_str()));
             if !found {
                 report.error(format!(
                     "entity '{}' references missing workflow '{}'",
@@ -104,8 +105,13 @@ pub fn validate_bundle(bundle: &AppBundle, installed: &[InstalledAppRef]) -> Val
         }
         for field in &entity.fields {
             if let Some(rel) = &field.relation {
-                if matches!(rel.kind, RelationKind::ChildTable | RelationKind::ManyToOne | RelationKind::OneToMany | RelationKind::ManyToMany)
-                    && registry.try_get(&rel.target_entity).is_none()
+                if matches!(
+                    rel.kind,
+                    RelationKind::ChildTable
+                        | RelationKind::ManyToOne
+                        | RelationKind::OneToMany
+                        | RelationKind::ManyToMany
+                ) && registry.try_get(&rel.target_entity).is_none()
                 {
                     report.error(format!(
                         "entity '{}' field '{}' references missing entity '{}'",
@@ -129,7 +135,9 @@ pub fn validate_bundle(bundle: &AppBundle, installed: &[InstalledAppRef]) -> Val
         if entity.is_empty() {
             report.error(format!("workflow '{name}' is missing entity"));
         } else if registry.try_get(entity).is_none() {
-            report.error(format!("workflow '{name}' references missing entity '{entity}'"));
+            report.error(format!(
+                "workflow '{name}' references missing entity '{entity}'"
+            ));
         }
     }
 
@@ -140,7 +148,12 @@ pub fn validate_bundle(bundle: &AppBundle, installed: &[InstalledAppRef]) -> Val
         } else if registry.try_get(entity).is_none() {
             report.error(format!("permission references missing entity '{entity}'"));
         }
-        if grant.get("role").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+        if grant
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .is_empty()
+        {
             report.error("permission grant is missing role");
         }
     }
@@ -194,7 +207,10 @@ pub fn validate_bundle(bundle: &AppBundle, installed: &[InstalledAppRef]) -> Val
     }
     for mig in &bundle.migrations {
         if version::parse_version(&mig.version).is_err() {
-            report.error(format!("migration '{}' has invalid version '{}'", mig.id, mig.version));
+            report.error(format!(
+                "migration '{}' has invalid version '{}'",
+                mig.id, mig.version
+            ));
         }
         if mig.looks_destructive() && mig.sql.trim().is_empty() {
             report.warn(format!("migration '{}' is marked destructive", mig.id));
@@ -202,7 +218,12 @@ pub fn validate_bundle(bundle: &AppBundle, installed: &[InstalledAppRef]) -> Val
     }
 
     validate_dependencies(&bundle.manifest.dependencies, installed, &mut report);
-    detect_cycles(bundle.manifest.name.as_str(), &bundle.manifest.dependencies, installed, &mut report);
+    detect_cycles(
+        bundle.manifest.name.as_str(),
+        &bundle.manifest.dependencies,
+        installed,
+        &mut report,
+    );
 
     if bundle.entities.is_empty() && bundle.manifest.source != "builtin" {
         report.warn("app has no entities");
@@ -309,7 +330,10 @@ pub fn destructive_field_removals(from: &AppBundle, to: &AppBundle) -> Vec<Strin
     let mut out = Vec::new();
     for old in &from.entities {
         let Some(new) = to.entities.iter().find(|e| e.name == old.name) else {
-            out.push(format!("entity '{}' would disappear from metadata", old.name));
+            out.push(format!(
+                "entity '{}' would disappear from metadata",
+                old.name
+            ));
             continue;
         };
         for field in old.stored_fields() {
@@ -436,7 +460,10 @@ mod tests {
         assert_eq!(rust.slug, yaml.slug);
         let ru = rust.to_ui_meta();
         let yu = yaml.to_ui_meta();
-        assert_eq!(ru.fields.iter().map(|f| &f.name).collect::<Vec<_>>(), yu.fields.iter().map(|f| &f.name).collect::<Vec<_>>());
+        assert_eq!(
+            ru.fields.iter().map(|f| &f.name).collect::<Vec<_>>(),
+            yu.fields.iter().map(|f| &f.name).collect::<Vec<_>>()
+        );
     }
 
     #[test]

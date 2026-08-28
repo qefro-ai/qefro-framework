@@ -92,7 +92,10 @@ pub fn levenshtein(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
-pub fn suggest_similar<'a>(needle: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<String> {
+pub fn suggest_similar<'a>(
+    needle: &str,
+    candidates: impl IntoIterator<Item = &'a str>,
+) -> Option<String> {
     let needle_l = needle.to_ascii_lowercase();
     if needle_l.is_empty() {
         return None;

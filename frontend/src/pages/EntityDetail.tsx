@@ -73,7 +73,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const actions = (row._actions as EntityAction[] | undefined) ?? [];
   const related = (row._related ?? {}) as Record<
     string,
-    { slug: string; entity: string; items: Record<string, unknown>[]; total: number }
+    { slug: string; entity: string; label?: string; items: Record<string, unknown>[]; total: number }
   >;
   const links = ((row._links as Array<{
     label: string;
@@ -357,7 +357,7 @@ function RelatedPanel({
   entities,
 }: {
   links: Array<{ label: string; slug: string; relation: string; total: number }>;
-  related: Record<string, { slug: string; items: Record<string, unknown>[]; total: number }>;
+  related: Record<string, { slug: string; items: Record<string, unknown>[]; total: number; label?: string }>;
   id: string;
   meta: UiEntity;
   entities: UiEntity[];
@@ -381,14 +381,16 @@ function RelatedPanel({
         </div>
       ) : null}
       {Object.entries(related).map(([name, rel]) => {
+        const fieldMeta = meta.fields.find((f) => f.name === name);
         const inverse =
-          meta.fields.find((f) => f.name === name)?.inverse_field ||
+          fieldMeta?.inverse_field ||
           entities.find((e) => e.slug === rel.slug)?.fields.find(
             (f) => f.relation === meta.entity && f.relation_kind === "many_to_one",
           )?.name;
+        const title = rel.label || fieldMeta?.label || name;
         return (
           <div key={name} className="related panel">
-            <h3 className="panel-title">{name}</h3>
+            <h3 className="panel-title">{title}</h3>
             <p className="muted related-meta">
               {rel.total} related
               {inverse ? (

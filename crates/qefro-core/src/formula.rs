@@ -30,13 +30,19 @@ pub enum Func {
 pub enum Expr {
     Number(f64),
     Field(String),
-    ChildField { table: String, field: String },
+    ChildField {
+        table: String,
+        field: String,
+    },
     Binary {
         op: BinOp,
         left: Box<Expr>,
         right: Box<Expr>,
     },
-    Call { func: Func, args: Vec<Expr> },
+    Call {
+        func: Func,
+        args: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -127,7 +133,9 @@ fn eval_call(func: &Func, args: &[Expr], ctx: &FormulaContext<'_>) -> QefroResul
                 return Err(QefroError::bad_request("COUNT takes 1 argument"));
             }
             match &args[0] {
-                Expr::Field(name) => Ok(ctx.children.get(name).map(|r| r.len()).unwrap_or(0) as f64),
+                Expr::Field(name) => {
+                    Ok(ctx.children.get(name).map(|r| r.len()).unwrap_or(0) as f64)
+                }
                 Expr::ChildField { table, field } => {
                     let rows = ctx.children.get(table).map(|v| v.as_slice()).unwrap_or(&[]);
                     Ok(rows
@@ -302,9 +310,9 @@ pub fn evaluation_order(fields: &[FieldDef]) -> QefroResult<Vec<String>> {
                 Some(e) => e,
                 None => return true,
             };
-            let ready = formula_dependencies(&expr).iter().all(|d| {
-                !fields.iter().any(|f| f.computed && f.name == *d) || done.contains(d)
-            });
+            let ready = formula_dependencies(&expr)
+                .iter()
+                .all(|d| !fields.iter().any(|f| f.computed && f.name == *d) || done.contains(d));
             if ready {
                 done.insert(field.name.clone());
                 order.push(field.name.clone());
@@ -571,7 +579,10 @@ mod tests {
             700.0
         );
         let grand = parse_formula("SUM(items.amount) - discount").unwrap();
-        assert_eq!(eval_formula(&grand, &ctx(&record, &children)).unwrap(), 690.0);
+        assert_eq!(
+            eval_formula(&grand, &ctx(&record, &children)).unwrap(),
+            690.0
+        );
         let count = parse_formula("COUNT(items)").unwrap();
         assert_eq!(eval_formula(&count, &ctx(&record, &children)).unwrap(), 2.0);
     }
