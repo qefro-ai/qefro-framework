@@ -37,7 +37,10 @@ cargo qefro --help
 ## Quick start
 
 ```bash
+docker compose up -d postgres
+# or: ./scripts/setup-postgres.sh
 export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro
+qefro migrate --app restaurant
 qefro dev --app restaurant
 ```
 
@@ -208,15 +211,17 @@ Agent → Tool Registry → Authentication → Tenant Context
 ## Tests
 
 ```bash
-cargo test --workspace
-DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro cargo test --workspace -- --test-threads=1
+./scripts/setup-postgres.sh
+export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro
+cargo test --workspace -- --test-threads=1
+cd frontend && npm test
 ```
 
-Integration tests that need PostgreSQL skip when `DATABASE_URL` is unset. Frontend widget tests: `cd frontend && npm test`.
+Or `make check`. Integration tests require `DATABASE_URL` (they fail closed if it is unset). See [Benchmarks](docs/benchmarks.md).
 
 ## Docs
 
-- [Getting started](docs/getting-started.md)
+- [Benchmarks](docs/benchmarks.md)
 - [Create an application](docs/creating-an-app.md)
 - [V1 compatibility](docs/v1-compatibility.md)
 - [Build a fullstack application](docs/fullstack.md)

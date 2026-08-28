@@ -4,8 +4,10 @@ use qefro_db::{apply_schema, connect, JobHandler, JobQueue, JobRegistry};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-fn db_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+fn db_url() -> String {
+    std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
+    )
 }
 
 struct SafeNotify;
@@ -37,10 +39,7 @@ impl JobHandler for UnsafeMutation {
 
 #[tokio::test]
 async fn worker_policy_allows_safe_and_rejects_unsafe() {
-    let Some(url) = db_url() else {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    };
+    let url = db_url();
     let pool = connect(&url).await.unwrap();
     apply_schema(&pool, &qefro_core::EntityRegistry::new())
         .await
@@ -60,7 +59,11 @@ async fn worker_policy_allows_safe_and_rejects_unsafe() {
     registry.register("confirm_reservation", std::sync::Arc::new(UnsafeMutation));
 
     let ok = queue
-        .enqueue(&ctx, "send_notification", json!({ "entity": "Reservation" }))
+        .enqueue(
+            &ctx,
+            "send_notification",
+            json!({ "entity": "Reservation" }),
+        )
         .await
         .unwrap();
     process_until(&queue, &registry, &pool, tenant_id, ok, "succeeded").await;
@@ -93,10 +96,7 @@ fn worker_context_is_not_admin() {
 
 #[tokio::test]
 async fn worker_cannot_run_user_mutations_or_manager_ops() {
-    let Some(url) = db_url() else {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    };
+    let url = db_url();
     let mut registry = qefro_core::EntityRegistry::new();
     registry
         .register(
@@ -119,8 +119,14 @@ async fn worker_cannot_run_user_mutations_or_manager_ops() {
         .unwrap();
 
     let mut perms = qefro_permissions::PermissionRegistry::new();
-    perms.grant(qefro_permissions::PermissionGrant::crud("Admin", "WorkerNote"));
-    perms.grant(qefro_permissions::PermissionGrant::crud("Manager", "WorkerNote"));
+    perms.grant(qefro_permissions::PermissionGrant::crud(
+        "Admin",
+        "WorkerNote",
+    ));
+    perms.grant(qefro_permissions::PermissionGrant::crud(
+        "Manager",
+        "WorkerNote",
+    ));
 
     let mut operations = qefro_db::OperationRegistry::new();
     operations.register(
@@ -200,5 +206,8 @@ async fn process_until(
         }
     }
     let job = queue.get(tenant_id, id).await.unwrap();
-    panic!("job {} stuck in {} attempts={}", id, job.status, job.attempts);
+    panic!(
+        "job {} stuck in {} attempts={}",
+        id, job.status, job.attempts
+    );
 }

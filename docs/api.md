@@ -35,7 +35,6 @@ Create user body: `{ name, email, password, roles }`
 - `GET /meta/entities/{name}`
 - `GET /meta/ui` — entities, branding, locale, and per-entity `permissions: { list, create, read, update, delete }` chrome hints
 - `GET /meta/permissions`
-- `GET /meta/permissions`
 - `GET /meta/workflows`
 - `GET /meta/modules`
 - `GET /meta/dashboards`

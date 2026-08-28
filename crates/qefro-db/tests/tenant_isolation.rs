@@ -7,16 +7,15 @@ use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 
-fn db_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+fn db_url() -> String {
+    std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
+    )
 }
 
 #[tokio::test]
 async fn cross_tenant_repository_access_fails() {
-    let Some(url) = db_url() else {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    };
+    let url = db_url();
 
     let mut registry = qefro_core::EntityRegistry::new();
     registry

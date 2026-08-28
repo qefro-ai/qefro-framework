@@ -9,6 +9,7 @@ test → lint → security audit → build → package → integration test → 
 ```
 
 ```bash
+./scripts/setup-postgres.sh --check
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro \
@@ -22,7 +23,7 @@ cargo install --path crates/qefro-cli --locked --force
 
 Record in the release notes:
 
-- framework version (`1.0.0`)
+- framework version (`1.0.2`)
 - git commit
 - Rustc version (`rustc -V`)
 - Node version

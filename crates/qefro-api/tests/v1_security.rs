@@ -10,8 +10,10 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-fn db_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+fn db_url() -> String {
+    std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
+    )
 }
 
 fn app() -> InstalledApp {
@@ -50,7 +52,7 @@ fn app() -> InstalledApp {
 
 async fn runtime() -> axum::Router {
     let mut rt = QefroRuntime::new(Config {
-        database_url: db_url().expect("DATABASE_URL"),
+        database_url: db_url(),
         jwt_secret: "test-secret-v1-security".into(),
         bind: "127.0.0.1:0".into(),
         ..Config::default()
@@ -135,9 +137,6 @@ async fn register(router: &axum::Router, suffix: &str) -> String {
 
 #[tokio::test]
 async fn version_and_metrics_are_public() {
-    if db_url().is_none() {
-        return;
-    }
     let router = runtime().await;
     let (status, body) = json(clone_router(&router), get("/api/v1/meta/version", None)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -151,9 +150,6 @@ async fn version_and_metrics_are_public() {
 
 #[tokio::test]
 async fn unauthenticated_uses_stable_error_code() {
-    if db_url().is_none() {
-        return;
-    }
     let router = runtime().await;
     let (status, body) = json(router, get("/api/v1/v1-memos", None)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -163,9 +159,6 @@ async fn unauthenticated_uses_stable_error_code() {
 
 #[tokio::test]
 async fn tenant_a_cannot_access_tenant_b() {
-    if db_url().is_none() {
-        return;
-    }
     let router = runtime().await;
     let a = &Uuid::new_v4().to_string()[..8];
     let b = &Uuid::new_v4().to_string()[..8];
@@ -237,7 +230,9 @@ async fn tenant_a_cannot_access_tenant_b() {
         .cloned()
         .or_else(|| notes.as_array().cloned())
         .unwrap_or_default();
-    assert!(items.iter().all(|n| n.get("tenant_id") != created.get("tenant_id")));
+    assert!(items
+        .iter()
+        .all(|n| n.get("tenant_id") != created.get("tenant_id")));
 
     let (status, atts) = json(
         clone_router(&router),
@@ -263,9 +258,6 @@ async fn tenant_a_cannot_access_tenant_b() {
 
 #[tokio::test]
 async fn public_form_cannot_switch_tenant_or_inject_fields() {
-    if db_url().is_none() {
-        return;
-    }
     let router = runtime().await;
     let a = &Uuid::new_v4().to_string()[..8];
     let b = &Uuid::new_v4().to_string()[..8];
@@ -301,9 +293,6 @@ async fn public_form_cannot_switch_tenant_or_inject_fields() {
 
 #[tokio::test]
 async fn search_query_too_long_is_rejected() {
-    if db_url().is_none() {
-        return;
-    }
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let token = register(&router, suffix).await;

@@ -11,8 +11,10 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-fn test_db_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+fn test_db_url() -> String {
+    std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
+    )
 }
 
 fn test_app() -> InstalledApp {
@@ -64,7 +66,11 @@ fn test_app() -> InstalledApp {
                 .table_name("doc_invoice_items")
                 .slug_name("doc-invoice-items")
                 .child_of("Invoice", "items")
-                .field(FieldDef::many_to_one("invoice_id", "Invoice").required().hidden())
+                .field(
+                    FieldDef::many_to_one("invoice_id", "Invoice")
+                        .required()
+                        .hidden(),
+                )
                 .field(FieldDef::string("product").required())
                 .field(FieldDef::integer("quantity").required().min(1.0))
                 .field(FieldDef::currency("rate").required().min(0.0))
@@ -83,9 +89,7 @@ fn test_app() -> InstalledApp {
         .workflow(
             WorkflowDef::new("invoice", "Invoice", "Draft")
                 .transition(TransitionDef::new("submit", "Draft", "Submitted").roles(&["Manager"]))
-                .transition(
-                    TransitionDef::new("cancel", "Draft", "Cancelled").roles(&["Manager"]),
-                )
+                .transition(TransitionDef::new("cancel", "Draft", "Cancelled").roles(&["Manager"]))
                 .transition(
                     TransitionDef::new("cancel_submitted", "Submitted", "Cancelled")
                         .roles(&["Manager"]),
@@ -102,7 +106,7 @@ fn test_app() -> InstalledApp {
 }
 
 async fn runtime() -> axum::Router {
-    let url = test_db_url().expect("DATABASE_URL");
+    let url = test_db_url();
     let mut rt = QefroRuntime::new(Config {
         database_url: url,
         jwt_secret: "test-secret".into(),
@@ -182,14 +186,20 @@ async fn register(router: &axum::Router, email: &str, slug: &str) -> String {
 
 #[tokio::test]
 async fn child_tables_formulas_documents_reports_and_security() {
-    if test_db_url().is_none() {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    }
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
-    let token_a = register(&router, &format!("da-{suffix}@example.com"), &format!("da-{suffix}")).await;
-    let token_b = register(&router, &format!("db-{suffix}@example.com"), &format!("db-{suffix}")).await;
+    let token_a = register(
+        &router,
+        &format!("da-{suffix}@example.com"),
+        &format!("da-{suffix}"),
+    )
+    .await;
+    let token_b = register(
+        &router,
+        &format!("db-{suffix}@example.com"),
+        &format!("db-{suffix}"),
+    )
+    .await;
 
     let (status, customer) = json(
         clone_router(&router),
@@ -241,7 +251,9 @@ async fn child_tables_formulas_documents_reports_and_security() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
     let fields = bad["fields"].as_array().cloned().unwrap_or_default();
     assert!(
-        fields.iter().any(|f| f["field"].as_str() == Some("items.0.quantity"))
+        fields
+            .iter()
+            .any(|f| f["field"].as_str() == Some("items.0.quantity"))
             || bad["nested"]["items"]["0"]["quantity"].is_string(),
         "{bad}"
     );
@@ -256,10 +268,16 @@ async fn child_tables_formulas_documents_reports_and_security() {
 
     let (status, cross) = json(
         clone_router(&router),
-        get(&format!("/api/v1/doc-invoices/{invoice_id}"), Some(&token_b)),
+        get(
+            &format!("/api/v1/doc-invoices/{invoice_id}"),
+            Some(&token_b),
+        ),
     )
     .await;
-    assert!(status == StatusCode::NOT_FOUND || status == StatusCode::FORBIDDEN, "{cross}");
+    assert!(
+        status == StatusCode::NOT_FOUND || status == StatusCode::FORBIDDEN,
+        "{cross}"
+    );
 
     let (status, submitted) = json(
         clone_router(&router),
@@ -359,14 +377,20 @@ async fn child_tables_formulas_documents_reports_and_security() {
 
 #[tokio::test]
 async fn concurrent_numbering_is_unique_and_tenant_scoped() {
-    if test_db_url().is_none() {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    }
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
-    let token_a = register(&router, &format!("na-{suffix}@example.com"), &format!("na-{suffix}")).await;
-    let token_b = register(&router, &format!("nb-{suffix}@example.com"), &format!("nb-{suffix}")).await;
+    let token_a = register(
+        &router,
+        &format!("na-{suffix}@example.com"),
+        &format!("na-{suffix}"),
+    )
+    .await;
+    let token_b = register(
+        &router,
+        &format!("nb-{suffix}@example.com"),
+        &format!("nb-{suffix}"),
+    )
+    .await;
 
     async fn customer(router: &axum::Router, token: &str) -> String {
         let (status, body) = json(

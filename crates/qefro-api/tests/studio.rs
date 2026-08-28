@@ -8,8 +8,10 @@ use qefro_workflow::{StateDef, TransitionDef, WorkflowDef};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-fn db_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+fn db_url() -> String {
+    std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
+    )
 }
 
 fn studio_app() -> InstalledApp {
@@ -44,11 +46,18 @@ fn studio_app() -> InstalledApp {
                     .slug_name("studio-tickets")
                     .workflow("studio_ticket")
                     .field(
-                        FieldDef::enum_("status", vec!["Draft", "Confirmed", "Completed", "Cancelled"])
-                            .required()
-                            .default_value(json!("Draft")),
+                        FieldDef::enum_(
+                            "status",
+                            vec!["Draft", "Confirmed", "Completed", "Cancelled"],
+                        )
+                        .required()
+                        .default_value(json!("Draft")),
                     )
-                    .field(FieldDef::integer("quantity").required().default_value(json!(1)))
+                    .field(
+                        FieldDef::integer("quantity")
+                            .required()
+                            .default_value(json!(1)),
+                    )
                     .field(FieldDef::decimal("rate").required().default_value(json!(0)))
                     .field(FieldDef::decimal("amount").computed("quantity * rate"))
                     .build(),
@@ -129,8 +138,8 @@ fn post(path: &str, token: &str, body: Value) -> Request<Body> {
         .unwrap()
 }
 
-async fn boot() -> Option<(axum::Router, String, String)> {
-    let url = db_url()?;
+async fn boot() -> (axum::Router, String, String) {
+    let url = db_url();
     let mut rt = QefroRuntime::new(Config {
         database_url: url,
         jwt_secret: "studio-test".into(),
@@ -162,14 +171,12 @@ async fn boot() -> Option<(axum::Router, String, String)> {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let token = body["access_token"].as_str().unwrap().to_string();
-    Some((router, token, suffix))
+    (router, token, suffix)
 }
 
 #[tokio::test]
 async fn studio_rbac_and_staff_denied() {
-    let Some((router, admin, suffix)) = boot().await else {
-        return;
-    };
+    let (router, admin, suffix) = boot().await;
     let (status, me) = json(clone_router(&router), get("/api/v1/auth/me", &admin)).await;
     assert_eq!(status, StatusCode::OK, "{me}");
     assert!(me["studio"]
@@ -218,10 +225,12 @@ async fn studio_rbac_and_staff_denied() {
 
 #[tokio::test]
 async fn studio_publish_field_appears_in_generic_ui() {
-    let Some((router, token, _)) = boot().await else {
-        return;
-    };
-    let (status, overview) = json(clone_router(&router), get("/api/v1/studio/overview", &token)).await;
+    let (router, token, _) = boot().await;
+    let (status, overview) = json(
+        clone_router(&router),
+        get("/api/v1/studio/overview", &token),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{overview}");
     assert!(overview["entities"].as_u64().unwrap() >= 3);
 
@@ -293,11 +302,7 @@ async fn studio_publish_field_appears_in_generic_ui() {
 
     let (status, guest) = json(
         clone_router(&router),
-        post(
-            "/api/v1/studio-guests",
-            &token,
-            json!({ "name": "Ahmed" }),
-        ),
+        post("/api/v1/studio-guests", &token, json!({ "name": "Ahmed" })),
     )
     .await;
     assert!(status.is_success(), "{guest}");
@@ -319,9 +324,7 @@ async fn studio_publish_field_appears_in_generic_ui() {
 
 #[tokio::test]
 async fn studio_workflow_publish_exposes_transition() {
-    let Some((router, token, _)) = boot().await else {
-        return;
-    };
+    let (router, token, _) = boot().await;
     let (status, current) = json(
         clone_router(&router),
         get("/api/v1/studio/workflows/StudioTicket", &token),
@@ -364,7 +367,11 @@ async fn studio_workflow_publish_exposes_transition() {
 
     let (status, ticket) = json(
         clone_router(&router),
-        post("/api/v1/studio-tickets", &token, json!({ "quantity": 1, "rate": 10 })),
+        post(
+            "/api/v1/studio-tickets",
+            &token,
+            json!({ "quantity": 1, "rate": 10 }),
+        ),
     )
     .await;
     assert!(status.is_success(), "{ticket}");
@@ -390,9 +397,7 @@ async fn studio_workflow_publish_exposes_transition() {
 
 #[tokio::test]
 async fn studio_rejects_type_change_and_invalid_formula() {
-    let Some((router, token, _)) = boot().await else {
-        return;
-    };
+    let (router, token, _) = boot().await;
     let (status, err) = json(
         clone_router(&router),
         post(
@@ -407,7 +412,10 @@ async fn studio_rejects_type_change_and_invalid_formula() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{err}");
-    assert!(err["message"].as_str().unwrap().contains("migration"), "{err}");
+    assert!(
+        err["message"].as_str().unwrap().contains("migration"),
+        "{err}"
+    );
 
     let (status, bad) = json(
         clone_router(&router),
@@ -439,9 +447,7 @@ async fn studio_rejects_type_change_and_invalid_formula() {
 
 #[tokio::test]
 async fn studio_drafts_are_tenant_scoped() {
-    let Some((router, token_a, suffix)) = boot().await else {
-        return;
-    };
+    let (router, token_a, suffix) = boot().await;
     let (status, draft) = json(
         clone_router(&router),
         post(
@@ -494,9 +500,7 @@ async fn studio_drafts_are_tenant_scoped() {
 
 #[tokio::test]
 async fn studio_search_and_permissions_publish() {
-    let Some((router, token, _)) = boot().await else {
-        return;
-    };
+    let (router, token, _) = boot().await;
     let (status, found) = json(
         clone_router(&router),
         get("/api/v1/studio/search?q=StudioTicket", &token),
@@ -539,14 +543,17 @@ async fn studio_search_and_permissions_publish() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|g| g["role"] == "Staff" && g["actions"].as_array().unwrap().iter().all(|a| a != "create")));
+        .any(|g| g["role"] == "Staff"
+            && g["actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|a| a != "create")));
 }
 
 #[tokio::test]
 async fn studio_audit_records_publish() {
-    let Some((router, token, _)) = boot().await else {
-        return;
-    };
+    let (router, token, _) = boot().await;
     let (status, _) = json(
         clone_router(&router),
         post(
@@ -580,9 +587,7 @@ async fn studio_audit_records_publish() {
 
 #[tokio::test]
 async fn studio_views_overlay_is_safe_and_rejects_permissions() {
-    let Some((router, token, _)) = boot().await else {
-        return;
-    };
+    let (router, token, _) = boot().await;
     let (status, bad) = json(
         clone_router(&router),
         post(

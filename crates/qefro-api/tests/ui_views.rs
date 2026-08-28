@@ -8,8 +8,10 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-fn test_db_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+fn test_db_url() -> String {
+    std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
+    )
 }
 
 fn test_app() -> InstalledApp {
@@ -55,7 +57,7 @@ fn test_app() -> InstalledApp {
 }
 
 async fn runtime() -> axum::Router {
-    let url = test_db_url().expect("DATABASE_URL");
+    let url = test_db_url();
     let mut rt = QefroRuntime::new(Config {
         database_url: url,
         jwt_secret: "test-secret".into(),
@@ -124,10 +126,6 @@ fn find_entity<'a>(ui: &'a Value, name: &str) -> &'a Value {
 
 #[tokio::test]
 async fn views_card_round_trips_and_schema_stays_one() {
-    if test_db_url().is_none() {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    }
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let (status, body) = json(
@@ -160,10 +158,6 @@ async fn views_card_round_trips_and_schema_stays_one() {
 
 #[tokio::test]
 async fn entity_permissions_differ_and_unauthorized_patch_is_403() {
-    if test_db_url().is_none() {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    }
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let staff_email = format!("staff-{suffix}@example.com");

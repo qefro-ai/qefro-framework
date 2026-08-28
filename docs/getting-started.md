@@ -11,6 +11,9 @@ Database · API · UI · Workflow · Reports · Documents · Automation · Realt
 ## Install
 
 ```bash
+docker compose up -d postgres
+# or, if Docker is unavailable and a local Postgres is already on 5432:
+# ./scripts/setup-postgres.sh
 export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro
 cargo install --path crates/qefro-cli --locked --force
 qefro --help

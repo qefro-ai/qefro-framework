@@ -2,7 +2,7 @@
 
 Command-line interface for [Qefro Framework](https://github.com/qefro-ai/qefro-framework). Installs the `qefro` binary.
 
-Walkthrough: [Build a fullstack application](https://github.com/qefro-ai/qefro-framework/blob/main/docs/fullstack.md).
+Walkthrough: [Create an application](https://github.com/qefro-ai/qefro-framework/blob/main/docs/creating-an-app.md), [Build a fullstack application](https://github.com/qefro-ai/qefro-framework/blob/main/docs/fullstack.md).
 
 ```bash
 cargo install qefro-cli

@@ -9,8 +9,10 @@ use qefro_permissions::PermissionGrant;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-fn db_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+fn db_url() -> String {
+    std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
+    )
 }
 
 async fn json(router: axum::Router, req: Request<Body>) -> (StatusCode, Value) {
@@ -63,9 +65,7 @@ framework_version = ">=0.7"
 
 #[tokio::test]
 async fn upgrade_adds_field_without_dropping_rows() {
-    let Some(database_url) = db_url() else {
-        return;
-    };
+    let database_url = db_url();
     let v1 = InstalledApp::new(
         AppModule::new("upgrade_shop")
             .version("1.0.0")
@@ -161,9 +161,7 @@ async fn upgrade_adds_field_without_dropping_rows() {
 
 #[tokio::test]
 async fn yaml_runtime_exposes_entity_like_rust() {
-    let Some(database_url) = db_url() else {
-        return;
-    };
+    let database_url = db_url();
     let rust = InstalledApp::new(
         AppModule::new("compat")
             .entity(

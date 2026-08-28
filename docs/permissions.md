@@ -20,6 +20,10 @@ Every protected action (REST, agent tool, CLI `qefro action`, public form, impor
 
 Admin bypasses role lists after authentication. Workers use role `Worker` and only `worker_safe` operations. Public forms use role `Public` with an allowlisted action set.
 
+## UI hints vs API 403
+
+`GET /api/v1/meta/ui` includes per-entity `permissions: { list, create, read, update, delete }`. GET records include `_permissions: { update, delete }`. The generic UI uses those to hide New / Edit / Delete. They are chrome hints, not a security boundary. Unauthorized writes still return **403** from `EntityService`. Tenant isolation is `WHERE tenant_id = $1` plus a post-read check (mismatch is **404**), not a UI filter.
+
 ## Field permissions
 
 `permission_level` on a field plus `FieldLevelGrant` per role. Reads strip unauthorized fields. Writes of unauthorized keys return 403. See [field-permissions.md](field-permissions.md).

@@ -8,8 +8,10 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-fn db_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+fn db_url() -> String {
+    std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
+    )
 }
 
 fn saas_apps() -> (InstalledApp, InstalledApp) {
@@ -120,10 +122,7 @@ async fn register(router: &axum::Router, tag: &str, suffix: &str) -> (String, St
 
 #[tokio::test]
 async fn saas_tenants_are_isolated_and_entitled() {
-    let Some(url) = db_url() else {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    };
+    let url = db_url();
     let mut rt = QefroRuntime::new(Config {
         database_url: url,
         jwt_secret: "test-secret".into(),
@@ -235,8 +234,11 @@ async fn saas_tenants_are_isolated_and_entitled() {
     assert!(!slugs_b.contains(&"reservations"), "{ui_b}");
     assert_eq!(ui_b["branding"]["company_name"], "ABC Traders");
 
-    let (status, brand_b) =
-        json(clone_router(&router), get("/api/v1/tenant/branding", &token_a)).await;
+    let (status, brand_b) = json(
+        clone_router(&router),
+        get("/api/v1/tenant/branding", &token_a),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_ne!(brand_b["company_name"], "ABC Traders");
 
@@ -251,8 +253,11 @@ async fn saas_tenants_are_isolated_and_entitled() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{leaked}");
 
-    let (_status, dash_a) =
-        json(clone_router(&router), get("/api/v1/meta/dashboards", &token_a)).await;
+    let (_status, dash_a) = json(
+        clone_router(&router),
+        get("/api/v1/meta/dashboards", &token_a),
+    )
+    .await;
     let names: Vec<&str> = dash_a["dashboards"]
         .as_array()
         .unwrap()
@@ -262,13 +267,20 @@ async fn saas_tenants_are_isolated_and_entitled() {
     assert!(names.contains(&"restaurant-ops"));
     assert!(!names.contains(&"crm-ops"));
 
-    let (status, crm_dash) =
-        json(clone_router(&router), get("/api/v1/dashboards/crm-ops", &token_a)).await;
+    let (status, crm_dash) = json(
+        clone_router(&router),
+        get("/api/v1/dashboards/crm-ops", &token_a),
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{crm_dash}");
 
     let (status, created) = json(
         clone_router(&router),
-        post("/api/v1/reservations", &token_a, json!({ "name": "Table 1" })),
+        post(
+            "/api/v1/reservations",
+            &token_a,
+            json!({ "name": "Table 1" }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");

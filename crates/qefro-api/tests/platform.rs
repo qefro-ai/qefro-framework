@@ -2,9 +2,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use qefro_api::{Config, InstalledApp, QefroRuntime};
-use qefro_core::{
-    DocumentConfig, EntityDef, FieldDef, NotificationDef, PublicFormDef, WebhookDef,
-};
+use qefro_core::{DocumentConfig, EntityDef, FieldDef, NotificationDef, PublicFormDef, WebhookDef};
 use qefro_permissions::{
     Action, FieldLevelGrant, PermissionGrant, ROLE_HR, ROLE_MANAGER, ROLE_PUBLIC, ROLE_STAFF,
 };
@@ -13,8 +11,10 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-fn db_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+fn db_url() -> String {
+    std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
+    )
 }
 
 fn platform_app() -> InstalledApp {
@@ -70,7 +70,11 @@ fn platform_app() -> InstalledApp {
                             .success_message("Booked"),
                     )
                     .field(FieldDef::string("guest_name").required().searchable())
-                    .field(FieldDef::integer("party_size").required().default_value(json!(2)))
+                    .field(
+                        FieldDef::integer("party_size")
+                            .required()
+                            .default_value(json!(2)),
+                    )
                     .build(),
             )
             .notification(
@@ -97,12 +101,16 @@ fn platform_app() -> InstalledApp {
     .permission(PermissionGrant::crud(ROLE_STAFF, "Invoice"))
     .permission(PermissionGrant::crud(ROLE_MANAGER, "Invoice"))
     .permission(PermissionGrant::crud(ROLE_STAFF, "Booking"))
-    .permission(PermissionGrant::new(ROLE_PUBLIC, "Booking", vec![Action::Create]))
+    .permission(PermissionGrant::new(
+        ROLE_PUBLIC,
+        "Booking",
+        vec![Action::Create],
+    ))
     .field_level(FieldLevelGrant::new(ROLE_HR, "Employee", 2))
 }
 
 async fn runtime() -> axum::Router {
-    let url = db_url().expect("DATABASE_URL");
+    let url = db_url();
     let mut rt = QefroRuntime::new(Config {
         database_url: url,
         jwt_secret: "test-secret".into(),
@@ -180,9 +188,7 @@ async fn register(router: &axum::Router, suffix: &str) -> String {
 
 #[tokio::test]
 async fn singleton_one_per_tenant_and_settings_api() {
-    let Some(_) = db_url() else {
-        return;
-    };
+    let _ = db_url();
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let token = register(&router, suffix).await;
@@ -232,9 +238,7 @@ async fn singleton_one_per_tenant_and_settings_api() {
 
 #[tokio::test]
 async fn field_permissions_hide_and_reject() {
-    let Some(_) = db_url() else {
-        return;
-    };
+    let _ = db_url();
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let admin = register(&router, suffix).await;
@@ -306,9 +310,7 @@ async fn field_permissions_hide_and_reject() {
 
 #[tokio::test]
 async fn allow_on_submit_locks_other_fields() {
-    let Some(_) = db_url() else {
-        return;
-    };
+    let _ = db_url();
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let token = register(&router, suffix).await;
@@ -362,9 +364,7 @@ async fn allow_on_submit_locks_other_fields() {
 
 #[tokio::test]
 async fn search_respects_rbac_and_field_permissions() {
-    let Some(_) = db_url() else {
-        return;
-    };
+    let _ = db_url();
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let token = register(&router, suffix).await;
@@ -394,9 +394,7 @@ async fn search_respects_rbac_and_field_permissions() {
 
 #[tokio::test]
 async fn csv_import_preview_does_not_write() {
-    let Some(_) = db_url() else {
-        return;
-    };
+    let _ = db_url();
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let token = register(&router, suffix).await;
@@ -437,9 +435,7 @@ async fn csv_import_preview_does_not_write() {
 
 #[tokio::test]
 async fn public_form_allowlist_and_tenant_resolution() {
-    let Some(_) = db_url() else {
-        return;
-    };
+    let _ = db_url();
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let _token = register(&router, suffix).await;
@@ -476,9 +472,7 @@ async fn public_form_allowlist_and_tenant_resolution() {
 
 #[tokio::test]
 async fn attachments_require_record_access() {
-    let Some(_) = db_url() else {
-        return;
-    };
+    let _ = db_url();
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let token = register(&router, suffix).await;
@@ -503,9 +497,7 @@ async fn attachments_require_record_access() {
 
 #[tokio::test]
 async fn webhook_and_notification_after_submit() {
-    let Some(_) = db_url() else {
-        return;
-    };
+    let _ = db_url();
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let token = register(&router, suffix).await;
@@ -547,9 +539,7 @@ async fn webhook_and_notification_after_submit() {
 
 #[tokio::test]
 async fn tenant_isolation_for_settings_and_search() {
-    let Some(_) = db_url() else {
-        return;
-    };
+    let _ = db_url();
     let router = runtime().await;
     let a = &Uuid::new_v4().to_string()[..8];
     let b = &Uuid::new_v4().to_string()[..8];
@@ -575,9 +565,7 @@ async fn tenant_isolation_for_settings_and_search() {
 
 #[tokio::test]
 async fn concurrent_public_submissions() {
-    let Some(_) = db_url() else {
-        return;
-    };
+    let _ = db_url();
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let _token = register(&router, suffix).await;

@@ -5,8 +5,10 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-fn db_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+fn db_url() -> String {
+    std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
+    )
 }
 
 struct AlwaysFail;
@@ -39,10 +41,7 @@ impl JobHandler for Succeed {
 
 #[tokio::test]
 async fn jobs_execute_retry_fail_and_preserve_tenant() {
-    let Some(url) = db_url() else {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    };
+    let url = db_url();
     let pool = connect(&url).await.unwrap();
     apply_schema(&pool, &qefro_core::EntityRegistry::new())
         .await
@@ -147,15 +146,15 @@ async fn process_until(
         }
     }
     let job = queue.get(tenant_id, id).await.unwrap();
-    panic!("job {} stuck in {} attempts={}", id, job.status, job.attempts);
+    panic!(
+        "job {} stuck in {} attempts={}",
+        id, job.status, job.attempts
+    );
 }
 
 #[tokio::test]
 async fn reclaim_running_jobs_after_crash() {
-    let Some(url) = db_url() else {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    };
+    let url = db_url();
     let pool = connect(&url).await.unwrap();
     apply_schema(&pool, &qefro_core::EntityRegistry::new())
         .await

@@ -152,7 +152,8 @@ pub fn installed_from_bundle(bundle: AppBundle) -> Result<InstalledApp> {
         app = app.workflow(def);
     }
     for grant in permissions {
-        let g: PermissionGrant = serde_json::from_value(grant).context("invalid permission yaml")?;
+        let g: PermissionGrant =
+            serde_json::from_value(grant).context("invalid permission yaml")?;
         app = app.permission(g);
     }
     Ok(app)
@@ -182,7 +183,10 @@ pub fn cmd_app_list() -> Result<()> {
         println!("(no applications discovered)");
         return Ok(());
     }
-    println!("{:<16} {:<10} {:<12} {}", "NAME", "VERSION", "STATUS", "SOURCE");
+    println!(
+        "{:<16} {:<10} {:<12} {}",
+        "NAME", "VERSION", "STATUS", "SOURCE"
+    );
     for app in apps {
         let name = &app.manifest.name;
         let status = if installed.is_disabled(name) {
@@ -229,7 +233,14 @@ pub async fn cmd_app_info(name: &str) -> Result<()> {
     };
     if let Ok(bundle) = load_named_bundle(name) {
         let m = &bundle.manifest;
-        println!("{}", if m.label.is_empty() { &m.name } else { &m.label });
+        println!(
+            "{}",
+            if m.label.is_empty() {
+                &m.name
+            } else {
+                &m.label
+            }
+        );
         println!("Version: {}", m.version);
         println!("Description: {}", m.description);
         println!(
@@ -298,9 +309,9 @@ pub fn cmd_app_package(name: &str, output: Option<&Path>) -> Result<()> {
         let report = validate_bundle(&bundle, &load_installed().refs());
         report.fail().map_err(|e| anyhow::anyhow!("{e}"))?;
     }
-    let dest = output
-        .map(PathBuf::from)
-        .unwrap_or_else(|| qefro_core::package::default_package_name(&manifest.name, &manifest.version));
+    let dest = output.map(PathBuf::from).unwrap_or_else(|| {
+        qefro_core::package::default_package_name(&manifest.name, &manifest.version)
+    });
     let meta = write_package(&root, &dest, &manifest.name, &manifest.version)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     println!("wrote {} ({})", dest.display(), meta.sha256);
@@ -330,14 +341,26 @@ pub async fn cmd_app_install(name: &str) -> Result<()> {
         } else {
             bundle.manifest.source.as_str()
         };
-        let set = mark_installed(&bundle.manifest.name, &bundle.manifest.version, source, None)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let set = mark_installed(
+            &bundle.manifest.name,
+            &bundle.manifest.version,
+            source,
+            None,
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
         persist_registry(&bundle.manifest.clone().into(), "installed", None).await?;
-        record_lifecycle(None, &bundle.manifest.name, Some(&bundle.manifest.version), "install").await;
+        record_lifecycle(
+            None,
+            &bundle.manifest.name,
+            Some(&bundle.manifest.version),
+            "install",
+        )
+        .await;
         println!("installed: {}", set.installed.join(", "));
         Ok(())
     } else {
-        let set = mark_installed(name, "1.0.0", "builtin", None).map_err(|e| anyhow::anyhow!("{e}"))?;
+        let set =
+            mark_installed(name, "1.0.0", "builtin", None).map_err(|e| anyhow::anyhow!("{e}"))?;
         println!("installed: {}", set.installed.join(", "));
         Ok(())
     }
@@ -473,10 +496,13 @@ async fn apply_pending_migrations(bundle: &AppBundle, yes: bool) -> Result<()> {
     let pool = qefro_db::connect(&url)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let pending =
-        qefro_db::app_registry::pending_migrations(&pool, &bundle.manifest.name, &bundle.migrations)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let pending = qefro_db::app_registry::pending_migrations(
+        &pool,
+        &bundle.manifest.name,
+        &bundle.migrations,
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("{e}"))?;
     for mig in pending {
         if mig.looks_destructive() && !yes {
             eprintln!(
@@ -559,7 +585,11 @@ pub async fn cmd_tenant_app(enable: bool, tenant: &str, app: &str) -> Result<()>
             config.enabled_apps.push(app.to_string());
         }
     } else if config.enabled_apps.is_empty() {
-        config.enabled_apps = installed.active().into_iter().filter(|a| a != app).collect();
+        config.enabled_apps = installed
+            .active()
+            .into_iter()
+            .filter(|a| a != app)
+            .collect();
     } else {
         config.enabled_apps.retain(|a| a != app);
     }
@@ -606,15 +636,14 @@ pub async fn cmd_app_seed(name: &str, tenant: &str, kind: Option<&str>) -> Resul
         None => vec!["install", "tenant"],
     };
     let (_router, state) = runtime_for(name)?.build().await?;
-    let user_id: uuid::Uuid = sqlx::query_scalar(
-        "SELECT user_id FROM user_tenants WHERE tenant_id = $1 LIMIT 1",
-    )
-    .bind(tenant_row.id)
-    .fetch_optional(&pool)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or(tenant_row.id);
+    let user_id: uuid::Uuid =
+        sqlx::query_scalar("SELECT user_id FROM user_tenants WHERE tenant_id = $1 LIMIT 1")
+            .bind(tenant_row.id)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(tenant_row.id);
     let mut ctx = qefro_core::OpContext::new(tenant_row.id, user_id, vec!["Admin".into()]);
     ctx.enabled_apps = vec![name.to_string()];
     let mut created = 0u32;
@@ -628,11 +657,27 @@ pub async fn cmd_app_seed(name: &str, tenant: &str, kind: Option<&str>) -> Resul
         created += qefro_db::apply_seed_batch(&state.entities, &ctx, batch)
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-        let _ =
-            qefro_db::app_registry::mark_seed_applied(&pool, tenant_row.id, name, &batch.kind).await;
+        let _ = qefro_db::app_registry::mark_seed_applied(&pool, tenant_row.id, name, &batch.kind)
+            .await;
     }
     println!("seeded {created} row(s) for {name} / {tenant}");
     Ok(())
+}
+
+fn print_postgres_failure(err: &impl std::fmt::Display) {
+    let msg = err.to_string();
+    println!("✗ PostgreSQL {msg}");
+    if msg.contains("does not exist")
+        || msg.contains("password authentication failed")
+        || msg.contains("Connection refused")
+        || msg.contains("could not connect")
+        || msg.contains("permission denied")
+    {
+        println!("  hint: docker compose up -d postgres");
+        println!("    or: scripts/setup-postgres.sh");
+        println!("  then: export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro");
+        println!("        qefro doctor");
+    }
 }
 
 pub async fn cmd_doctor() -> Result<()> {
@@ -646,16 +691,17 @@ pub async fn cmd_doctor() -> Result<()> {
         qefro_core::API_VERSION,
         qefro_core::MIGRATION_FORMAT_VERSION
     );
-    match std::process::Command::new("rustc").arg("--version").output() {
+    match std::process::Command::new("rustc")
+        .arg("--version")
+        .output()
+    {
         Ok(out) => println!("✓ rustc {}", String::from_utf8_lossy(&out.stdout).trim()),
         Err(_) => println!("⚠ rustc missing"),
     }
 
     let env = std::env::var("QEFRO_ENV").unwrap_or_else(|_| "development".into());
     let jwt = std::env::var("JWT_SECRET").unwrap_or_else(|_| "dev-only-change-me".into());
-    if env.eq_ignore_ascii_case("production")
-        && (jwt == "dev-only-change-me" || jwt.len() < 16)
-    {
+    if env.eq_ignore_ascii_case("production") && (jwt == "dev-only-change-me" || jwt.len() < 16) {
         println!("✗ JWT_SECRET must be a non-default value in production");
         failed = true;
     } else {
@@ -668,17 +714,28 @@ pub async fn cmd_doctor() -> Result<()> {
     let pool = match qefro_db::connect(&url).await {
         Ok(pool) => match qefro_db::pool::ping(&pool).await {
             Ok(()) => {
-                println!("✓ PostgreSQL");
+                let can_ddl: bool = sqlx::query_scalar(
+                    "SELECT has_schema_privilege(current_user, 'public', 'CREATE')",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap_or(false);
+                if can_ddl {
+                    println!("✓ PostgreSQL");
+                } else {
+                    print_postgres_failure(&"permission denied for schema public");
+                    failed = true;
+                }
                 Some(pool)
             }
             Err(e) => {
-                println!("✗ PostgreSQL {e}");
+                print_postgres_failure(&e);
                 failed = true;
                 None
             }
         },
         Err(e) => {
-            println!("✗ PostgreSQL {e}");
+            print_postgres_failure(&e);
             failed = true;
             None
         }
@@ -706,8 +763,8 @@ pub async fn cmd_doctor() -> Result<()> {
         }
     }
 
-    let storage = std::env::var("QEFRO_STORAGE_PATH")
-        .unwrap_or_else(|_| "./var/qefro-storage".into());
+    let storage =
+        std::env::var("QEFRO_STORAGE_PATH").unwrap_or_else(|_| "./var/qefro-storage".into());
     match std::fs::create_dir_all(&storage).and_then(|_| std::fs::metadata(&storage)) {
         Ok(meta) if meta.is_dir() => println!("✓ Storage ({storage})"),
         Ok(_) => {

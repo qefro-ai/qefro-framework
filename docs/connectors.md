@@ -7,11 +7,9 @@ V1.0 does not ship a second execution runtime for integrations.
 External systems call Qefro the same way the UI and agents do:
 
 ```
-Connector / SDK / Agent
-        ↓
-      Tool or REST
-        ↓
-   EntityService
+Browser UI     → QefroClient → REST /api/v1 → EntityService
+Agent          → EntityOps   → EntityService
+Connector/SDK  → REST or tool invoke        → EntityService
 ```
 
 A connector must never be given a SQLx pool, database credentials, or the ability to run raw SQL.

@@ -37,7 +37,7 @@ V0.4 extends V0.3. It does not rewrite CRUD, operations, or the agent boundary. 
 
 `EntityDef` is the source of truth. `EntityService` is the execution boundary. Generic List / Card / Kanban / Calendar / Form / Detail renderers consume UI metadata. Studio overlays presentation (`entity.field.ui`, `entity.views`); it does not replace the business model.
 
-See [sdk.md](sdk.md).
+See [sdk.md](sdk.md) and [Create an application](creating-an-app.md).
 
 ## Security pipeline
 

@@ -2,7 +2,7 @@
 
 The entity inspector is a view of `EntityDef` from the runtime registry (including Studio overlays).
 
-It shows fields, relations, child tables, computed formulas, form/list/detail layout, and a preview that uses the same `FormLayout` widgets as the business UI.
+It shows fields, relations, child tables, computed formulas, form/list/detail layout, and a preview that uses the same `FormLayout` widgets as the business UI. Overlays do not change RBAC, tenant isolation, or field types.
 
 ## Safe edits (no migration)
 

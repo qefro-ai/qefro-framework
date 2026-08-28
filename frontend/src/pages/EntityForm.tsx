@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Link, useBlocker, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, ApiError, formVisible, type UiEntity, type UiField } from "../sdk/client";
 import { FormLayout } from "../components/forms/FormLayout";
 import { ErrorState, Skeleton } from "../components/ui/EmptyState";
@@ -70,8 +70,6 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
     window.addEventListener("beforeunload", onBefore);
     return () => window.removeEventListener("beforeunload", onBefore);
   }, [dirty, saving]);
-
-  const blocker = useBlocker(Boolean(dirty && !saving));
 
   if (!meta || !slug) return <ErrorState message="Unknown entity." />;
   if (loading) return <Skeleton rows={6} variant="form" />;
@@ -173,29 +171,6 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
           </button>
         </div>
       </form>
-      {blocker.state === "blocked" ? (
-        <div
-          className="palette-backdrop"
-          role="presentation"
-          onClick={() => blocker.reset()}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") blocker.reset();
-          }}
-        >
-          <div className="palette" role="alertdialog" aria-modal="true" aria-label="Unsaved changes">
-            <h3>Unsaved changes</h3>
-            <p className="muted">Leave this page and discard your changes?</p>
-            <div className="actions">
-              <button type="button" className="ghost" onClick={() => blocker.reset()}>
-                Stay
-              </button>
-              <button type="button" className="danger" onClick={() => blocker.proceed()}>
-                Discard
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

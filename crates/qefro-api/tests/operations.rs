@@ -2,9 +2,7 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use qefro_api::{
-    Config, InstalledApp, OperationCtx, OperationHandler, QefroRuntime,
-};
+use qefro_api::{Config, InstalledApp, OperationCtx, OperationHandler, QefroRuntime};
 use qefro_core::{AppModule, EntityDef, FieldDef, OperationDef};
 use qefro_permissions::{Action, PermissionGrant, ROLE_MANAGER, ROLE_STAFF};
 use qefro_workflow::{TransitionDef, WorkflowDef};
@@ -12,8 +10,10 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-fn test_db_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+fn test_db_url() -> String {
+    std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
+    )
 }
 
 struct ConfirmBooking;
@@ -36,7 +36,10 @@ impl OperationHandler for ConfirmBooking {
         ctx.update("OpRoom", room_id, json!({ "status": "reserved" }))
             .await?;
         ctx.apply_transition("confirm")?;
-        ctx.emit("booking.confirmed", json!({ "entity_id": ctx.record_id()? }));
+        ctx.emit(
+            "booking.confirmed",
+            json!({ "entity_id": ctx.record_id()? }),
+        );
         ctx.enqueue_job(
             "notify_booking_confirmed",
             json!({ "entity": "OpBooking", "entity_id": ctx.record_id()? }),
@@ -52,7 +55,10 @@ impl OperationHandler for ExplodeBooking {
         ctx.update("OpRoom", room_id, json!({ "status": "reserved" }))
             .await?;
         ctx.apply_transition("confirm")?;
-        Err(OperationCtx::fail("forced_failure", "handler failed after mutation"))
+        Err(OperationCtx::fail(
+            "forced_failure",
+            "handler failed after mutation",
+        ))
     }
 }
 
@@ -137,13 +143,15 @@ fn ops_app() -> InstalledApp {
         .workflow(
             WorkflowDef::new("op_booking", "OpBooking", "Pending")
                 .transition(
-                    TransitionDef::new("confirm", "Pending", "Confirmed").roles(&["Manager", "Staff"]),
+                    TransitionDef::new("confirm", "Pending", "Confirmed")
+                        .roles(&["Manager", "Staff"]),
                 )
                 .transition(
                     TransitionDef::new("seat", "Confirmed", "Seated").roles(&["Manager", "Staff"]),
                 )
                 .transition(
-                    TransitionDef::new("complete", "Seated", "Completed").roles(&["Manager", "Staff"]),
+                    TransitionDef::new("complete", "Seated", "Completed")
+                        .roles(&["Manager", "Staff"]),
                 )
                 .transition(TransitionDef::new("cancel", "Pending", "Cancelled"))
                 .transition(
@@ -200,7 +208,7 @@ fn ops_app() -> InstalledApp {
 }
 
 async fn runtime() -> axum::Router {
-    let url = test_db_url().expect("DATABASE_URL");
+    let url = test_db_url();
     let mut rt = QefroRuntime::new(Config {
         database_url: url,
         jwt_secret: "test-secret".into(),
@@ -288,10 +296,6 @@ async fn register_admin(router: &axum::Router, suffix: &str, tag: &str) -> Strin
 
 #[tokio::test]
 async fn operations_pipeline_transactions_events_and_agent() {
-    if test_db_url().is_none() {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    }
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
 
@@ -386,7 +390,11 @@ async fn operations_pipeline_transactions_events_and_agent() {
     let booking_id = booking["id"].as_str().unwrap();
     assert_eq!(booking["status"], "Pending");
 
-    let (status, ops) = json(clone_router(&router), get("/api/v1/operations", Some(token_a))).await;
+    let (status, ops) = json(
+        clone_router(&router),
+        get("/api/v1/operations", Some(token_a)),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{ops}");
     let names: Vec<&str> = ops["operations"]
         .as_array()
@@ -571,10 +579,6 @@ async fn operations_pipeline_transactions_events_and_agent() {
 
 #[tokio::test]
 async fn lifecycle_workflow_rbac_isolation_audit_and_concurrency() {
-    if test_db_url().is_none() {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    }
     let router = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let admin = register_admin(&router, suffix, "life-a").await;
@@ -672,8 +676,11 @@ async fn lifecycle_workflow_rbac_isolation_audit_and_concurrency() {
     assert_eq!(status, StatusCode::CONFLICT, "{invalid}");
     assert_eq!(invalid["error"], "invalid_transition");
 
-    let (status, staff_ops) =
-        json(clone_router(&router), get("/api/v1/operations", Some(staff))).await;
+    let (status, staff_ops) = json(
+        clone_router(&router),
+        get("/api/v1/operations", Some(staff)),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{staff_ops}");
     let staff_op_names: Vec<&str> = staff_ops["operations"]
         .as_array()
@@ -684,8 +691,11 @@ async fn lifecycle_workflow_rbac_isolation_audit_and_concurrency() {
         .collect();
     assert!(staff_op_names.contains(&"confirm"));
     assert!(!staff_op_names.contains(&"explode"));
-    let (_status, mgr_ops) =
-        json(clone_router(&router), get("/api/v1/operations", Some(manager))).await;
+    let (_status, mgr_ops) = json(
+        clone_router(&router),
+        get("/api/v1/operations", Some(manager)),
+    )
+    .await;
     let mgr_op_names: Vec<&str> = mgr_ops["operations"]
         .as_array()
         .unwrap()
@@ -1007,4 +1017,3 @@ async fn lifecycle_workflow_rbac_isolation_audit_and_concurrency() {
     );
     assert!(p99 < 5_000, "p99 {p99}ms is an obvious bottleneck");
 }
-

@@ -43,12 +43,23 @@ cargo install --path crates/qefro-cli --locked --force
 # or: make install
 ```
 
-Start Postgres and set the database URL:
+Start Postgres and set the database URL. Preferred: the compose service in this repo.
 
 ```bash
 docker compose up -d postgres
 export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro
+qefro doctor
 ```
+
+If Docker is not installed, or port 5432 already belongs to a local Postgres that has no `qefro` role:
+
+```bash
+./scripts/setup-postgres.sh
+export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro
+qefro doctor
+```
+
+That script creates role `qefro` / database `qefro` (password `qefro`) on `127.0.0.1:5432` and grants DDL on `public` (PostgreSQL 15+). The compose `POSTGRES_USER` is a superuser; the local fallback matches that so `qefro migrate` can apply schema. There is no `qefro app migrate` or `qefro app run` — schema is `qefro migrate`, the server is `qefro dev`.
 
 ## Two ways to start
 

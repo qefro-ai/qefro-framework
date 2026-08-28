@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { createElement, type ReactNode } from "react";
 import type { UiEntity, ViewKind } from "../metadata/types";
 
 export type CollectionViewProps = {
@@ -24,7 +24,7 @@ export function registerView(name: string, view: CollectionView) {
 
 export function renderView(name: string, props: CollectionViewProps) {
   const View = registry[name] || registry.list;
-  return View(props);
+  return createElement(View, props);
 }
 
 export function registeredViews(): ViewKind[] {

@@ -1,20 +1,26 @@
-.PHONY: qefro install install-dev uninstall help check
+.PHONY: qefro install install-dev uninstall help check postgres
 
 # cargo install puts the `qefro` binary in $(CARGO_HOME)/bin, usually ~/.cargo/bin
 CARGO_BIN ?= $(HOME)/.cargo/bin
+DATABASE_URL ?= postgres://qefro:qefro@127.0.0.1:5432/qefro
 
 help:
 	@echo "make install      install release qefro to $(CARGO_BIN)"
 	@echo "make install-dev  install debug qefro (faster)"
 	@echo "make uninstall    remove the installed qefro binary"
 	@echo "make qefro        build target/debug/qefro without installing"
-	@echo "make check        workspace tests + frontend tests"
+	@echo "make postgres     create/verify the qefro role and database"
+	@echo "make check        workspace tests + frontend tests (requires Postgres)"
 
 qefro:
 	cargo build -p qefro-cli
 
+postgres:
+	./scripts/setup-postgres.sh
+
 check:
-	cargo test --workspace -- --test-threads=1
+	./scripts/setup-postgres.sh --check
+	DATABASE_URL=$(DATABASE_URL) cargo test --workspace -- --test-threads=1
 	cd frontend && npm test
 
 install:

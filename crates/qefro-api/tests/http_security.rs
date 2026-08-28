@@ -9,8 +9,10 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-fn test_db_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+fn test_db_url() -> String {
+    std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
+    )
 }
 
 fn test_app() -> InstalledApp {
@@ -44,7 +46,7 @@ fn test_app() -> InstalledApp {
 }
 
 async fn runtime() -> (axum::Router, String) {
-    let url = test_db_url().expect("DATABASE_URL");
+    let url = test_db_url();
     let db = format!("{url}_sec_{}", &Uuid::new_v4().to_string()[..8]);
     // Use the same database; tables are shared. Tests isolate by tenant.
     let mut rt = QefroRuntime::new(Config {
@@ -137,10 +139,6 @@ fn clone_router(router: &axum::Router) -> axum::Router {
 
 #[tokio::test]
 async fn health_is_public() {
-    if test_db_url().is_none() {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    }
     let (router, _) = runtime().await;
     let (status, body) = json(router, get("/health", None)).await;
     assert_eq!(status, StatusCode::OK);
@@ -150,10 +148,6 @@ async fn health_is_public() {
 
 #[tokio::test]
 async fn ready_requires_database() {
-    if test_db_url().is_none() {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    }
     let (router, _) = runtime().await;
     let (status, body) = json(router, get("/ready", None)).await;
     assert_eq!(status, StatusCode::OK);
@@ -162,10 +156,6 @@ async fn ready_requires_database() {
 
 #[tokio::test]
 async fn unauthenticated_cannot_list_entities() {
-    if test_db_url().is_none() {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    }
     let (router, _) = runtime().await;
     let (status, _) = json(router, get("/api/v1/sec-notes", None)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
@@ -173,10 +163,6 @@ async fn unauthenticated_cannot_list_entities() {
 
 #[tokio::test]
 async fn tenant_isolation_and_rbac_and_agent() {
-    if test_db_url().is_none() {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    }
     let (router, _) = runtime().await;
 
     let suffix = &Uuid::new_v4().to_string()[..8];
@@ -291,10 +277,6 @@ async fn tenant_isolation_and_rbac_and_agent() {
 
 #[tokio::test]
 async fn staff_cannot_bypass_permissions_or_workflow() {
-    if test_db_url().is_none() {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    }
     let (router, _) = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let admin_email = format!("admin-{suffix}@example.com");
@@ -429,10 +411,6 @@ async fn staff_cannot_bypass_permissions_or_workflow() {
 
 #[tokio::test]
 async fn ui_metadata_includes_visibility_and_workflow() {
-    if test_db_url().is_none() {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    }
     let (router, _) = runtime().await;
     let suffix = &Uuid::new_v4().to_string()[..8];
     let (status, body) = json(

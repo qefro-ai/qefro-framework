@@ -52,24 +52,14 @@ Agent
   ↓
 Tool Registry
   ↓
-EntityService / OperationService
+EntityOps (in-process adapter)
   ↓
-Authentication
+EntityService
   ↓
-Tenant Context
-  ↓
-RBAC
-  ↓
-Validation
-  ↓
-Workflow
-  ↓
-Business Operation
-  ↓
-Audit
-  ↓
-Event
+Authentication → Tenant → RBAC → Validation → Workflow → Operation → Audit → Event
 ```
+
+The browser uses `QefroClient` → REST → `EntityService`. Agents never get a SQLx pool. See [sdk.md](sdk.md).
 
 The agent cannot:
 

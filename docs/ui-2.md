@@ -36,11 +36,11 @@ The V1 generic UI already had lists, forms, dashboards, widgets, filters, search
 
 React presents and interacts. The server remains authoritative for permissions, tenant, workflow, validation, and calculations.
 
-Studio preview uses the **same** `FormLayout`, widget registry, and view registry as production.
+Studio preview uses the **same** `FormLayout`, widget registry, and view registry as production. Overlays are presentation only.
 
 ## Docs in this set
 
-- [SDK](sdk.md)
+- [QefroClient](sdk.md)
 - [Views](views.md)
 - [View metadata](view-metadata.md)
 - [Kanban](kanban.md)

@@ -2,16 +2,15 @@ use qefro_core::AppMigration;
 use qefro_db::{apply_schema, connect};
 use uuid::Uuid;
 
-fn db_url() -> Option<String> {
-    std::env::var("DATABASE_URL").ok()
+fn db_url() -> String {
+    std::env::var("DATABASE_URL").expect(
+        "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
+    )
 }
 
 #[tokio::test]
 async fn failed_migration_is_recorded_and_not_applied() {
-    let Some(url) = db_url() else {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    };
+    let url = db_url();
     let pool = connect(&url).await.unwrap();
     apply_schema(&pool, &qefro_core::EntityRegistry::new())
         .await
@@ -35,14 +34,13 @@ async fn failed_migration_is_recorded_and_not_applied() {
         .unwrap();
     assert!(applied.is_empty(), "{applied:?}");
 
-    let status: String = sqlx::query_scalar(
-        "SELECT status FROM qefro_app_migrations WHERE app = $1 AND name = $2",
-    )
-    .bind(&app)
-    .bind(&bad.id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM qefro_app_migrations WHERE app = $1 AND name = $2")
+            .bind(&app)
+            .bind(&bad.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(status, "failed");
 
     let changed = AppMigration {
@@ -64,10 +62,7 @@ async fn failed_migration_is_recorded_and_not_applied() {
 
 #[tokio::test]
 async fn successful_migration_is_idempotent() {
-    let Some(url) = db_url() else {
-        eprintln!("skipping: DATABASE_URL not set");
-        return;
-    };
+    let url = db_url();
     let pool = connect(&url).await.unwrap();
     apply_schema(&pool, &qefro_core::EntityRegistry::new())
         .await

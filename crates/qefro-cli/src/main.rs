@@ -1,9 +1,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use qefro_api::{Config, InstalledApp, QefroRuntime};
-use qefro_core::{
-    discover_apps, load_installed, suggest_similar, AppManifest,
-};
+use qefro_core::{discover_apps, load_installed, suggest_similar, AppManifest};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -24,7 +22,10 @@ enum Commands {
         #[arg(long)]
         path: Option<PathBuf>,
     },
-    /// Application module helpers
+    /// Application catalog (new, validate, package, install)
+    #[command(
+        after_help = "Schema and the HTTP server are top-level commands:\n  qefro migrate --app <name>\n  qefro dev --app <name>\nThere is no `qefro app migrate` or `qefro app run`."
+    )]
     App {
         #[command(subcommand)]
         command: AppCommands,
@@ -34,12 +35,12 @@ enum Commands {
         #[command(subcommand)]
         command: EntityCommands,
     },
-    /// Apply PostgreSQL schema from registered modules
+    /// Apply PostgreSQL schema from registered modules (`qefro migrate`, not `qefro app migrate`)
     Migrate {
         #[arg(long, default_value = "all")]
         app: String,
     },
-    /// Run the development server
+    /// Run the development server (`qefro dev`, not `qefro app run`)
     Dev {
         #[arg(long, default_value = "all")]
         app: String,
@@ -99,6 +100,9 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+#[command(
+    after_help = "Schema: `qefro migrate --app <name>`. Server: `qefro dev --app <name>`.\nThere is no `qefro app migrate` or `qefro app run`."
+)]
 enum AppCommands {
     /// Create an application module skeleton under apps/<name>
     New { name: String },
@@ -188,7 +192,10 @@ fn init_tracing() {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match &cli.command {
-        Commands::Dev { .. } | Commands::Serve { .. } | Commands::Worker | Commands::Migrate { .. } => {
+        Commands::Dev { .. }
+        | Commands::Serve { .. }
+        | Commands::Worker
+        | Commands::Migrate { .. } => {
             init_tracing();
             let env = std::env::var("QEFRO_ENV").unwrap_or_else(|_| "development".into());
             tracing::info!(env, "qefro starting");
@@ -307,7 +314,17 @@ async fn main() -> Result<()> {
             input,
             url,
             token,
-        } => cmd_action(&entity, &id, &name, input.as_deref(), &url, token.as_deref()).await?,
+        } => {
+            cmd_action(
+                &entity,
+                &id,
+                &name,
+                input.as_deref(),
+                &url,
+                token.as_deref(),
+            )
+            .await?
+        }
         Commands::Worker => runtime_for("all")?.run_worker().await?,
         Commands::Doctor => app_cmd::cmd_doctor().await?,
     }
@@ -502,8 +519,14 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
     println!("label:          {}", entity.label);
     println!("slug:           {}", entity.slug);
     println!("table:          {}", entity.table);
-    println!("module:         {}", entity.module.clone().unwrap_or_default());
-    println!("workflow:       {}", entity.workflow.clone().unwrap_or_else(|| "(none)".into()));
+    println!(
+        "module:         {}",
+        entity.module.clone().unwrap_or_default()
+    );
+    println!(
+        "workflow:       {}",
+        entity.workflow.clone().unwrap_or_else(|| "(none)".into())
+    );
     println!("display_field:  {}", entity.display_field);
     println!("fields:");
     for field in &entity.fields {
@@ -558,7 +581,8 @@ fn cmd_entity_create(name: &str, app: Option<&str>) -> Result<()> {
 
 fn entity_write_dir(app: Option<&str>) -> Result<PathBuf> {
     if let Some(app) = app {
-        let root = qefro_core::find_app_root(app).unwrap_or_else(|| PathBuf::from("apps").join(app));
+        let root =
+            qefro_core::find_app_root(app).unwrap_or_else(|| PathBuf::from("apps").join(app));
         return Ok(root.join("entities"));
     }
     if Path::new("app.toml").exists() {
@@ -601,7 +625,6 @@ async fn cmd_action(
     println!("{body}");
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
