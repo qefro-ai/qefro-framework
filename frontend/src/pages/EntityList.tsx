@@ -16,6 +16,8 @@ import { FormLayout } from "../components/forms/FormLayout";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
 import { PageHeader } from "../components/ui/PageHeader";
 import { ActionMenu } from "../components/ui/ActionMenu";
+import { AssignDialog } from "../components/ui/AssignDialog";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { showSnackbar } from "../components/ui/Snackbar";
 import { FieldValue } from "../components/fields/FieldValue";
 import { ViewSelector } from "../components/views/ViewSelector";
@@ -26,7 +28,7 @@ import { friendlyError } from "../friendlyError";
 import { formatMoney } from "../metadata/timezone";
 import { useTenantTheme } from "../metadata/context";
 import { availableViews, calendarStartField, canCreate, canDelete, canExport, canUpdate, defaultView, listGroupField, listViewSpec } from "../metadata/views";
-import { t } from "../i18n";
+import { entityCount, t } from "../i18n";
 import type { ViewKind } from "../metadata/types";
 import { usePrefsOptional } from "../prefsContext";
 import { useRealtime } from "../realtime";
@@ -56,6 +58,8 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [pending, setPending] = useState<"archive" | "delete" | "assign" | null>(null);
+  const [busy, setBusy] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [searchInput, setSearchInput] = useState(search);
   const [tick, setTick] = useState(0);
@@ -93,6 +97,11 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
   useEffect(() => {
     setSearchInput(search);
   }, [search]);
+
+  useEffect(() => {
+    setSelected(new Set());
+    setPending(null);
+  }, [slug]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -207,37 +216,30 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
   }
 
   async function runBulk(action: string, fields: Record<string, unknown> = {}) {
-    if (!meta) return;
+    if (!meta || busy) return;
+    const count = selected.size;
+    setBusy(true);
     try {
       const result = await api.bulk(meta.slug, { action, ids: [...selected], fields });
       setSelected(new Set());
+      setPending(null);
       const failed = result.failed ?? 0;
+      const succeeded = result.succeeded ?? 0;
+      const doneAction = action === "assign" && (fields.assigned_to == null || fields.assigned_to === "") ? "update" : action;
       showSnackbar(
-        failed
-          ? `${result.succeeded} succeeded, ${failed} failed`
-          : `${result.succeeded} ${action === "delete" ? "deleted" : action === "archive" ? "archived" : "updated"}`,
+        bulkResultMessage(doneAction, succeeded, failed, meta.label, meta.label_plural),
+        failed ? "error" : "success",
       );
       setTick((n) => n + 1);
     } catch (e) {
       setError(friendlyError(e));
+      showSnackbar(
+        t("bulk.failed", { action, count: entityCount(count, meta.label, meta.label_plural) }),
+        "error",
+      );
+    } finally {
+      setBusy(false);
     }
-  }
-
-  async function bulkDelete() {
-    if (!meta || !confirm(t("bulk.deleteConfirm", { n: selected.size }))) return;
-    await runBulk("delete");
-  }
-
-  async function bulkArchive() {
-    if (!meta || !confirm(t("bulk.archiveConfirm", { n: selected.size }))) return;
-    await runBulk("archive");
-  }
-
-  async function bulkAssign() {
-    if (!meta) return;
-    const assigned = window.prompt("Assigned to user id");
-    if (assigned == null) return;
-    await runBulk("assign", { assigned_to: assigned || null });
   }
 
   async function exportCsv() {
@@ -373,28 +375,33 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
         />
       )}
       {selected.size > 0 && allowBulk && (
-        <div className="actions bulk-bar">
-          <span className="muted">{t("bulk.selected", { n: selected.size })}</span>
-          {allowExport ? (
-            <button className="ghost" onClick={() => void exportCsv()}>
-              {t("bulk.export")}
+        <div className="bulk-bar" role="region" aria-label="Bulk actions">
+          <span className="bulk-count">{t("bulk.selected", { count: entityCount(selected.size, meta.label, meta.label_plural) })}</span>
+          <div className="bulk-actions">
+            {allowExport ? (
+              <button type="button" className="ghost" onClick={() => void exportCsv()}>
+                {t("bulk.export")}
+              </button>
+            ) : null}
+            {allowAssign ? (
+              <button type="button" className="ghost" onClick={() => setPending("assign")}>
+                {t("bulk.assign")}
+              </button>
+            ) : null}
+            {allowArchive ? (
+              <button type="button" className="ghost" onClick={() => setPending("archive")}>
+                {t("bulk.archive")}
+              </button>
+            ) : null}
+            {allowDelete ? (
+              <button type="button" className="danger" onClick={() => setPending("delete")}>
+                {t("bulk.delete")}
+              </button>
+            ) : null}
+            <button type="button" className="ghost" onClick={() => setSelected(new Set())}>
+              {t("bulk.clear")}
             </button>
-          ) : null}
-          {allowAssign ? (
-            <button className="ghost" onClick={() => void bulkAssign()}>
-              {t("bulk.assign")}
-            </button>
-          ) : null}
-          {allowArchive ? (
-            <button className="ghost" onClick={() => void bulkArchive()}>
-              {t("bulk.archive")}
-            </button>
-          ) : null}
-          {allowDelete ? (
-            <button className="danger" onClick={() => void bulkDelete()}>
-              {t("bulk.delete")}
-            </button>
-          ) : null}
+          </div>
         </div>
       )}
       {currentView === "list" ? (
@@ -429,11 +436,14 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
           <table className="data freeze">
             <thead>
               <tr>
-                <th>
+                <th className="select-cell">
                   <input
                     type="checkbox"
-                    aria-label="Select all"
+                    aria-label="Select all on this page"
                     checked={rows.length > 0 && selected.size === rows.length}
+                    ref={(el) => {
+                      if (el) el.indeterminate = selected.size > 0 && selected.size < rows.length;
+                    }}
                     onChange={toggleAll}
                   />
                 </th>
@@ -463,7 +473,7 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
                   ) : null}
                   {groupRowsList.map((row) => (
                     <tr key={String(row.id)} className={selected.has(String(row.id)) ? "is-selected" : undefined}>
-                      <td>
+                      <td className="select-cell">
                         <input
                           type="checkbox"
                           aria-label="Select row"
@@ -563,7 +573,7 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
       )}
       {currentView === "list" ? (
       <div className="row pagination">
-        <p className="muted">{total} records</p>
+        <p className="muted">{t("list.total", { count: entityCount(total, meta.label, meta.label_plural) })}</p>
         <p>
           <button type="button" className="ghost" disabled={page <= 1} onClick={() => setParam("page", String(page - 1))}>
             Prev
@@ -577,8 +587,35 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
         </p>
       </div>
       ) : (
-        <p className="muted">{total} records</p>
+        <p className="muted">{t("list.total", { count: entityCount(total, meta.label, meta.label_plural) })}</p>
       )}
+      <ConfirmDialog
+        open={pending === "archive"}
+        title={t("bulk.archiveTitle", { count: entityCount(selected.size, meta.label, meta.label_plural) })}
+        message={t("bulk.archiveConfirm")}
+        confirmLabel="Archive"
+        confirmDisabled={busy}
+        onCancel={() => setPending(null)}
+        onConfirm={() => void runBulk("archive")}
+      />
+      <ConfirmDialog
+        open={pending === "delete"}
+        title={t("bulk.deleteTitle", { count: entityCount(selected.size, meta.label, meta.label_plural) })}
+        message={t("bulk.deleteConfirm")}
+        confirmLabel="Delete"
+        danger
+        confirmDisabled={busy}
+        onCancel={() => setPending(null)}
+        onConfirm={() => void runBulk("delete")}
+      />
+      <AssignDialog
+        open={pending === "assign"}
+        title={t("bulk.assignTitle", { count: entityCount(selected.size, meta.label, meta.label_plural) })}
+        usersSlug={entities.find((e) => e.entity === "User" || e.slug === "users")?.slug ?? "users"}
+        onCancel={() => setPending(null)}
+        onAssign={(userId) => void runBulk("assign", { assigned_to: userId })}
+        onUnassign={() => void runBulk("assign", { assigned_to: null })}
+      />
     </div>
   );
 }
@@ -696,6 +733,34 @@ function isNumeric(field: UiField) {
     field.type === "integer" ||
     field.type === "decimal"
   );
+}
+
+function bulkResultMessage(
+  action: string,
+  succeeded: number,
+  failed: number,
+  label: string,
+  labelPlural: string,
+) {
+  const past =
+    action === "delete"
+      ? "bulk.done.delete"
+      : action === "archive"
+        ? "bulk.done.archive"
+        : action === "restore"
+          ? "bulk.done.restore"
+          : action === "assign"
+            ? "bulk.done.assign"
+            : "bulk.done.update";
+  const verb =
+    action === "delete" ? "delete" : action === "archive" ? "archive" : action === "restore" ? "restore" : "update";
+  const total = succeeded + failed;
+  if (failed && !succeeded) {
+    return t("bulk.failed", { action: verb, count: entityCount(total, label, labelPlural) });
+  }
+  const done = t(past, { count: entityCount(succeeded, label, labelPlural) });
+  if (failed) return t("bulk.partial", { done, failed });
+  return done;
 }
 
 function groupRows(rows: Record<string, unknown>[], field: string): Array<[string, Record<string, unknown>[]]> {

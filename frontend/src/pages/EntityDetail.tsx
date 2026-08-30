@@ -14,6 +14,7 @@ import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { ActionMenu } from "../components/ui/ActionMenu";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { showSnackbar } from "../components/ui/Snackbar";
 import { FieldValue } from "../components/fields/FieldValue";
 import { StatusBadge } from "../components/ui/StatusBadge";
@@ -22,6 +23,7 @@ import { relativeTime } from "../format";
 import { useTenantTheme } from "../metadata/context";
 import { canDeleteRecord, canUpdateRecord, displayValue } from "../metadata/views";
 import { resolveLayout } from "../metadata/layout";
+import { t } from "../i18n";
 import { useBreadcrumbRecord } from "../components/shell/breadcrumbContext";
 import { useRealtime } from "../realtime";
 
@@ -35,6 +37,8 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const [attachments, setAttachments] = useState<Array<Record<string, unknown>>>([]);
   const [comment, setComment] = useState("");
   const [commentBusy, setCommentBusy] = useState(false);
+  const [pending, setPending] = useState<"delete" | "archive" | "restore" | null>(null);
+  const [busy, setBusy] = useState(false);
   const theme = useTenantTheme();
   const [tab, setTab] = useState("overview");
   const { setRecord } = useBreadcrumbRecord();
@@ -119,6 +123,8 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const showComments = caps?.comments !== false;
   const showAttachments = Boolean(meta.attachments || caps?.attachments);
   const showRelated = links.length > 0 || Object.keys(related).length > 0;
+  const allowArchive = Boolean(caps?.archive) && canUpdateRecord(meta, row);
+  const archived = Boolean(row.archived_at);
 
   const chrome = [
     { id: "overview", label: "Details" },
@@ -138,6 +144,33 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
       showSnackbar(action?.label ? `${action.label} done` : "Done");
     } catch (e) {
       setError(friendlyError(e));
+    }
+  }
+
+  async function runLifecycle(action: "delete" | "archive" | "restore") {
+    if (!slug || !id || busy) return;
+    setBusy(true);
+    try {
+      if (action === "delete") {
+        await api.remove(slug, id);
+        showSnackbar(t("bulk.done.delete", { count: meta.label.toLowerCase() }));
+        navigate(`/${slug}`);
+        return;
+      }
+      await api.bulk(slug, { action, ids: [id] });
+      showSnackbar(
+        t(action === "archive" ? "bulk.done.archive" : "bulk.done.restore", {
+          count: meta.label.toLowerCase(),
+        }),
+      );
+      setPending(null);
+      if (action === "archive") navigate(`/${slug}`);
+      else await load();
+    } catch (e) {
+      setError(friendlyError(e));
+      setPending(null);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -185,20 +218,17 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
                 { key: "print", label: "Print", href: `/api/v1/${slug}/${id}/print`, target: "_blank" },
                 { key: "pdf", label: "Download PDF", href: `/api/v1/${slug}/${id}/print.pdf`, target: "_blank" },
                 {
+                  key: "archive",
+                  label: archived ? "Restore" : "Archive",
+                  hidden: !allowArchive,
+                  onSelect: () => setPending(archived ? "restore" : "archive"),
+                },
+                {
                   key: "delete",
                   label: "Delete",
                   danger: true,
                   hidden: !canDeleteRecord(meta, row),
-                  onSelect: async () => {
-                    if (!confirm("Delete this record?")) return;
-                    try {
-                      await api.remove(slug, id);
-                      showSnackbar("Deleted");
-                      navigate(`/${slug}`);
-                    } catch (e) {
-                      setError(friendlyError(e));
-                    }
-                  },
+                  onSelect: () => setPending("delete"),
                 },
               ]}
             />
@@ -278,7 +308,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                   rows={3}
-                  placeholder="Write a comment…"
+                  placeholder={t("comment.placeholder")}
                 />
               </label>
               <button type="submit" disabled={commentBusy || !comment.trim()}>
@@ -308,6 +338,34 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
           />
         </div>
       ) : null}
+      <ConfirmDialog
+        open={pending === "delete"}
+        title={t("record.deleteTitle", { entity: meta.label })}
+        message={t("record.deleteConfirm", { entity: meta.label.toLowerCase() })}
+        confirmLabel="Delete"
+        danger
+        confirmDisabled={busy}
+        onCancel={() => setPending(null)}
+        onConfirm={() => void runLifecycle("delete")}
+      />
+      <ConfirmDialog
+        open={pending === "archive"}
+        title={t("record.archiveTitle", { entity: meta.label })}
+        message={t("record.archiveConfirm", { entity: meta.label.toLowerCase() })}
+        confirmLabel="Archive"
+        confirmDisabled={busy}
+        onCancel={() => setPending(null)}
+        onConfirm={() => void runLifecycle("archive")}
+      />
+      <ConfirmDialog
+        open={pending === "restore"}
+        title={t("record.restoreTitle", { entity: meta.label })}
+        message={t("record.restoreConfirm", { entity: meta.label.toLowerCase() })}
+        confirmLabel="Restore"
+        confirmDisabled={busy}
+        onCancel={() => setPending(null)}
+        onConfirm={() => void runLifecycle("restore")}
+      />
     </div>
   );
 }

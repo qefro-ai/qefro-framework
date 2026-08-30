@@ -127,6 +127,26 @@ describe("business object runtime UI", () => {
     await waitFor(() => expect(transition).toHaveBeenCalledWith("orders", "o1", "cancel"));
   });
 
+  it("deletes a record from an in-app confirm dialog", async () => {
+    vi.spyOn(api, "get").mockResolvedValue({
+      id: "o1",
+      name: "#1042",
+      status: "Draft",
+      _permissions: { update: true, delete: true },
+    });
+    vi.spyOn(api, "activity").mockResolvedValue({ items: [] });
+    vi.spyOn(api, "attachments").mockResolvedValue({ items: [] });
+    const remove = vi.spyOn(api, "remove").mockResolvedValue(undefined);
+    wrap(<EntityDetail entities={[order]} />, "/orders/o1");
+    await waitFor(() => expect(screen.getByText(/Order #1042/)).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: "More" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    expect(remove).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Delete Order" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("orders", "o1"));
+  });
+
   it("renders timeline comments and empty attachments from generic APIs", async () => {
     vi.spyOn(api, "get").mockResolvedValue({
       id: "o1",
@@ -201,7 +221,6 @@ describe("business object runtime UI", () => {
   });
 
   it("runs bulk archive through the entity runtime", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
     const bulk = vi.spyOn(api, "bulk").mockResolvedValue({
       action: "archive",
       succeeded: 1,
@@ -226,11 +245,59 @@ describe("business object runtime UI", () => {
     };
     wrap(<EntityList entities={[customer]} />, "/customers");
     await userEvent.click(await screen.findByLabelText("Select row"));
+    expect(screen.getByText("1 customer selected")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Archive selected" }));
+    expect(bulk).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Archive 1 customer?" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(bulk).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Archive selected" }));
+    await userEvent.click(screen.getByRole("button", { name: "Archive" }));
     expect(bulk).toHaveBeenCalledWith("customers", {
       action: "archive",
       ids: ["c1"],
       fields: {},
+    });
+  });
+
+  it("assigns selected rows from a user search dialog", async () => {
+    const bulk = vi.spyOn(api, "bulk").mockResolvedValue({
+      action: "assign",
+      succeeded: 1,
+      failed: 0,
+      results: [{ id: "c1", ok: true }],
+    });
+    vi.spyOn(api, "list").mockImplementation(async (slug) => {
+      if (slug === "users") {
+        return {
+          items: [{ id: "u1", name: "Ada Lovelace", email: "ada@example.com" }],
+          total: 1,
+          page: 1,
+          page_size: 20,
+        };
+      }
+      return { items: [{ id: "c1", name: "Ada" }], total: 1, page: 1, page_size: 25 };
+    });
+    const customer: UiEntity = {
+      ...order,
+      entity: "Customer",
+      label: "Customer",
+      label_plural: "Customers",
+      slug: "customers",
+      workflow: undefined,
+      capabilities: { ...order.capabilities, archive: false, bulk: true, assignment: true },
+      permissions: { list: true, create: true, read: true, update: true, delete: true, export: true },
+    };
+    wrap(<EntityList entities={[customer]} />, "/customers");
+    await userEvent.click(await screen.findByLabelText("Select row"));
+    await userEvent.click(screen.getByRole("button", { name: "Assign…" }));
+    expect(await screen.findByRole("dialog", { name: "Assign 1 customer" })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("option", { name: /Ada Lovelace/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Assign" }));
+    expect(bulk).toHaveBeenCalledWith("customers", {
+      action: "assign",
+      ids: ["c1"],
+      fields: { assigned_to: "u1" },
     });
   });
 
