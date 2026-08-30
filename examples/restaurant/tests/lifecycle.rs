@@ -251,3 +251,198 @@ async fn reservation_confirm_seat_complete_and_cancel() {
     assert_eq!(status, StatusCode::OK, "{cancelled}");
     assert_eq!(cancelled["status"], "Cancelled");
 }
+
+fn get(path: &str, token: &str) -> Request<Body> {
+    Request::builder()
+        .method("GET")
+        .uri(path)
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+async fn drain_jobs(state: &qefro_api::AppState) {
+    for _ in 0..32 {
+        match state
+            .entities
+            .job_queue()
+            .process_one(&state.entities.job_handlers())
+            .await
+        {
+            Ok(true) => {}
+            _ => break,
+        }
+    }
+}
+
+#[tokio::test]
+async fn order_ready_automation_notifies_and_webhooks() {
+    let url = db_url();
+    let mut rt = QefroRuntime::new(Config {
+        database_url: url,
+        jwt_secret: "test-secret".into(),
+        bind: "127.0.0.1:0".into(),
+        ..Config::default()
+    });
+    rt.install(installed());
+    let (router, state) = rt.build().await.unwrap();
+    let suffix = &Uuid::new_v4().to_string()[..8];
+
+    let (status, auth) = json(
+        clone_router(&router),
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/register")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "name": "Ada",
+                    "email": format!("kit-{suffix}@example.com"),
+                    "password": "password123",
+                    "tenant_name": format!("K-{suffix}"),
+                    "tenant_slug": format!("k-{suffix}")
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{auth}");
+    let token = auth["access_token"].as_str().unwrap();
+
+    let restaurant = json(
+        clone_router(&router),
+        post(
+            "/api/v1/restaurants",
+            token,
+            json!({ "name": "Kitchen", "timezone": "UTC" }),
+        ),
+    )
+    .await
+    .1;
+    let category = json(
+        clone_router(&router),
+        post(
+            "/api/v1/menu-categories",
+            token,
+            json!({ "name": "Mains", "restaurant_id": restaurant["id"] }),
+        ),
+    )
+    .await
+    .1;
+    let menu = json(
+        clone_router(&router),
+        post(
+            "/api/v1/menu-items",
+            token,
+            json!({
+                "name": "Pizza",
+                "category_id": category["id"],
+                "price": 12,
+                "available": true
+            }),
+        ),
+    )
+    .await
+    .1;
+    assert!(menu.get("id").is_some(), "{menu}");
+
+    let (status, order) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/orders",
+            token,
+            json!({
+                "order_date": "2026-08-30",
+                "items": [{
+                    "menu_item_id": menu["id"],
+                    "quantity": 1,
+                    "unit_price": 12
+                }]
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{order}");
+    assert_eq!(order["status"], "Draft");
+    let id = order["id"].as_str().unwrap();
+
+    let (status, confirmed) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/orders/{id}/actions/confirm"),
+            token,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{confirmed}");
+    assert_eq!(confirmed["status"], "Confirmed");
+
+    let (status, activity) = json(
+        clone_router(&router),
+        get(&format!("/api/v1/orders/{id}/activity"), token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{activity}");
+    let acts = activity["items"].as_array().cloned().unwrap_or_default();
+    assert!(
+        acts.iter()
+            .any(|a| a["message"].as_str() == Some("Kitchen: order confirmed")),
+        "{activity}"
+    );
+
+    let (status, notes) = json(clone_router(&router), get("/api/v1/notifications", token)).await;
+    assert_eq!(status, StatusCode::OK, "{notes}");
+    let items = notes["items"].as_array().cloned().unwrap_or_default();
+    assert!(
+        items
+            .iter()
+            .any(|n| n["title"].as_str() == Some("Order confirmed")),
+        "{notes}"
+    );
+
+    let (status, prep) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/orders/{id}/actions/start_preparation"),
+            token,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{prep}");
+    assert_eq!(prep["status"], "Preparing");
+
+    let (status, ready) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/orders/{id}/actions/mark_ready"),
+            token,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ready}");
+    assert_eq!(ready["status"], "Ready");
+    drain_jobs(&state).await;
+
+    let (status, notes2) = json(clone_router(&router), get("/api/v1/notifications", token)).await;
+    assert_eq!(status, StatusCode::OK, "{notes2}");
+    let items2 = notes2["items"].as_array().cloned().unwrap_or_default();
+    assert!(
+        items2
+            .iter()
+            .any(|n| n["title"].as_str() == Some("Order is ready")),
+        "{notes2}"
+    );
+
+    let (status, deliveries) = json(
+        clone_router(&router),
+        get("/api/v1/webhooks/order-ready/deliveries", token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{deliveries}");
+    let rows = deliveries["deliveries"].as_array().cloned().unwrap_or_default();
+    assert!(!rows.is_empty(), "order-ready webhook: {deliveries}");
+}

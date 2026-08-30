@@ -638,7 +638,14 @@ async fn apply_enum_checks(pool: &PgPool, registry: &EntityRegistry) -> QefroRes
             sqlx::query(&add)
                 .execute(pool)
                 .await
-                .map_err(|e| QefroError::database(e.to_string()))?;
+                .or_else(|e| {
+                    let msg = e.to_string();
+                    if msg.contains("already exists") {
+                        Ok(Default::default())
+                    } else {
+                        Err(QefroError::database(e.to_string()))
+                    }
+                })?;
         }
     }
     Ok(())
