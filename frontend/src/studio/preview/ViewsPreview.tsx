@@ -36,7 +36,7 @@ export default function ViewsPreview({ entity }: { entity: UiEntity }) {
           <pre className="muted">{JSON.stringify(entity.views, null, 2)}</pre>
         ) : null}
         {views.map((view) => (
-          <section key={view} style={{ marginTop: "1rem" }}>
+          <section key={view}>
             <h4>{view}</h4>
             {view === "list" && fields.length ? (
               <FormLayout

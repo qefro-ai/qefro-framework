@@ -10,11 +10,12 @@ use chrono::Utc;
 use qefro_auth::AuthService;
 use qefro_core::{
     canonicalize_datetime, is_person_link_field, person_backref_field, sanitize_html,
-    strip_secrets, validate_party, validate_record, EntityRegistry, FieldError, FieldType,
+    strip_secrets, validate_party, validate_record, apply_entity_rules, existence_rules,
+    EntityRegistry, FieldError, FieldType,
     HookRegistry, OpContext, OperationDef, QefroError, QefroResult, PERSON_ENTITY,
     PERSON_LINK_FIELD, USER_ENTITY,
 };
-use qefro_events::{DomainEvent, EventBus, InProcessEventBus};
+use qefro_events::{DomainEvent, InProcessEventBus};
 use qefro_permissions::{Action, PermissionRegistry};
 use qefro_search::Query;
 use qefro_workflow::WorkflowRegistry;
@@ -288,6 +289,13 @@ impl EntityService {
             }
         }
         validate_record(entity.business_fields(), &data, false)?;
+        apply_entity_rules(
+            entity.business_fields(),
+            &entity.validation,
+            &data,
+            false,
+        )?;
+        self.check_relation_existence(ctx, &entity, &data).await?;
         self.validate_child_payloads(ctx, &entity, &children, false)
             .await?;
         self.check_uniques(ctx, &entity, &data, None).await?;
@@ -436,6 +444,19 @@ impl EntityService {
             }
         }
         validate_record(entity.business_fields(), &patch, true)?;
+        let mut merged = current.clone();
+        if let (Some(dst), Some(src)) = (merged.as_object_mut(), patch.as_object()) {
+            for (k, v) in src {
+                dst.insert(k.clone(), v.clone());
+            }
+        }
+        apply_entity_rules(
+            entity.business_fields(),
+            &entity.validation,
+            &merged,
+            true,
+        )?;
+        self.check_relation_existence(ctx, &entity, &merged).await?;
         self.validate_child_payloads(ctx, &entity, &children, true)
             .await?;
         self.check_uniques(ctx, &entity, &patch, Some(id)).await?;
@@ -509,7 +530,7 @@ impl EntityService {
             let _ = tx.rollback().await;
             return Err(e);
         }
-        let events = mutation_events(
+        let mut events = mutation_events(
             &entity.name,
             id,
             ctx,
@@ -517,6 +538,30 @@ impl EntityService {
             "updated",
             "entity.updated",
         );
+        if crate::activity::assignment_changed(Some(&current), Some(&updated)) {
+            events.push(
+                DomainEvent::new(
+                    format!("{}.assigned", snake(&entity.name)),
+                    entity.name.clone(),
+                    id,
+                    ctx.tenant_id,
+                    json!({
+                        "assigned_to": updated.get("assigned_to"),
+                    }),
+                )
+                .with_user(ctx.user_id),
+            );
+            events.push(
+                DomainEvent::new(
+                    "entity.assigned".to_string(),
+                    entity.name.clone(),
+                    id,
+                    ctx.tenant_id,
+                    json!({ "assigned_to": updated.get("assigned_to") }),
+                )
+                .with_user(ctx.user_id),
+            );
+        }
         if let Err(e) = Outbox::enqueue_many_tx(&mut tx, &events).await {
             let _ = tx.rollback().await;
             return Err(e);
@@ -2142,7 +2187,8 @@ impl EntityService {
                 json!({ "enabled": false }),
             );
             event.user_id = Some(ctx.user_id);
-            let _ = self.events.publish(event).await;
+            self.outbox.enqueue(&event).await?;
+            let _ = self.dispatch_outbox().await;
         }
         self.present(ctx, &entity, updated).await
     }
@@ -2210,12 +2256,65 @@ impl EntityService {
     }
 
     fn reject_worker_crud(&self, ctx: &OpContext) -> QefroResult<()> {
+        if ctx.is_automation() {
+            return Ok(());
+        }
         if ctx.is_worker() {
             Err(QefroError::forbidden(
                 "workers cannot perform generic entity mutations",
             ))
         } else {
             Ok(())
+        }
+    }
+
+    async fn check_relation_existence(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        data: &Value,
+    ) -> QefroResult<()> {
+        let mut errors = Vec::new();
+        for rule in existence_rules(&entity.validation) {
+            let Some(field_name) = rule.field.as_deref() else {
+                continue;
+            };
+            let Some(field) = entity.fields.iter().find(|f| f.name == field_name) else {
+                continue;
+            };
+            let value = data.get(field_name);
+            if value.is_none() || value == Some(&Value::Null) {
+                continue;
+            }
+            let Some(id) = value.and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok())
+            else {
+                errors.push(FieldError::new(
+                    field_name,
+                    "exists",
+                    format!("{} is not a valid id", field.label),
+                ));
+                continue;
+            };
+            let Some(rel) = &field.relation else {
+                continue;
+            };
+            let target = self.registry.get(&rel.target_entity)?;
+            match self.repo.get(&target, ctx, id).await {
+                Ok(_) => {}
+                Err(QefroError::NotFound { .. }) => {
+                    errors.push(FieldError::new(
+                        field_name,
+                        "exists",
+                        format!("{} must reference an existing {}", field.label, target.name),
+                    ));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(QefroError::validation(errors))
         }
     }
 }

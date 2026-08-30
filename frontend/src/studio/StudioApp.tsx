@@ -42,21 +42,34 @@ export default function StudioApp() {
     <div className="studio-shell">
       <aside className="studio-nav">
         <p className="muted">Qefro Studio</p>
-        <NavLink to="/studio" end>
-          Overview
-        </NavLink>
-        <NavLink to="/studio/apps">Apps</NavLink>
-        <NavLink to="/studio/entities">Entities</NavLink>
-        <NavLink to="/studio/workflows">Workflows</NavLink>
-        <NavLink to="/studio/permissions">Permissions</NavLink>
-        <NavLink to="/studio/notifications">Notifications</NavLink>
-        <NavLink to="/studio/webhooks">Webhooks</NavLink>
-        <NavLink to="/studio/public-forms">Public Forms</NavLink>
-        <NavLink to="/studio/reports">Reports</NavLink>
-        <NavLink to="/studio/dashboards">Dashboards</NavLink>
-        <NavLink to="/studio/print-formats">Print Formats</NavLink>
-        <NavLink to="/studio/system">System</NavLink>
-        <NavLink to="/">Exit Studio</NavLink>
+        <div className="nav-group">
+          <div className="nav-group-label">Workspace</div>
+          <NavLink to="/studio" end>
+            Overview
+          </NavLink>
+          <NavLink to="/studio/apps">Apps</NavLink>
+          <NavLink to="/studio/entities">Entities</NavLink>
+          <NavLink to="/studio/workflows">Workflows</NavLink>
+          <NavLink to="/studio/permissions">Permissions</NavLink>
+        </div>
+        <div className="nav-group">
+          <div className="nav-group-label">Platform</div>
+          <NavLink to="/studio/notifications">Notifications</NavLink>
+          <NavLink to="/studio/webhooks">Webhooks</NavLink>
+          <NavLink to="/studio/automations">Automations</NavLink>
+          <NavLink to="/studio/public-forms">Public Forms</NavLink>
+        </div>
+        <div className="nav-group">
+          <div className="nav-group-label">Analytics</div>
+          <NavLink to="/studio/reports">Reports</NavLink>
+          <NavLink to="/studio/dashboards">Dashboards</NavLink>
+          <NavLink to="/studio/print-formats">Print Formats</NavLink>
+        </div>
+        <div className="nav-group">
+          <div className="nav-group-label">System</div>
+          <NavLink to="/studio/system">System</NavLink>
+          <NavLink to="/">Exit Studio</NavLink>
+        </div>
       </aside>
       <div className="studio-main">
         <CommandPalette caps={caps} />
@@ -72,6 +85,7 @@ export default function StudioApp() {
           <Route path="permissions/:entity" element={<Permissions caps={caps} />} />
           <Route path="notifications" element={<Platform kind="notifications" />} />
           <Route path="webhooks" element={<Platform kind="webhooks" />} />
+          <Route path="automations" element={<Platform kind="automations" />} />
           <Route path="public-forms" element={<Platform kind="public-forms" />} />
           <Route path="reports" element={<ReportsStudio kind="reports" caps={caps} />} />
           <Route path="reports/:name" element={<ReportsStudio kind="reports" caps={caps} />} />

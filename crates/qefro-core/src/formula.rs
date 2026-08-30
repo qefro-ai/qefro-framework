@@ -8,7 +8,7 @@ use crate::field::{FieldDef, FieldType};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinOp {
     Add,
     Sub,
@@ -17,18 +17,20 @@ pub enum BinOp {
     Mod,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Func {
     Sum,
     Min,
     Max,
     Count,
     Round,
+    Concat,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Number(f64),
+    String(String),
     Field(String),
     ChildField {
         table: String,
@@ -43,6 +45,54 @@ pub enum Expr {
         func: Func,
         args: Vec<Expr>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormulaValue {
+    Number(f64),
+    Text(String),
+    Null,
+}
+
+impl FormulaValue {
+    pub fn as_number(&self) -> QefroResult<f64> {
+        match self {
+            Self::Number(n) => Ok(*n),
+            Self::Null => Ok(0.0),
+            Self::Text(s) if s.trim().is_empty() => Ok(0.0),
+            Self::Text(s) => s
+                .parse::<f64>()
+                .map_err(|_| QefroError::bad_request(format!("'{s}' is not numeric"))),
+        }
+    }
+
+    pub fn as_text(&self) -> String {
+        match self {
+            Self::Number(n) => {
+                if n.fract() == 0.0 {
+                    format!("{}", *n as i64)
+                } else {
+                    n.to_string()
+                }
+            }
+            Self::Text(s) => s.clone(),
+            Self::Null => String::new(),
+        }
+    }
+
+    pub fn to_json(&self, field: &FieldDef) -> Value {
+        match self {
+            Self::Null => Value::Null,
+            Self::Text(s) => Value::String(s.clone()),
+            Self::Number(n) => match field.field_type {
+                FieldType::Integer => json_int(*n),
+                FieldType::String | FieldType::Text => Value::String(self.as_text()),
+                _ => serde_json::Number::from_f64(*n)
+                    .map(Value::Number)
+                    .unwrap_or(Value::from(*n as i64)),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -71,50 +121,89 @@ pub fn parse_formula(input: &str) -> QefroResult<Expr> {
 }
 
 pub fn eval_formula(expr: &Expr, ctx: &FormulaContext<'_>) -> QefroResult<f64> {
+    eval_value(expr, ctx)?.as_number()
+}
+
+pub fn eval_value(expr: &Expr, ctx: &FormulaContext<'_>) -> QefroResult<FormulaValue> {
     match expr {
-        Expr::Number(n) => Ok(*n),
+        Expr::Number(n) => Ok(FormulaValue::Number(*n)),
+        Expr::String(s) => Ok(FormulaValue::Text(s.clone())),
         Expr::Field(name) => {
             if let Some(rows) = ctx.children.get(name) {
-                return Ok(rows.len() as f64);
+                return Ok(FormulaValue::Number(rows.len() as f64));
             }
-            number_at(ctx.record, name)
+            value_at(ctx.record, name)
         }
         Expr::ChildField { table, field } => {
             let rows = ctx.children.get(table).map(|v| v.as_slice()).unwrap_or(&[]);
             if rows.len() == 1 {
-                return number_at(&rows[0], field);
+                return value_at(&rows[0], field);
             }
             Err(QefroError::bad_request(format!(
                 "child field '{table}.{field}' must be used inside SUM/MIN/MAX/COUNT"
             )))
         }
-        Expr::Binary { op, left, right } => {
-            let l = eval_formula(left, ctx)?;
-            let r = eval_formula(right, ctx)?;
-            match op {
-                BinOp::Add => Ok(l + r),
-                BinOp::Sub => Ok(l - r),
-                BinOp::Mul => Ok(l * r),
-                BinOp::Div => {
-                    if r == 0.0 {
-                        return Err(QefroError::bad_request("division by zero in formula"));
-                    }
-                    Ok(l / r)
-                }
-                BinOp::Mod => {
-                    if r == 0.0 {
-                        return Err(QefroError::bad_request("modulo by zero in formula"));
-                    }
-                    Ok(l % r)
-                }
-            }
-        }
-        Expr::Call { func, args } => eval_call(func, args, ctx),
+        Expr::Binary { op, left, right } => eval_binary(*op, left, right, ctx),
+        Expr::Call { func, args } => eval_call_value(func, args, ctx),
     }
 }
 
-fn eval_call(func: &Func, args: &[Expr], ctx: &FormulaContext<'_>) -> QefroResult<f64> {
-    match func {
+fn eval_binary(
+    op: BinOp,
+    left: &Expr,
+    right: &Expr,
+    ctx: &FormulaContext<'_>,
+) -> QefroResult<FormulaValue> {
+    let l = eval_value(left, ctx)?;
+    let r = eval_value(right, ctx)?;
+    if op == BinOp::Add {
+        match (&l, &r) {
+            (FormulaValue::Text(_), FormulaValue::Text(_))
+            | (FormulaValue::Text(_), FormulaValue::Null)
+            | (FormulaValue::Null, FormulaValue::Text(_)) => {
+                return Ok(FormulaValue::Text(format!("{}{}", l.as_text(), r.as_text())));
+            }
+            (FormulaValue::Number(_), FormulaValue::Text(_))
+            | (FormulaValue::Text(_), FormulaValue::Number(_)) => {
+                return Err(QefroError::bad_request(
+                    "cannot add a number and a string",
+                ));
+            }
+            _ => {}
+        }
+    }
+    let ln = l.as_number()?;
+    let rn = r.as_number()?;
+    let n = match op {
+        BinOp::Add => ln + rn,
+        BinOp::Sub => ln - rn,
+        BinOp::Mul => ln * rn,
+        BinOp::Div => {
+            if rn == 0.0 {
+                return Err(QefroError::bad_request("division by zero in formula"));
+            }
+            ln / rn
+        }
+        BinOp::Mod => {
+            if rn == 0.0 {
+                return Err(QefroError::bad_request("modulo by zero in formula"));
+            }
+            ln % rn
+        }
+    };
+    Ok(FormulaValue::Number(n))
+}
+
+fn eval_call_value(func: &Func, args: &[Expr], ctx: &FormulaContext<'_>) -> QefroResult<FormulaValue> {
+    if *func == Func::Concat {
+        let mut out = String::new();
+        for arg in args {
+            out.push_str(&eval_value(arg, ctx)?.as_text());
+        }
+        return Ok(FormulaValue::Text(out));
+    }
+    let n = match func {
+        Func::Concat => unreachable!(),
         Func::Round => {
             if args.is_empty() || args.len() > 2 {
                 return Err(QefroError::bad_request("ROUND takes 1 or 2 arguments"));
@@ -126,30 +215,29 @@ fn eval_call(func: &Func, args: &[Expr], ctx: &FormulaContext<'_>) -> QefroResul
                 0
             };
             let factor = 10f64.powi(digits.max(0));
-            Ok((value * factor).round() / factor)
+            (value * factor).round() / factor
         }
         Func::Count => {
             if args.len() != 1 {
                 return Err(QefroError::bad_request("COUNT takes 1 argument"));
             }
             match &args[0] {
-                Expr::Field(name) => {
-                    Ok(ctx.children.get(name).map(|r| r.len()).unwrap_or(0) as f64)
-                }
+                Expr::Field(name) => ctx.children.get(name).map(|r| r.len()).unwrap_or(0) as f64,
                 Expr::ChildField { table, field } => {
                     let rows = ctx.children.get(table).map(|v| v.as_slice()).unwrap_or(&[]);
-                    Ok(rows
-                        .iter()
+                    rows.iter()
                         .filter(|row| {
                             row.get(field.as_str())
                                 .map(|v| !v.is_null())
                                 .unwrap_or(false)
                         })
-                        .count() as f64)
+                        .count() as f64
                 }
-                _ => Err(QefroError::bad_request(
-                    "COUNT expects a child table or child field",
-                )),
+                _ => {
+                    return Err(QefroError::bad_request(
+                        "COUNT expects a child table or child field",
+                    ))
+                }
             }
         }
         Func::Sum | Func::Min | Func::Max => {
@@ -160,16 +248,18 @@ fn eval_call(func: &Func, args: &[Expr], ctx: &FormulaContext<'_>) -> QefroResul
             }
             let values = collect_agg_values(&args[0], ctx)?;
             if values.is_empty() {
-                return Ok(0.0);
-            }
-            match func {
-                Func::Sum => Ok(values.iter().sum()),
-                Func::Min => Ok(values.iter().cloned().fold(f64::INFINITY, f64::min)),
-                Func::Max => Ok(values.iter().cloned().fold(f64::NEG_INFINITY, f64::max)),
-                _ => unreachable!(),
+                0.0
+            } else {
+                match func {
+                    Func::Sum => values.iter().sum(),
+                    Func::Min => values.iter().cloned().fold(f64::INFINITY, f64::min),
+                    Func::Max => values.iter().cloned().fold(f64::NEG_INFINITY, f64::max),
+                    _ => unreachable!(),
+                }
             }
         }
-    }
+    };
+    Ok(FormulaValue::Number(n))
 }
 
 fn collect_agg_values(expr: &Expr, ctx: &FormulaContext<'_>) -> QefroResult<Vec<f64>> {
@@ -195,18 +285,21 @@ fn collect_agg_values(expr: &Expr, ctx: &FormulaContext<'_>) -> QefroResult<Vec<
 }
 
 fn number_at(record: &Value, name: &str) -> QefroResult<f64> {
+    value_at(record, name)?.as_number()
+}
+
+fn value_at(record: &Value, name: &str) -> QefroResult<FormulaValue> {
     let Some(value) = record.get(name) else {
-        return Ok(0.0);
+        return Ok(FormulaValue::Null);
     };
     match value {
-        Value::Null => Ok(0.0),
+        Value::Null => Ok(FormulaValue::Null),
         Value::Number(n) => n
             .as_f64()
+            .map(FormulaValue::Number)
             .ok_or_else(|| QefroError::bad_request(format!("field '{name}' is not numeric"))),
-        Value::String(s) => s
-            .parse::<f64>()
-            .map_err(|_| QefroError::bad_request(format!("field '{name}' is not numeric"))),
-        Value::Bool(b) => Ok(if *b { 1.0 } else { 0.0 }),
+        Value::String(s) => Ok(FormulaValue::Text(s.clone())),
+        Value::Bool(b) => Ok(FormulaValue::Number(if *b { 1.0 } else { 0.0 })),
         _ => Err(QefroError::bad_request(format!(
             "field '{name}' cannot be used in a formula"
         ))),
@@ -223,7 +316,7 @@ pub fn formula_dependencies(expr: &Expr) -> Vec<String> {
 
 fn walk_deps(expr: &Expr, out: &mut Vec<String>) {
     match expr {
-        Expr::Number(_) => {}
+        Expr::Number(_) | Expr::String(_) => {}
         Expr::Field(name) => out.push(name.clone()),
         Expr::ChildField { table, field } => out.push(format!("{table}.{field}")),
         Expr::Binary { left, right, .. } => {
@@ -343,22 +436,13 @@ pub fn apply_computed_fields(
         let expr = parse_formula(formula)?;
         let value = {
             let ctx = FormulaContext { record, children };
-            eval_formula(&expr, &ctx)?
+            eval_value(&expr, &ctx)?
         };
         if let Some(obj) = record.as_object_mut() {
-            obj.insert(name.clone(), numeric_value(field, value));
+            obj.insert(name.clone(), value.to_json(field));
         }
     }
     Ok(())
-}
-
-fn numeric_value(field: &FieldDef, value: f64) -> Value {
-    match field.field_type {
-        FieldType::Integer => json_int(value),
-        _ => serde_json::Number::from_f64(value)
-            .map(Value::Number)
-            .unwrap_or(Value::from(value as i64)),
-    }
 }
 
 fn json_int(value: f64) -> Value {
@@ -453,6 +537,7 @@ impl<'a> Parser<'a> {
                     right: Box::new(inner),
                 })
             }
+            Some('"') | Some('\'') => self.parse_string(),
             Some(c) if c.is_ascii_digit() || c == '.' => self.parse_number(),
             Some(c) if c.is_ascii_alphabetic() || c == '_' => self.parse_ident_or_call(),
             Some(c) => Err(QefroError::bad_request(format!(
@@ -472,6 +557,23 @@ impl<'a> Parser<'a> {
             .parse::<f64>()
             .map_err(|_| QefroError::bad_request(format!("invalid number '{raw}'")))?;
         Ok(Expr::Number(n))
+    }
+
+    fn parse_string(&mut self) -> QefroResult<Expr> {
+        let quote = self.bump().unwrap();
+        let mut out = String::new();
+        loop {
+            match self.bump() {
+                None => return Err(QefroError::bad_request("unterminated string in formula")),
+                Some(c) if c == quote => break,
+                Some('\\') => match self.bump() {
+                    Some(n) => out.push(n),
+                    None => return Err(QefroError::bad_request("unterminated string in formula")),
+                },
+                Some(c) => out.push(c),
+            }
+        }
+        Ok(Expr::String(out))
     }
 
     fn parse_ident_or_call(&mut self) -> QefroResult<Expr> {
@@ -507,6 +609,7 @@ impl<'a> Parser<'a> {
                 "MAX" => Func::Max,
                 "COUNT" => Func::Count,
                 "ROUND" => Func::Round,
+                "CONCAT" => Func::Concat,
                 other => {
                     return Err(QefroError::bad_request(format!(
                         "unknown formula function '{other}'"
@@ -625,5 +728,52 @@ mod tests {
         assert!((eval_formula(&expr, &ctx(&record, &children)).unwrap() - 3.33).abs() < 0.001);
         let expr = parse_formula("10 % 3").unwrap();
         assert_eq!(eval_formula(&expr, &ctx(&record, &children)).unwrap(), 1.0);
+    }
+
+    #[test]
+    fn string_concat_and_null() {
+        let record = json!({ "first_name": "Ada", "last_name": "Lovelace" });
+        let children = HashMap::new();
+        let expr = parse_formula(r#"first_name + " " + last_name"#).unwrap();
+        match eval_value(&expr, &ctx(&record, &children)).unwrap() {
+            FormulaValue::Text(s) => assert_eq!(s, "Ada Lovelace"),
+            other => panic!("{other:?}"),
+        }
+        let concat = parse_formula(r#"CONCAT(first_name, " ", last_name)"#).unwrap();
+        match eval_value(&concat, &ctx(&record, &children)).unwrap() {
+            FormulaValue::Text(s) => assert_eq!(s, "Ada Lovelace"),
+            other => panic!("{other:?}"),
+        }
+        let record = json!({ "first_name": "Ada", "last_name": null });
+        let expr = parse_formula(r#"first_name + " " + last_name"#).unwrap();
+        match eval_value(&expr, &ctx(&record, &children)).unwrap() {
+            FormulaValue::Text(s) => assert_eq!(s, "Ada "),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn string_type_error_and_cycles() {
+        let record = json!({ "qty": 2, "name": "Ada" });
+        let children = HashMap::new();
+        let expr = parse_formula("qty + name").unwrap();
+        assert!(eval_value(&expr, &ctx(&record, &children)).is_err());
+        let fields = vec![
+            FieldDef::string("a").computed(r#"b + "x""#),
+            FieldDef::string("b").computed(r#"a + "y""#),
+        ];
+        assert!(detect_cycles(&fields).is_err());
+    }
+
+    #[test]
+    fn apply_string_computed() {
+        let fields = vec![
+            FieldDef::string("first_name"),
+            FieldDef::string("last_name"),
+            FieldDef::string("full_name").computed(r#"first_name + " " + last_name"#),
+        ];
+        let mut record = json!({ "first_name": "Ada", "last_name": "Lovelace", "full_name": "nope" });
+        apply_computed_fields(&fields, &mut record, &HashMap::new()).unwrap();
+        assert_eq!(record["full_name"], json!("Ada Lovelace"));
     }
 }

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use qefro_core::{OpContext, QefroError, QefroResult};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::{PgPool, Postgres, Transaction};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -97,12 +97,18 @@ impl JobQueue {
             }
         }
         let id = Uuid::new_v4();
+        let run_at = payload
+            .get("run_at")
+            .and_then(|v| v.as_str())
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|d| d.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now);
         sqlx::query(
             r#"
             INSERT INTO jobs (
                 id, tenant_id, user_id, name, payload, status, attempts, max_attempts,
                 run_at, created_at, updated_at, idempotency_key
-            ) VALUES ($1,$2,$3,$4,$5,'pending',0,5, now(), now(), now(), $6)
+            ) VALUES ($1,$2,$3,$4,$5,'pending',0,5, $7, now(), now(), $6)
             "#,
         )
         .bind(id)
@@ -111,6 +117,7 @@ impl JobQueue {
         .bind(name)
         .bind(payload)
         .bind(key.as_deref())
+        .bind(run_at)
         .execute(&mut **tx)
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
@@ -232,6 +239,32 @@ impl JobQueue {
         .await
         .map_err(|e| QefroError::database(e.to_string()))?
         .ok_or_else(|| QefroError::not_found("job not found"))
+    }
+
+    pub fn to_client_json(job: &JobRecord) -> Value {
+        let status = match job.status.as_str() {
+            "pending" if job.attempts > 0 => "retrying",
+            "pending" => "queued",
+            "succeeded" => "completed",
+            other => other,
+        };
+        json!({
+            "id": job.id,
+            "tenant_id": job.tenant_id,
+            "user_id": job.user_id,
+            "name": job.name,
+            "status": job.status,
+            "status_alias": status,
+            "queued": job.status == "pending" && job.attempts == 0,
+            "completed": job.status == "succeeded",
+            "attempts": job.attempts,
+            "max_attempts": job.max_attempts,
+            "run_at": job.run_at,
+            "last_error": job.last_error,
+            "created_at": job.created_at,
+            "updated_at": job.updated_at,
+            "idempotency_key": job.idempotency_key,
+        })
     }
 
     /// After a crash, running jobs were claimed but not finished. Return them to pending.

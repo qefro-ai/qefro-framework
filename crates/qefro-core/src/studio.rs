@@ -506,7 +506,7 @@ pub fn validate_formula_on_entity(
 }
 
 pub const FORMULA_FUNCTIONS: &[&str] = &[
-    "SUM", "MIN", "MAX", "COUNT", "ROUND", "+", "-", "*", "/", "%", "()",
+    "SUM", "MIN", "MAX", "COUNT", "ROUND", "CONCAT", "+", "-", "*", "/", "%", "()",
 ];
 
 /// Live overlay for reports, dashboards, and print formats. Entity/workflow/

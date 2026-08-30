@@ -259,16 +259,16 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
           </>
         }
       />
-      <ViewSelector
-        views={views}
-        current={currentView}
-        onChange={(next) => {
-          setParam("view", next);
-          if (slug) prefs?.setTablePrefs(slug, { view: next });
-        }}
-      />
       {importOpen ? <ImportPanel slug={meta.slug} onDone={() => setTick((n) => n + 1)} /> : null}
       <div className="view-toolbar toolbar">
+        <ViewSelector
+          views={views}
+          current={currentView}
+          onChange={(next) => {
+            setParam("view", next);
+            if (slug) prefs?.setTablePrefs(slug, { view: next });
+          }}
+        />
         {meta.searchable && (
           <div className="search-field">
             <input
@@ -543,7 +543,7 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
         })
       )}
       {currentView === "list" ? (
-      <div className="row pagination" style={{ marginTop: "0.85rem" }}>
+      <div className="row pagination">
         <p className="muted">{total} records</p>
         <p>
           <button type="button" className="ghost" disabled={page <= 1} onClick={() => setParam("page", String(page - 1))}>
@@ -690,7 +690,7 @@ function ImportPanel({ slug, onDone }: { slug: string; onDone: () => void }) {
   }
 
   return (
-    <div className="panel" style={{ padding: "0.85rem" }}>
+    <div className="panel detail-panel">
       <h3>Import CSV</h3>
       <textarea rows={6} value={csv} onChange={(e) => setCsv(e.target.value)} placeholder="Paste CSV with a header row" />
       {error ? <ErrorState message={error} /> : null}

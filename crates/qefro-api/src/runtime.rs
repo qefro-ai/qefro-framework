@@ -9,8 +9,8 @@ use qefro_core::{
     AppModule, EntityRegistry, HookRegistry, LocalBlobStore, OperationDef, StudioCatalog,
 };
 use qefro_db::{
-    apply_schema, connect, AttachmentStore, BlobMetaStore, EmailNotifyJob, EntityService,
-    JobHandler, JobQueue, JobRegistry, LogNotificationJob, MetadataChangeService,
+    apply_schema, connect, AttachmentStore, BlobMetaStore, AutomationEngine, EmailNotifyJob,
+    EntityService, JobHandler, JobQueue, JobRegistry, LogNotificationJob, MetadataChangeService,
     NotificationStore, OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore,
     WebhookLog,
 };
@@ -391,6 +391,7 @@ impl QefroRuntime {
         let mut operations = OperationRegistry::new();
         let mut job_handlers = JobRegistry::new();
         let webhook_log = WebhookLog::new(pool.clone());
+        let jobs = Arc::new(JobQueue::new(pool.clone()));
         job_handlers.register("notify", Arc::new(LogNotificationJob));
         job_handlers.register("notify.email", Arc::new(EmailNotifyJob));
         job_handlers.register(
@@ -411,21 +412,31 @@ impl QefroRuntime {
                 job_handlers.register(name.clone(), handler.clone());
             }
         }
+
+        let mut notification_defs = Vec::new();
+        let mut webhook_defs = Vec::new();
+        let mut automation_defs = Vec::new();
+        for app in &self.apps {
+            notification_defs.extend(app.module.notifications.clone());
+            webhook_defs.extend(app.module.webhooks.clone());
+            automation_defs.extend(app.module.automations.clone());
+        }
+        let automation = Arc::new(AutomationEngine::new(
+            pool.clone(),
+            jobs.clone(),
+            automation_defs,
+            notification_defs.clone(),
+            webhook_defs.clone(),
+        ));
+        job_handlers.register("automation.run", automation.clone());
+        job_handlers.register("automation.schedule", automation.clone());
         qefro_db::register_document_operations(&mut operations, &registry);
         let operations = Arc::new(operations);
         let job_handlers = Arc::new(job_handlers);
-        let jobs = Arc::new(JobQueue::new(pool.clone()));
         let auth = Arc::new(AuthService::new(
             pool.clone(),
             self.config.jwt_secret.clone(),
         ));
-
-        let mut notification_defs = Vec::new();
-        let mut webhook_defs = Vec::new();
-        for app in &self.apps {
-            notification_defs.extend(app.module.notifications.clone());
-            webhook_defs.extend(app.module.webhooks.clone());
-        }
 
         let entities = Arc::new(
             EntityService::new(
@@ -440,17 +451,22 @@ impl QefroRuntime {
             .with_jobs(jobs.clone(), job_handlers.clone())
             .with_identity(auth.clone()),
         );
+        automation.bind(entities.clone());
         entities
             .events()
             .subscribe_async(
                 "*",
                 Arc::new(PlatformDispatcher::new(
                     pool.clone(),
-                    jobs,
+                    jobs.clone(),
                     notification_defs.clone(),
                     webhook_defs.clone(),
                 )),
             )
+            .await;
+        entities
+            .events()
+            .subscribe_async("*", automation.clone())
             .await;
         let realtime = Arc::new(RealtimeHub::new());
         entities
@@ -551,6 +567,7 @@ impl QefroRuntime {
             attachments,
             notification_defs,
             webhooks: webhook_defs,
+            automation,
         };
 
         let cors = CorsLayer::new()
@@ -577,10 +594,14 @@ impl QefroRuntime {
             let jobs = state.entities.job_queue();
             let handlers = state.entities.job_handlers();
             let entities = state.entities.clone();
+            let automation = state.automation.clone();
             let _ = jobs.reclaim_running().await;
             tokio::spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(2)).await;
+                    if let Err(err) = automation.enqueue_scheduled().await {
+                        tracing::warn!(error = %err, "automation scheduler");
+                    }
                     match jobs.process_one(&handlers).await {
                         Ok(true) => {}
                         Ok(false) => {}
@@ -606,6 +627,7 @@ impl QefroRuntime {
         let jobs = state.entities.job_queue();
         let handlers = state.entities.job_handlers();
         let entities = state.entities.clone();
+        let automation = state.automation.clone();
         let reclaimed = jobs.reclaim_running().await.unwrap_or(0);
         tracing::info!(reclaimed, "qefro worker polling jobs");
         loop {
@@ -615,6 +637,9 @@ impl QefroRuntime {
                     break;
                 }
                 _ = async {
+                    if let Err(err) = automation.enqueue_scheduled().await {
+                        tracing::warn!(error = %err, "automation scheduler");
+                    }
                     match jobs.process_one(&handlers).await {
                         Ok(true) => {}
                         Ok(false) => tokio::time::sleep(Duration::from_secs(2)).await,

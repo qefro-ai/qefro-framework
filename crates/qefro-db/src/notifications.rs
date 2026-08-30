@@ -214,7 +214,7 @@ impl EventHandler for PlatformDispatcher {
     }
 }
 
-async fn recipient_users(
+pub async fn recipient_users(
     pool: &PgPool,
     event: &DomainEvent,
     def: &NotificationDef,

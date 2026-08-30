@@ -417,6 +417,12 @@ export class QefroClient {
   studioNotifications = () =>
     request<{ notifications: Array<Record<string, unknown>> }>("/api/v1/studio/notifications");
   studioWebhooks = () => request<{ webhooks: Array<Record<string, unknown>> }>("/api/v1/studio/webhooks");
+  studioAutomations = () =>
+    request<{ automations: Array<Record<string, unknown>> }>("/api/v1/studio/automations");
+  studioAutomation = (name: string) =>
+    request<{ automation: Record<string, unknown>; yaml: string; json: string }>(
+      `/api/v1/studio/automations/${name}`,
+    );
   studioPublicForms = () =>
     request<{ public_forms: Array<Record<string, unknown>> }>("/api/v1/studio/public-forms");
   importPreview = (slug: string, csv: string, mapping?: Array<{ column: string; field?: string | null; default?: unknown }>) =>

@@ -152,17 +152,17 @@ export default function Settings({
           <span className="muted"> — administrators only</span>
         </p>
       ) : null}
-      <div className="badge">Tenant</div>
-      <h2>Workspace settings</h2>
-      <p className="muted">
-        Branding, navigation, applications, and locale apply to this tenant only. The server
-        enforces enabled apps and permissions — hiding a nav item is not a security control.
-      </p>
-      <form className="form" onSubmit={onSubmit}>
+      <PageHeader
+        kicker="Administration"
+        title="Workspace settings"
+        description="Branding, navigation, applications, and locale apply to this tenant only. The server enforces enabled apps and permissions — hiding a nav item is not a security control."
+      />
+      <form className="form form-wide" onSubmit={onSubmit}>
         {prefs ? (
           <fieldset>
             <legend>Appearance</legend>
-            <label>
+            <div className="form-grid">
+            <label className="field-cell width-half">
               Theme
               <select value={prefs.prefs.theme} onChange={(e) => prefs.setTheme(e.target.value as "light" | "dark" | "system")}>
                 <option value="system">System</option>
@@ -170,7 +170,7 @@ export default function Settings({
                 <option value="dark">Dark</option>
               </select>
             </label>
-            <label>
+            <label className="field-cell width-half">
               Density
               <select
                 value={prefs.prefs.density}
@@ -180,43 +180,47 @@ export default function Settings({
                 <option value="compact">Compact</option>
               </select>
             </label>
-            <p className="muted">Saved on this device for the signed-in user. Accent color still comes from tenant branding.</p>
+            <p className="muted field-cell field-span-2">Saved on this device for the signed-in user. Accent color still comes from tenant branding.</p>
+            </div>
           </fieldset>
         ) : null}
         <fieldset>
           <legend>Branding</legend>
-        <label>
+          <div className="form-grid">
+        <label className="field-cell width-half">
           Company name
           <input value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
         </label>
-        <label>
+        <label className="field-cell width-half">
           App name
           <input value={appName} onChange={(e) => setAppName(e.target.value)} />
         </label>
-        <label>
+        <label className="field-cell width-half">
           Primary color
           <input value={primary} onChange={(e) => setPrimary(e.target.value)} placeholder="#9a3412" />
         </label>
-        <label>
+        <label className="field-cell width-half">
           Secondary color
           <input value={secondary} onChange={(e) => setSecondary(e.target.value)} placeholder="#f4f1ea" />
         </label>
-        <label>
+        <label className="field-cell width-half">
           Accent color
           <input value={accent} onChange={(e) => setAccent(e.target.value)} placeholder="#9a3412" />
         </label>
-        <label>
+        <label className="field-cell width-half">
           Logo URL
           <input value={logo} onChange={(e) => setLogo(e.target.value)} />
         </label>
-        <label>
+        <label className="field-cell width-half">
           Favicon URL
           <input value={favicon} onChange={(e) => setFavicon(e.target.value)} />
         </label>
+          </div>
         </fieldset>
         <fieldset>
           <legend>Navigation and apps</legend>
-        <label>
+          <div className="form-grid">
+        <label className="field-cell width-half">
           Navigation (entity slugs, comma-separated)
           <input
             value={navigation}
@@ -224,7 +228,7 @@ export default function Settings({
             placeholder="customers, reservations, orders"
           />
         </label>
-        <label>
+        <label className="field-cell width-half">
           Enabled applications (comma-separated)
           <input
             value={apps}
@@ -232,26 +236,28 @@ export default function Settings({
             placeholder="restaurant, crm"
           />
         </label>
+          </div>
         </fieldset>
         <fieldset>
           <legend>Locale</legend>
-        <label>
+          <div className="form-grid">
+        <label className="field-cell width-half">
           Timezone
           <input value={timezone} onChange={(e) => setTimezone(e.target.value)} placeholder="UTC" />
         </label>
-        <label>
+        <label className="field-cell width-half">
           Locale
           <input value={locale} onChange={(e) => setLocale(e.target.value)} placeholder="en-US" />
         </label>
-        <label>
+        <label className="field-cell width-half">
           Currency
           <input value={currency} onChange={(e) => setCurrency(e.target.value)} placeholder="USD" />
         </label>
-        <label>
+        <label className="field-cell width-half">
           Date format
           <input value={dateFormat} onChange={(e) => setDateFormat(e.target.value)} />
         </label>
-        <label>
+        <label className="field-cell field-span-2">
           Terminology (Entity=Label, one per line)
           <textarea
             value={terminology}
@@ -260,10 +266,13 @@ export default function Settings({
             rows={4}
           />
         </label>
+          </div>
         </fieldset>
         {error && <p className="error">{error}</p>}
         {ok && <p className="ok">{ok}</p>}
-        <button type="submit">Save settings</button>
+        <div className="form-actions actions">
+          <button type="submit">Save settings</button>
+        </div>
       </form>
     </div>
   );

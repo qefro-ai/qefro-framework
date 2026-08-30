@@ -108,6 +108,19 @@ impl Outbox {
         Ok(n)
     }
 
+    pub async fn enqueue(&self, event: &DomainEvent) -> QefroResult<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        Self::enqueue_tx(&mut tx, event).await?;
+        tx.commit()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok(())
+    }
+
     pub async fn pending_count(&self) -> QefroResult<i64> {
         sqlx::query_scalar("SELECT COUNT(*) FROM qefro_outbox WHERE published_at IS NULL")
             .fetch_one(&self.pool)

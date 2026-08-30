@@ -101,10 +101,16 @@ export function AttachmentsPanel({
                   {fileIcon(name(file), mime(file))}
                 </span>
               )}
-              <button type="button" className="ghost linkish" onClick={() => void download(file)}>
-                {name(file)}
-              </button>
-              <span className="muted attachment-size">{fileSize(file.size)}</span>
+              <div className="attachment-meta">
+                <button type="button" className="ghost linkish" onClick={() => void download(file)}>
+                  {name(file)}
+                </button>
+                <span className="muted attachment-size">
+                  {[mime(file).split("/").pop()?.toUpperCase(), file.size != null ? fileSize(file.size) : ""]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              </div>
               <ActionMenu
                 items={[
                   { key: "download", label: "Download", onSelect: () => void download(file) },

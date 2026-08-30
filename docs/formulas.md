@@ -17,8 +17,10 @@ Computed fields are declared in metadata and evaluated on the server. The browse
 Restricted expressions only. No `eval`, no dynamic SQL, no arbitrary functions.
 
 - Arithmetic: `+ - * / %` and parentheses
-- Functions: `SUM MIN MAX COUNT ROUND`
+- Functions: `SUM MIN MAX COUNT ROUND CONCAT`
 - Field references: `quantity`, `items.amount`
+- String literals: `" "` and concatenation: `first_name + " " + last_name`
+- `CONCAT(first_name, " ", last_name)` (same language, not a second engine)
 - Aggregations: `SUM(items.amount)`, `COUNT(items)`
 
 Unknown functions and leftover tokens (including SQL) are rejected at parse time.

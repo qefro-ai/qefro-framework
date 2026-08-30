@@ -40,6 +40,23 @@ impl DomainEvent {
             user_id: None,
         }
     }
+
+    pub fn to_public_json(&self) -> Value {
+        serde_json::json!({
+            "id": self.id,
+            "event_id": self.id,
+            "name": self.name,
+            "event_type": self.name,
+            "entity": self.entity,
+            "entity_id": self.entity_id,
+            "record_id": self.entity_id,
+            "tenant_id": self.tenant_id,
+            "timestamp": self.timestamp,
+            "payload": self.payload,
+            "user_id": self.user_id,
+            "actor": self.user_id,
+        })
+    }
 }
 
 #[async_trait]
