@@ -13,10 +13,16 @@ notification:
 Pipeline:
 
 ```
+Event → Notification → in-app (email / webhook / WhatsApp later)
+```
+
+```
 Mutation → transaction → COMMIT → Event → Notification dispatcher → channels
 ```
 
 Nothing is sent before COMMIT. Channel failures are logged; they do not roll back the business transaction.
+
+Framework events include `entity.created`, `entity.updated`, `entity.deleted`, `workflow.transitioned`, `comment.created`, `attachment.created`, and `user.disabled`, plus app-specific names. Events do not bypass `EntityService` authorization.
 
 ## Channels
 
@@ -29,4 +35,6 @@ GET  /api/v1/notifications
 POST /api/v1/notifications/{id}/read
 ```
 
-The generic shell shows a notification bell. Recipients are filtered by role; users without entity access are not notified of records they cannot read.
+The generic shell shows a notification bell (title, relative time, unread badge). Recipients are filtered by role; users without entity access are not notified of records they cannot read. Notifications are tenant-scoped.
+
+The restaurant example listens for `order.confirmed` and `order.ready` so kitchen workflow transitions surface in the in-app center without a custom backend.

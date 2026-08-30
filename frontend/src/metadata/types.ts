@@ -66,9 +66,9 @@ export type UiField = {
   computed?: boolean;
   formula?: string;
   permission_level?: number;
-    pub allow_on_submit?: boolean;
-    secret?: boolean;
-    child_entity?: string;
+  allow_on_submit?: boolean;
+  secret?: boolean;
+  child_entity?: string;
 };
 
 export type UiEntity = {
@@ -97,6 +97,7 @@ export type UiEntity = {
   naming?: { pattern: string; field?: string };
   singleton?: boolean;
   attachments?: boolean;
+  capabilities?: EntityCapabilities;
   actions?: Array<{ name: string; label?: string; confirmation?: { required?: boolean; message?: string } }>;
   links?: Array<{ label: string; entity: string; relation: string }>;
   public_form?: { enabled?: boolean; slug?: string; fields?: string[] };
@@ -116,6 +117,16 @@ export type EntityPermissions = {
   read?: boolean;
   update?: boolean;
   delete?: boolean;
+};
+
+export type EntityCapabilities = {
+  workflow?: boolean;
+  activity?: boolean;
+  comments?: boolean;
+  attachments?: boolean;
+  audit?: boolean;
+  relations?: boolean;
+  actions?: boolean;
 };
 
 export type RecordPermissions = {

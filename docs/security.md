@@ -53,7 +53,7 @@ Background jobs rebuild `OpContext` with role `Worker`, not `Admin` or `System`.
 
 ## Secrets and logs
 
-Do not log passwords, access tokens, `DATABASE_URL`, or JWT secrets. HTTP 5xx uses `QefroError::public_message`. Structured logs include `request_id`, `tenant_id`, `user_id`, path, duration, and status. Every response may echo `x-request-id`. User `password_hash` and session tokens are never returned by EntityService or `/meta/ui`. See [Identity](identity.md).
+Do not log passwords, access tokens, `DATABASE_URL`, or JWT secrets. HTTP 5xx uses `QefroError::public_message`. Structured logs include `request_id`, `tenant_id`, `user_id`, path, duration, and status. Every response may echo `x-request-id`. User `password_hash` and session tokens are never returned by EntityService or `/meta/ui`. Activity, audit, attachments, and agent schemas also strip those keys. `GET /api/v1/audit` is Admin-only. Attachments are tenant-scoped; guessing another tenant's file id returns 404. See [Identity](identity.md), [Audit](audit.md), and [Activity](activity.md).
 
 ## Rate limits
 

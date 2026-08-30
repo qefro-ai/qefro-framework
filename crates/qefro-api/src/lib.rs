@@ -23,7 +23,7 @@ use qefro_agent::EntityOps;
 use qefro_core::{OpContext, QefroResult};
 use qefro_db::EntityService;
 use qefro_search::Query;
-use serde_json::Value;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 pub(crate) struct EntityServiceOps<'a>(pub &'a EntityService);
@@ -75,6 +75,34 @@ impl EntityOps for EntityServiceOps<'_> {
         input: Value,
     ) -> QefroResult<Value> {
         self.0.execute(ctx, entity, id, name, input).await
+    }
+
+    async fn list_activity(&self, ctx: &OpContext, entity: &str, id: Uuid) -> QefroResult<Value> {
+        let items = self.0.list_activity(ctx, entity, id, 50).await?;
+        serde_json::to_value(json!({ "items": items }))
+            .map_err(|e| qefro_core::QefroError::internal(e.to_string()))
+    }
+
+    async fn add_comment(
+        &self,
+        ctx: &OpContext,
+        entity: &str,
+        id: Uuid,
+        message: &str,
+    ) -> QefroResult<Value> {
+        let row = self.0.add_comment(ctx, entity, id, message).await?;
+        serde_json::to_value(row).map_err(|e| qefro_core::QefroError::internal(e.to_string()))
+    }
+
+    async fn list_attachments(
+        &self,
+        ctx: &OpContext,
+        entity: &str,
+        id: Uuid,
+    ) -> QefroResult<Value> {
+        let items = self.0.list_record_attachments(ctx, entity, id).await?;
+        serde_json::to_value(json!({ "items": items }))
+            .map_err(|e| qefro_core::QefroError::internal(e.to_string()))
     }
 }
 

@@ -167,6 +167,11 @@ export function AppShell({
           <NavLink to="/settings" className={({ isActive }) => (isActive ? "active" : "")}>
             <span className="nav-label">Settings</span>
           </NavLink>
+          {roles.some((r) => r.toLowerCase() === "admin") ? (
+            <NavLink to="/settings/audit" className={({ isActive }) => (isActive ? "active" : "")}>
+              <span className="nav-label">Audit log</span>
+            </NavLink>
+          ) : null}
           {studio ? (
             <NavLink to="/studio" className={({ isActive }) => (isActive ? "active" : "")}>
               <span className="nav-label">Studio</span>

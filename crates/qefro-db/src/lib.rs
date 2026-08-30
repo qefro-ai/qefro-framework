@@ -4,6 +4,7 @@
 //! are always bound as parameters. Tenant predicates are injected by the
 //! repository and cannot be omitted for tenant-owned entities.
 
+pub mod activity;
 pub mod app_registry;
 pub mod attachments;
 pub mod audit;
@@ -28,6 +29,7 @@ pub mod service;
 pub mod studio;
 pub mod webhooks;
 
+pub use activity::{ActivityRecord, ActivityStore};
 pub use app_registry::AppRegistryRow;
 pub use attachments::{Attachment, AttachmentStore};
 pub use audit::AuditLogger;

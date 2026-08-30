@@ -15,10 +15,14 @@ Typed methods cover UI metadata, records, workflow, and uploads:
 
 - `ui()` — `GET /api/v1/meta/ui`
 - `list` / `get` / `create` / `update` / `remove`
-- `action` / `transition` / `workflow`
+- `action` / `transition` / `workflow` / `getWorkflow`
+- `activity` / `getActivity` / `addComment`
+- `attachments` / `getAttachments` / `uploadAttachment`
+- `notifications` / `getNotifications`
+- `audit` (Admin)
 - `upload` / `uploadAttachment`
 
-Studio, RelationPicker, Kanban drag, and entity pages all call this client. Do not add a second UI API, FlowRunner, or CapabilityResolver.
+There is no `IdentityClient`, `WorkflowClient`, or `BusinessObjectClient`. Studio, RelationPicker, Kanban drag, and entity pages all call this client. Do not add a second UI API.
 
 ## Related SDKs
 

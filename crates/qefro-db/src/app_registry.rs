@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use qefro_core::{lifecycle_event_name, AppManifest, AppMigration, QefroError, QefroResult};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::PgPool;
+use sqlx::{Connection, PgConnection, PgPool};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -235,21 +235,28 @@ pub async fn apply_migration(
             migration.id
         )));
     }
-    sqlx::query("SELECT pg_advisory_lock($1)")
-        .bind(MIGRATE_LOCK)
-        .execute(pool)
+    // Session-level advisory locks must be acquired and released on the same
+    // connection. Executing lock/unlock through the pool can pick different
+    // connections and deadlock the next waiter.
+    let mut conn = pool
+        .acquire()
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
-    let result = apply_migration_locked(pool, app, migration).await;
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(MIGRATE_LOCK)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+    let result = apply_migration_locked(&mut *conn, app, migration).await;
     let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(MIGRATE_LOCK)
-        .execute(pool)
+        .execute(&mut *conn)
         .await;
     result
 }
 
 async fn apply_migration_locked(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     app: &str,
     migration: &AppMigration,
 ) -> QefroResult<()> {
@@ -260,7 +267,7 @@ async fn apply_migration_locked(
     .bind(app)
     .bind(&migration.version)
     .bind(&migration.id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(|e| QefroError::database(e.to_string()))?;
     if let Some((status, prev)) = existing {
@@ -277,14 +284,14 @@ async fn apply_migration_locked(
         }
     }
 
-    let mut tx = pool
+    let mut tx = conn
         .begin()
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
     if !migration.sql.trim().is_empty() {
         if let Err(e) = sqlx::query(&migration.sql).execute(&mut *tx).await {
             let _ = tx.rollback().await;
-            record_migration_failure(pool, app, migration, &checksum, &e.to_string()).await?;
+            record_migration_failure(conn, app, migration, &checksum, &e.to_string()).await?;
             return Err(QefroError::database(format!(
                 "migration {} failed; database left unchanged: {e}",
                 migration.id
@@ -314,7 +321,7 @@ async fn apply_migration_locked(
 }
 
 async fn record_migration_failure(
-    pool: &PgPool,
+    conn: &mut PgConnection,
     app: &str,
     migration: &AppMigration,
     checksum: &str,
@@ -334,7 +341,7 @@ async fn record_migration_failure(
     .bind(migration.looks_destructive())
     .bind(checksum)
     .bind(error)
-    .execute(pool)
+    .execute(&mut *conn)
     .await
     .map_err(|e| QefroError::database(e.to_string()))?;
     Ok(())

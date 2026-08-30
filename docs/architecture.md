@@ -91,7 +91,7 @@ Clients cannot set `tenant_id` on create, update, action, or agent invoke. `X-Te
 
 User and agent calls use user RBAC. Workers use `OpContext::worker` and may run only handlers/operations marked `worker_safe`.
 
-**Qefro 1.1 identity foundation:** Person (canonical identity once linked) ≠ User (optional login) ≠ Customer/Patient/Employee (business). When `person_id` is set, Person is the source of truth for name/email/phone; the business row keeps its own fields for unlinked and legacy records. See [Identity](identity.md).
+**Qefro 1.2 business object runtime:** Identity (Person / Organization / User / business), workflow UI, activity, audit, attachments, and in-app notifications sit on `EntityService`. See [Business object runtime](business-object-runtime.md) and [Identity](identity.md).
 
 `ctx.get` inside an operation transaction uses `SELECT … FOR UPDATE` so exclusive resources (a dining table, a room) cannot be acquired twice. HTTP 5xx responses use `QefroError::public_message`: SQL, credentials, and stack traces are not returned to clients.
 

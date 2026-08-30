@@ -400,6 +400,9 @@ pub struct UiEntityMeta {
     pub singleton: bool,
     #[serde(default)]
     pub attachments: bool,
+    /// Metadata-driven capability discovery for the generic UI. Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<EntityCapabilities>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<crate::platform::EntityActionDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -422,6 +425,25 @@ pub struct EntityPermissions {
     pub read: bool,
     pub update: bool,
     pub delete: bool,
+}
+
+/// Which business-object surfaces the generic UI may offer. Not authorization.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct EntityCapabilities {
+    #[serde(default)]
+    pub workflow: bool,
+    #[serde(default)]
+    pub activity: bool,
+    #[serde(default)]
+    pub comments: bool,
+    #[serde(default)]
+    pub attachments: bool,
+    #[serde(default)]
+    pub audit: bool,
+    #[serde(default)]
+    pub relations: bool,
+    #[serde(default)]
+    pub actions: bool,
 }
 
 fn default_true_standalone() -> bool {

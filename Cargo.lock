@@ -1610,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "qefro-agent"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "async-trait",
  "qefro-core",
@@ -1624,7 +1624,7 @@ dependencies = [
 
 [[package]]
 name = "qefro-api"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1656,7 +1656,7 @@ dependencies = [
 
 [[package]]
 name = "qefro-auth"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -1677,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "qefro-cli"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1703,7 +1703,7 @@ dependencies = [
 
 [[package]]
 name = "qefro-core"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "ammonia",
  "async-trait",
@@ -1726,7 +1726,7 @@ dependencies = [
 
 [[package]]
 name = "qefro-crm"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1746,7 +1746,7 @@ dependencies = [
 
 [[package]]
 name = "qefro-db"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1771,7 +1771,7 @@ dependencies = [
 
 [[package]]
 name = "qefro-events"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1785,7 +1785,7 @@ dependencies = [
 
 [[package]]
 name = "qefro-permissions"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "qefro-core",
  "serde",
@@ -1796,7 +1796,7 @@ dependencies = [
 
 [[package]]
 name = "qefro-restaurant"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1816,7 +1816,7 @@ dependencies = [
 
 [[package]]
 name = "qefro-search"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "qefro-core",
  "serde",
@@ -1825,7 +1825,7 @@ dependencies = [
 
 [[package]]
 name = "qefro-tenant"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "chrono",
  "qefro-core",
@@ -1838,7 +1838,7 @@ dependencies = [
 
 [[package]]
 name = "qefro-workflow"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "qefro-core",
  "serde",

@@ -62,6 +62,7 @@ describe("permission chrome", () => {
       _links: [{ label: "Follow-ups", entity: "FollowUp", slug: "follow-ups", relation: "note_id", total: 0 }],
     });
     vi.spyOn(api, "audit").mockResolvedValue({ items: [] });
+    vi.spyOn(api, "activity").mockResolvedValue({ items: [] });
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -76,7 +77,7 @@ describe("permission chrome", () => {
     await waitFor(() => expect(screen.getByText(/Note Hello/)).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("tab", { name: "Related" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Related records" }));
     expect(await screen.findByRole("link", { name: "Add" })).toHaveAttribute(
       "href",
       "/follow-ups/new?note_id=n1",

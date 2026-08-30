@@ -1,20 +1,37 @@
 # Identity
 
-**Qefro 1.1 identity foundation**
+**Qefro 1.1 Person foundation, 1.2 Organization / party**
 
 ```
-Qefro Identity: Person (canonical identity once linked) ≠ User (optional login) ≠ Customer/Patient/Employee (business)
+                    Identity
+                       │
+             ┌─────────┴─────────┐
+             ▼                   ▼
+           Person            Organization
+             │                   │
+          optional            optional
+             │                   ▼
+             ▼                Contacts (app)
+            User
+             │
+             ▼
+        Authentication
+```
+
+```
+Person ≠ User ≠ Organization ≠ Business Entity (Customer / Patient / Employee / Supplier)
 ```
 
 | Concept | What it is | Typical table |
 | --- | --- | --- |
 | **Person** | A real-world individual (name, email, phone). Canonical identity **once linked**. | `people` |
+| **Organization** | A company / legal entity (name, legal name, email, phone, website, address, logo, enabled). | `organizations` |
 | **User** | An optional login: password, roles, tenant membership, enabled | `users` + `user_tenants` |
-| **Customer / Patient / Employee** | A **business** record. It may point at a Person. It is not a User. | app tables |
+| **Customer / Patient / Employee / Supplier** | A **business** record. It may point at a Person and/or Organization. It is not a User. | app tables |
 
-Do not model Customer as User. Do not copy Frappe’s User / Contact / party model. Authentication stays in `qefro-auth` (email/password, JWT sessions, `user_tenants`). Person and User are `EntityDef`s so the generic UI, REST, and agents all go through `EntityService`.
+Do not make Customer/User or Patient/User equivalent. Do not copy Frappe’s User / Contact / party model. Authentication stays in `qefro-auth`. Person, Organization, and User are `EntityDef`s so the generic UI, REST, and agents all go through `EntityService`.
 
-There is no Identity API, extra auth stack, Organization/Contact product, or invitation product in this increment.
+There is no Identity API, extra auth stack, or invitation product.
 
 ```
 UI  →  QefroClient  →  REST  →  EntityService
@@ -23,21 +40,23 @@ Agents  →  EntityOps  →  EntityService
 
 `POST /api/v1/users` is the existing Admin helper and creates a User through EntityService.
 
-## Convention: `person_id`
+## Convention: `person_id` / `organization_id` / `party_type`
 
-Business entities link with a nullable many-to-one named **`person_id`** targeting Person.
+Business entities link with nullable many-to-ones:
 
-When `person_id` is set, **Person is the source of truth for name, email, and phone**. The Customer (or Patient, Employee, CrmCustomer, …) row still stores its own name/email/phone for **unlinked and legacy** records. This increment does not auto-overwrite Customer from Person. The generic UI displays the linked Person (and, if present, the User) via `_expanded` and existing relation widgets.
+- **`person_id`** → Person (individual)
+- **`organization_id`** → Organization (company)
+- optional **`party_type`** = `Person` \| `Organization`
 
-Unlinked rows (`person_id` null) keep working exactly as before.
+Use `EntityDef::with_party()` to add those fields when missing. This is a metadata convention, not an ERP party table.
 
-The runtime wires an inverse one-to-many on Person for every entity that has `person_id`. Person detail then lists those business relationships in `_related` / `_links`. The generic Related panel consumes that metadata. There is no `if entity === Customer` branch.
+When `person_id` is set, **Person is the source of truth for name, email, and phone**. The business row still stores its own name/email/phone for **unlinked and legacy** records. Unlinked rows keep working exactly as before.
+
+The runtime wires inverse one-to-many fields on Person and Organization for every entity that uses the convention. Detail Related panels consume that metadata. There is no `if entity === Customer` branch.
 
 ```
 Customer  --person_id-->  Person  --user_id-->  User (optional)
-                ↑
-         inverse one-to-many
-         (customers, crm_customers, …)
+          --organization_id-->  Organization
 ```
 
 Customer (and similar) detail:

@@ -10,12 +10,14 @@ export default function Settings({
   entities = [],
   navSlugs = [],
   hiddenEntities = [],
+  roles = [],
   onSaved,
 }: {
   config: TenantConfig | null;
   entities?: UiEntity[];
   navSlugs?: string[];
   hiddenEntities?: string[];
+  roles?: string[];
   onSaved: (next: TenantConfig) => void;
 }) {
   const [companyName, setCompanyName] = useState("");
@@ -143,6 +145,12 @@ export default function Settings({
             ))}
           </div>
         </>
+      ) : null}
+      {roles.some((r) => r.toLowerCase() === "admin") ? (
+        <p>
+          <Link to="/settings/audit">Audit log</Link>
+          <span className="muted"> — administrators only</span>
+        </p>
       ) : null}
       <div className="badge">Tenant</div>
       <h2>Workspace settings</h2>

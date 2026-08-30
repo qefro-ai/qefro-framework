@@ -24,4 +24,10 @@ The framework validates the named transition **before** the handler, inside the 
 
 V0.2 `POST /api/v1/{slug}/{id}/transition` still works. If a matching business operation exists, that path delegates to `EntityService::execute` so table occupancy (and similar rules) cannot be skipped.
 
-GET responses include `_workflow` (allowed transitions) and `_actions` (allowed operations). The UI prefers `_actions`.
+GET responses include `_workflow` (allowed transitions with `id`, `label`, `from_state`, `to_state`, `permissions`, `confirmation`) and `_actions` (allowed operations). The UI prefers `_actions` and never PATCHes workflow status.
+
+```
+UI → QefroClient → POST /{slug}/{id}/transition → Workflow engine → EntityService
+```
+
+Successful transitions write an Activity row (`workflow_transition`) and a `workflow.transitioned` event. Generic Detail, List row actions, Cards, and Kanban all render transitions from metadata. Confirmation dialogs come from `TransitionDef::confirm`, not hardcoded entity names.

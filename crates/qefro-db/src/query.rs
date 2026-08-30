@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use qefro_core::{quote_ident, EntityDef, FieldDef, FieldType, QefroError, QefroResult};
 use qefro_search::{Filter, Query, SortDir};
 use serde_json::{Map, Value};
@@ -78,12 +78,17 @@ pub fn push_bind_owned(
                 }
             },
             Some(FieldType::Time) => {
-                let normalized = if s.len() == 5 {
-                    format!("{s}:00")
-                } else {
-                    s.clone()
-                };
-                qb.push_bind(normalized);
+                let parsed = NaiveTime::parse_from_str(s, "%H:%M:%S")
+                    .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
+                    .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M:%S%.f"));
+                match parsed {
+                    Ok(t) => {
+                        qb.push_bind(t);
+                    }
+                    Err(_) => {
+                        qb.push_bind(s.clone());
+                    }
+                }
             }
             Some(FieldType::Boolean) => {
                 qb.push_bind(matches!(s.as_str(), "true" | "1" | "yes"));

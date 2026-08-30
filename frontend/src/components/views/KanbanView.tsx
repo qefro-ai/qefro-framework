@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { api, type EntityAction, type WorkflowAction } from "../../sdk/client";
+import { ActionBar, transitionNeedsConfirm } from "../actions/ActionBar";
 import { EntityCard } from "./EntityCard";
+import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { Skeleton } from "../ui/EmptyState";
 import { StatusBadge } from "../ui/StatusBadge";
 import { groupingField, isWorkflowGroup } from "../../metadata/views";
@@ -22,8 +24,15 @@ export default function KanbanView({ meta, slug, rows, loading, onReload, onErro
 
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
+  const [pendingDrop, setPendingDrop] = useState<{
+    id: string;
+    dest: string;
+    name: string;
+    label: string;
+    message: string;
+  } | null>(null);
 
-  async function drop(dest: string, id: string) {
+  async function applyMove(dest: string, id: string, transitionName?: string) {
     const row = rows.find((r) => String(r.id) === id);
     if (!row) return;
     const from = String(row[groupName] ?? "");
@@ -31,7 +40,9 @@ export default function KanbanView({ meta, slug, rows, loading, onReload, onErro
     try {
       if (isWorkflowGroup(meta, groupName)) {
         const wf = row._workflow as Wf | undefined;
-        const transition = (wf?.transitions ?? []).find((t) => t.to === dest);
+        const transition =
+          (wf?.transitions ?? []).find((t) => t.name === transitionName) ??
+          (wf?.transitions ?? []).find((t) => t.to === dest);
         if (!transition) {
           onError(`Cannot move ${meta.label.toLowerCase()} from ${from || "current state"} to ${dest}.`);
           return;
@@ -45,6 +56,34 @@ export default function KanbanView({ meta, slug, rows, loading, onReload, onErro
       onError(friendlyError(err));
       onReload();
     }
+  }
+
+  async function drop(dest: string, id: string) {
+    const row = rows.find((r) => String(r.id) === id);
+    if (!row) return;
+    const from = String(row[groupName] ?? "");
+    if (from === dest) return;
+    if (isWorkflowGroup(meta, groupName)) {
+      const wf = row._workflow as Wf | undefined;
+      const transition = (wf?.transitions ?? []).find((t) => t.to === dest);
+      if (!transition) {
+        onError(`Cannot move ${meta.label.toLowerCase()} from ${from || "current state"} to ${dest}.`);
+        return;
+      }
+      if (transitionNeedsConfirm(transition)) {
+        setPendingDrop({
+          id,
+          dest,
+          name: transition.name,
+          label: transition.label || transition.name,
+          message: transition.confirmation_message || `Move to ${transition.to}?`,
+        });
+        return;
+      }
+      await applyMove(dest, id, transition.name);
+      return;
+    }
+    await applyMove(dest, id);
   }
 
   if (loading && rows.length === 0) return <Skeleton variant="kanban" />;
@@ -101,43 +140,27 @@ export default function KanbanView({ meta, slug, rows, loading, onReload, onErro
                       spec={card}
                       className="kanban-card entity-card"
                       footer={
-                        <div className="kanban-actions">
-                          {actions.length
-                            ? actions.map((a) => (
-                                <button
-                                  key={a.name}
-                                  type="button"
-                                  className="ghost"
-                                  onClick={async () => {
-                                    try {
-                                      await api.action(slug, String(row.id), a.name);
-                                      onReload();
-                                    } catch (err) {
-                                      onError(friendlyError(err));
-                                    }
-                                  }}
-                                >
-                                  {a.label || a.name}
-                                </button>
-                              ))
-                            : transitions.map((t) => (
-                                <button
-                                  key={t.name}
-                                  type="button"
-                                  className="ghost"
-                                  onClick={async () => {
-                                    try {
-                                      await api.transition(slug, String(row.id), t.name);
-                                      onReload();
-                                    } catch (err) {
-                                      onError(friendlyError(err));
-                                    }
-                                  }}
-                                >
-                                  {t.label || t.name}
-                                </button>
-                              ))}
-                        </div>
+                        <ActionBar
+                          compact
+                          actions={actions}
+                          transitions={actions.length ? [] : transitions}
+                          onAction={async (name) => {
+                            try {
+                              await api.action(slug, String(row.id), name);
+                              onReload();
+                            } catch (err) {
+                              onError(friendlyError(err));
+                            }
+                          }}
+                          onTransition={async (name) => {
+                            try {
+                              await api.transition(slug, String(row.id), name);
+                              onReload();
+                            } catch (err) {
+                              onError(friendlyError(err));
+                            }
+                          }}
+                        />
                       }
                     />
                   </div>
@@ -147,6 +170,20 @@ export default function KanbanView({ meta, slug, rows, loading, onReload, onErro
           </section>
         );
       })}
+      <ConfirmDialog
+        open={Boolean(pendingDrop)}
+        title={pendingDrop?.label}
+        message={pendingDrop?.message || ""}
+        confirmLabel="Confirm"
+        danger={Boolean(pendingDrop && /cancel/i.test(pendingDrop.name))}
+        onCancel={() => setPendingDrop(null)}
+        onConfirm={() => {
+          if (!pendingDrop) return;
+          const next = pendingDrop;
+          setPendingDrop(null);
+          void applyMove(next.dest, next.id, next.name);
+        }}
+      />
     </div>
   );
 }

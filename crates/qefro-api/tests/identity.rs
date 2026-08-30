@@ -32,6 +32,7 @@ fn app() -> InstalledApp {
                             .nullable()
                             .label("Person"),
                     )
+                    .with_party()
                     .build(),
             )
             .build(),
@@ -652,4 +653,101 @@ async fn linked_person_displays_login_path_without_secrets() {
     assert!(person_exp.get("password_hash").is_none());
     assert!(user_exp.get("password_hash").is_none());
     assert!(user_exp.get("password").is_none());
+}
+
+#[tokio::test]
+async fn organization_is_tenant_scoped_and_linkable() {
+    let router = runtime().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let admin_a = register(
+        &router,
+        &format!("oa-{suffix}@ex.com"),
+        &format!("oa-{suffix}"),
+    )
+    .await;
+    let admin_b = register(
+        &router,
+        &format!("ob-{suffix}@ex.com"),
+        &format!("ob-{suffix}"),
+    )
+    .await;
+
+    let (status, org) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/organizations",
+            Some(&admin_a),
+            json!({
+                "name": "Acme Corporation",
+                "legal_name": "Acme Corp Ltd",
+                "email": format!("acme-{suffix}@ex.com"),
+                "website": "https://acme.example"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{org}");
+    let org_id = org["id"].as_str().unwrap().to_string();
+    assert_eq!(org["enabled"], true);
+    assert!(org.get("user_id").is_none() || org["user_id"].is_null());
+    assert_no_secrets(&org);
+
+    let (status, cross) = json(
+        clone_router(&router),
+        get(&format!("/api/v1/organizations/{org_id}"), Some(&admin_b)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{cross}");
+
+    let (status, customer) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/shop-customers",
+            Some(&admin_a),
+            json!({
+                "name": "Acme account",
+                "email": format!("acct-{suffix}@ex.com"),
+                "party_type": "Organization",
+                "organization_id": org_id
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{customer}");
+    assert_eq!(customer["organization_id"], org_id);
+    assert_eq!(customer["party_type"], "Organization");
+
+    let (status, org_get) = json(
+        clone_router(&router),
+        get(&format!("/api/v1/organizations/{org_id}"), Some(&admin_a)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{org_get}");
+    let related = org_get.get("_related").cloned().unwrap_or(json!({}));
+    let related_hit = related.as_object().map(|m| {
+        m.values().any(|bucket| {
+            bucket["entity"] == "ShopCustomer"
+                && bucket["items"]
+                    .as_array()
+                    .map(|items| items.iter().any(|i| i["id"] == customer["id"]))
+                    .unwrap_or(false)
+        })
+    });
+    assert_eq!(related_hit, Some(true), "{org_get}");
+
+    let (status, both) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/shop-customers",
+            Some(&admin_a),
+            json!({
+                "name": "Invalid party",
+                "email": format!("bad-{suffix}@ex.com"),
+                "person_id": Uuid::new_v4(),
+                "organization_id": org_id
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{both}");
 }

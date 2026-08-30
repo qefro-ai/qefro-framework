@@ -17,6 +17,23 @@ fields:
       section: Identity
       help: Optional. Link a Person for a known individual. Walk-ins leave this empty and use name, email, and phone on this Customer.
       list: true
+  - name: party_type
+    type: enum
+    nullable: true
+    label: Party type
+    enum_values: [Person, Organization]
+    ui:
+      section: Identity
+  - name: organization_id
+    type: relation
+    nullable: true
+    label: Organization
+    relation:
+      target_entity: Organization
+      kind: many_to_one
+    ui:
+      section: Identity
+      list: true
   - name: name
     type: string
     required: true

@@ -1,6 +1,17 @@
 import { FormEvent, Fragment, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, ApiError, expandedLabel, formVisible, listVisible, type UiEntity, type UiField } from "../sdk/client";
+import {
+  api,
+  ApiError,
+  expandedLabel,
+  formVisible,
+  listVisible,
+  type EntityAction,
+  type UiEntity,
+  type UiField,
+  type WorkflowAction,
+} from "../sdk/client";
+import { ActionBar } from "../components/actions/ActionBar";
 import { FilterBar } from "../components/filters/FilterBar";
 import { FormLayout } from "../components/forms/FormLayout";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
@@ -148,6 +159,8 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
   const grouped = groupBy ? groupRows(rows, groupBy) : ([["", rows]] as Array<[string, Record<string, unknown>[]]>);
   const allowCreate = canCreate(meta);
   const allowDelete = canDelete(meta);
+  const showRowActions = Boolean(meta.workflow || meta.capabilities?.workflow || meta.capabilities?.actions);
+  const tableColSpan = cols.length + 1 + (showRowActions ? 1 : 0);
   const queryActive = isQueryActive(params, search);
   const initialLoad = loading && rows.length === 0 && !error;
 
@@ -409,6 +422,7 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
                     {sort === c.name ? " ↑" : sort === `-${c.name}` ? " ↓" : ""}
                   </th>
                 ))}
+                {showRowActions ? <th className="row-actions">Actions</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -416,7 +430,7 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
                 <Fragment key={group || "all"}>
                   {group ? (
                     <tr key={`g-${group}`} className="group-row">
-                      <td colSpan={cols.length + 1}>
+                      <td colSpan={tableColSpan}>
                         {group} ({groupRowsList.length})
                       </td>
                     </tr>
@@ -448,6 +462,36 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
                           )}
                         </td>
                       ))}
+                      {showRowActions ? (
+                        <td data-label="Actions" className="row-actions">
+                          <ActionBar
+                            compact
+                            actions={((row._actions as EntityAction[] | undefined) ?? []).slice(0, 2)}
+                            transitions={
+                              ((row._workflow as { transitions?: WorkflowAction[] } | undefined)?.transitions ?? []).slice(
+                                0,
+                                2,
+                              )
+                            }
+                            onAction={async (name) => {
+                              try {
+                                await api.action(meta.slug, String(row.id), name);
+                                setTick((n) => n + 1);
+                              } catch (err) {
+                                setError(friendlyError(err));
+                              }
+                            }}
+                            onTransition={async (name) => {
+                              try {
+                                await api.transition(meta.slug, String(row.id), name);
+                                setTick((n) => n + 1);
+                              } catch (err) {
+                                setError(friendlyError(err));
+                              }
+                            }}
+                          />
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                 </Fragment>
@@ -470,6 +514,7 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
                         : ""}
                     </td>
                   ))}
+                  {showRowActions ? <td /> : null}
                 </tr>
               </tfoot>
             ) : null}

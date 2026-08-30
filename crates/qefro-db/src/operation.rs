@@ -305,6 +305,7 @@ pub async fn execute_operation(
     operations: &OperationRegistry,
     jobs: &JobQueue,
     audit: &crate::audit::AuditLogger,
+    activity: &crate::activity::ActivityStore,
     ctx: &OpContext,
     entity_name: &str,
     id: Uuid,
@@ -338,7 +339,8 @@ pub async fn execute_operation(
         .map_err(|e| QefroError::database(e.to_string()))?;
 
     let outcome = execute_in_transaction(
-        &mut tx, repo, registry, workflows, hooks, &binding, &entity, ctx, id, input, audit, jobs,
+        &mut tx, repo, registry, workflows, hooks, &binding, &entity, ctx, id, input, audit,
+        activity, jobs,
     )
     .await;
 
@@ -410,6 +412,7 @@ async fn execute_in_transaction(
     id: Uuid,
     input: Value,
     audit: &crate::audit::AuditLogger,
+    activity: &crate::activity::ActivityStore,
     jobs: &JobQueue,
 ) -> QefroResult<(Value, Vec<DomainEvent>)> {
     let current = repo.get_tx(tx, entity, ctx, id, true).await?;
@@ -514,6 +517,44 @@ async fn execute_in_transaction(
                 Some(&record),
             )
             .await?;
+    }
+
+    if entity.activity {
+        let (atype, extra) = if let Some(tname) = &binding.def.workflow_transition {
+            let wf = workflows.for_entity(&entity.name);
+            let field = wf.as_ref().map(|w| w.field.as_str()).unwrap_or("status");
+            let from = current.get(field).and_then(|v| v.as_str()).unwrap_or("");
+            let to = record.get(field).and_then(|v| v.as_str()).unwrap_or("");
+            (
+                crate::activity::TYPE_WORKFLOW,
+                Some(json!({ "from": from, "to": to, "transition": tname })),
+            )
+        } else {
+            (crate::activity::TYPE_UPDATED, None)
+        };
+        let (message, metadata) = crate::activity::mutation_activity(
+            &entity.label,
+            atype,
+            Some(&current),
+            Some(&record),
+            extra,
+        );
+        activity
+            .record_tx(tx, ctx, &entity.name, id, atype, &message, metadata)
+            .await?;
+        if binding.def.workflow_transition.is_some() {
+            let mut evt = DomainEvent::new(
+                "workflow.transitioned",
+                entity.name.clone(),
+                id,
+                ctx.tenant_id,
+                json!({ "status": record.get("status") }),
+            );
+            evt.user_id = Some(ctx.user_id);
+            if !events.iter().any(|e| e.name == "workflow.transitioned") {
+                events.push(evt);
+            }
+        }
     }
 
     if let Some(event_name) = &binding.def.event {

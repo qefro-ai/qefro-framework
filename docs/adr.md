@@ -24,4 +24,8 @@ Identity, authentication, and business records are three types:
 Person (canonical identity once linked) ≠ User (optional login) ≠ Customer/Patient/Employee (business)
 ```
 
-Person is a tenant-scoped individual. User wraps the existing `users` / `user_tenants` / JWT session tables. Customer, Patient, and Employee remain app entities that may reference Person via nullable `person_id`. When linked, Person is the source of truth for name/email/phone; business rows keep their own columns for unlinked and legacy data. Qefro does not clone Frappe’s User/Contact/party model, and does not add an Identity API or invitation product in 1.1. See [identity.md](identity.md).
+Person is a tenant-scoped individual. User wraps the existing `users` / `user_tenants` / JWT session tables. Customer, Patient, and Employee remain app entities that may reference Person via nullable `person_id`. When linked, Person is the source of truth for name/email/phone; business rows keep their own columns for unlinked and legacy data. Qefro does not clone Frappe’s User/Contact/party model, and does not add an Identity API or invitation product. See [identity.md](identity.md).
+
+## 006. Activity ≠ Audit (1.2 business object runtime)
+
+Activity is the business timeline on a record. Audit is the Admin-only security log. Organization is a tenant-scoped identity entity, not a User and not a Customer. Party fields (`party_type`, `person_id`, `organization_id`) are metadata conventions on existing `EntityDef`s. Workflow UI always goes through the transition endpoint. See [business-object-runtime.md](business-object-runtime.md).

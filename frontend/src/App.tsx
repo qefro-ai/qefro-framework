@@ -13,6 +13,7 @@ import EntityForm from "./pages/EntityForm";
 import EntityDetail from "./pages/EntityDetail";
 import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
+import AuditLog from "./pages/AuditLog";
 import Reports from "./pages/Reports";
 import PublicForm from "./pages/PublicForm";
 
@@ -178,6 +179,7 @@ function Shell() {
             entities={entities}
             navSlugs={uiMeta.navigation}
             hiddenEntities={uiMeta.hidden_entities}
+            roles={roles}
             onSaved={(next) => {
               setConfig(next);
               api
@@ -195,6 +197,7 @@ function Shell() {
           />
         }
       />
+      <Route path="/settings/audit" element={<AuditLog />} />
       <Route path="/reports" element={<Reports />} />
       <Route path="/p/:tenant/:form" element={<PublicForm />} />
       <Route path="/:slug" element={<EntityList entities={entities} />} />

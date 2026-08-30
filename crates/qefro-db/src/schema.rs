@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 CREATE INDEX IF NOT EXISTS audit_logs_tenant_idx ON audit_logs(tenant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS audit_logs_entity_idx ON audit_logs(tenant_id, entity, entity_id);
+CREATE INDEX IF NOT EXISTS audit_logs_actor_idx ON audit_logs(tenant_id, user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS tenant_settings (
     tenant_id UUID PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
@@ -228,6 +229,10 @@ CREATE TABLE IF NOT EXISTS qefro_attachments (
 );
 CREATE INDEX IF NOT EXISTS qefro_attachments_record_idx
     ON qefro_attachments (tenant_id, entity, record_id);
+CREATE INDEX IF NOT EXISTS qefro_attachments_created_idx
+    ON qefro_attachments (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS qefro_attachments_uploader_idx
+    ON qefro_attachments (tenant_id, uploaded_by);
 
 CREATE TABLE IF NOT EXISTS qefro_notifications (
     id UUID PRIMARY KEY,
@@ -279,6 +284,25 @@ CREATE TABLE IF NOT EXISTS qefro_outbox (
 CREATE INDEX IF NOT EXISTS qefro_outbox_pending_idx
     ON qefro_outbox (created_at)
     WHERE published_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS qefro_activity (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    entity_type TEXT NOT NULL,
+    entity_id UUID NOT NULL,
+    actor_id UUID,
+    actor_name TEXT,
+    activity_type TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS qefro_activity_record_idx
+    ON qefro_activity (tenant_id, entity_type, entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS qefro_activity_actor_idx
+    ON qefro_activity (tenant_id, actor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS qefro_activity_created_idx
+    ON qefro_activity (tenant_id, created_at DESC);
 "#;
 
 pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {

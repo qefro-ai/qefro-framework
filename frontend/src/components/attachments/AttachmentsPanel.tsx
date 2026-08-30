@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { api, tokenHeader } from "../../api";
-import { fileIcon } from "../../format";
+import { fileIcon, fileSize } from "../../format";
+import { ActionMenu } from "../ui/ActionMenu";
 
 type FileRow = Record<string, unknown>;
 
@@ -47,7 +48,7 @@ export function AttachmentsPanel({
     URL.revokeObjectURL(url);
   }
 
-  const mime = (file: FileRow) => String(file.content_type ?? file.mime ?? "");
+  const mime = (file: FileRow) => String(file.content_type ?? file.mime_type ?? file.mime ?? "");
   const name = (file: FileRow) => String(file.filename ?? file.id);
   const isImage = (file: FileRow) => mime(file).startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(name(file));
 
@@ -68,7 +69,7 @@ export function AttachmentsPanel({
       >
         <p className="muted">Drop files here or</p>
         <button type="button" className="ghost" onClick={() => inputRef.current?.click()}>
-          Attach file
+          + Add attachment
         </button>
         <input
           ref={inputRef}
@@ -94,11 +95,7 @@ export function AttachmentsPanel({
           {items.map((file) => (
             <li key={String(file.id)}>
               {isImage(file) ? (
-                <img
-                  className="thumb"
-                  alt=""
-                  src={`/api/v1/attachments/${file.id}`}
-                />
+                <img className="thumb" alt="" src={`/api/v1/attachments/${file.id}`} />
               ) : (
                 <span className="file-glyph" aria-hidden="true">
                   {fileIcon(name(file), mime(file))}
@@ -107,16 +104,21 @@ export function AttachmentsPanel({
               <button type="button" className="ghost linkish" onClick={() => void download(file)}>
                 {name(file)}
               </button>
-              <button
-                type="button"
-                className="ghost"
-                onClick={async () => {
-                  await api.deleteAttachment(String(file.id));
-                  onChanged();
-                }}
-              >
-                Remove
-              </button>
+              <span className="muted attachment-size">{fileSize(file.size)}</span>
+              <ActionMenu
+                items={[
+                  { key: "download", label: "Download", onSelect: () => void download(file) },
+                  {
+                    key: "remove",
+                    label: "Remove",
+                    danger: true,
+                    onSelect: async () => {
+                      await api.deleteAttachment(String(file.id));
+                      onChanged();
+                    },
+                  },
+                ]}
+              />
             </li>
           ))}
         </ul>

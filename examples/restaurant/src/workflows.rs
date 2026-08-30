@@ -21,7 +21,11 @@ pub fn reservation() -> WorkflowDef {
                 .roles(&["Manager", "Staff"])
                 .label("Complete"),
         )
-        .transition(TransitionDef::new("cancel", "Pending", "Cancelled").label("Cancel"))
+        .transition(
+            TransitionDef::new("cancel", "Pending", "Cancelled")
+                .label("Cancel")
+                .confirm("Cancel this reservation?"),
+        )
         .transition(
             TransitionDef::new("cancel_confirmed", "Confirmed", "Cancelled")
                 .roles(&["Manager"])
@@ -56,7 +60,11 @@ pub fn order() -> WorkflowDef {
                 .roles(&["Manager", "Staff"])
                 .label("Complete"),
         )
-        .transition(TransitionDef::new("cancel", "Draft", "Cancelled").label("Cancel"))
+        .transition(
+            TransitionDef::new("cancel", "Draft", "Cancelled")
+                .label("Cancel")
+                .confirm("Cancel this order?"),
+        )
         .transition(
             TransitionDef::new("cancel_confirmed", "Confirmed", "Cancelled")
                 .roles(&["Manager"])

@@ -84,6 +84,10 @@ async fn reservation_confirm_seat_complete_and_cancel() {
     )
     .await
     .1;
+    assert!(
+        restaurant.get("id").and_then(|v| v.as_str()).is_some(),
+        "restaurant create failed: {restaurant}"
+    );
     let branch = json(
         clone_router(&router),
         post(
@@ -97,6 +101,10 @@ async fn reservation_confirm_seat_complete_and_cancel() {
     )
     .await
     .1;
+    assert!(
+        branch.get("id").and_then(|v| v.as_str()).is_some(),
+        "branch create failed: {branch}"
+    );
     let table = json(
         clone_router(&router),
         post(
@@ -111,6 +119,10 @@ async fn reservation_confirm_seat_complete_and_cancel() {
     )
     .await
     .1;
+    assert!(
+        table.get("id").and_then(|v| v.as_str()).is_some(),
+        "table create failed: {table}"
+    );
     let customer = json(
         clone_router(&router),
         post(
@@ -124,6 +136,10 @@ async fn reservation_confirm_seat_complete_and_cancel() {
     )
     .await
     .1;
+    assert!(
+        customer.get("id").and_then(|v| v.as_str()).is_some(),
+        "customer create failed: {customer}"
+    );
     let reservation = json(
         clone_router(&router),
         post(
@@ -140,7 +156,9 @@ async fn reservation_confirm_seat_complete_and_cancel() {
     )
     .await
     .1;
-    let id = reservation["id"].as_str().unwrap();
+    let id = reservation["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("reservation create failed: {reservation}"));
     assert_eq!(reservation["status"], "Pending");
 
     let (status, confirmed) = json(

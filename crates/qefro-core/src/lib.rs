@@ -54,10 +54,13 @@ pub use formula::{
 pub use hook::{EntityHook, HookRegistry, NoopHook};
 pub use ident::{quote_ident, slugify, snake_case, suggest_similar, to_plural_slug};
 pub use identity::{
-    apply_person_backrefs, contains_secret_key, identity_entities, is_person_link_field,
-    is_secret_key, person_backref_field, person_backref_name, person_backrefs, person_entity,
-    strip_secrets, user_entity, PERSON_ENTITY, PERSON_LINK_FIELD, PERSON_SLUG, SECRET_KEYS,
-    USER_ENTITY, USER_SLUG,
+    apply_organization_backrefs, apply_party_fields, apply_person_backrefs, contains_secret_key,
+    field_changes, identity_entities, is_organization_link_field, is_person_link_field,
+    is_secret_key, organization_backref_field, organization_backref_name, organization_backrefs,
+    organization_entity, person_backref_field, person_backref_name, person_backrefs, person_entity,
+    strip_secrets, user_entity, validate_party, ORGANIZATION_ENTITY, ORGANIZATION_LINK_FIELD,
+    ORGANIZATION_SLUG, PARTY_TYPE_FIELD, PARTY_TYPE_ORGANIZATION, PARTY_TYPE_PERSON, PERSON_ENTITY,
+    PERSON_LINK_FIELD, PERSON_SLUG, SECRET_KEYS, USER_ENTITY, USER_SLUG,
 };
 pub use lifecycle::{lifecycle_event_name, LifecycleHookDef};
 pub use metering::MeteringEvent;
@@ -81,10 +84,11 @@ pub use studio::{
 };
 pub use timezone::{canonicalize_datetime, local_to_utc, utc_to_local};
 pub use ui::{
-    CalendarViewSpec, CardViewSpec, DashboardCard, DashboardDef, DetailViewSpec, EntityPermissions,
-    EntityViews, FormViewSpec, KanbanCardSpec, KanbanViewSpec, ListViewSpec, TenantBranding,
-    TenantBusinessConfig, TenantConfig, TenantFeatures, TenantUiConfig, UiConfig, UiEntityMeta,
-    UiFieldMeta, UiWhen, UiWidget, ViewSectionSpec, WidgetOptions, UI_SCHEMA_VERSION,
+    CalendarViewSpec, CardViewSpec, DashboardCard, DashboardDef, DetailViewSpec,
+    EntityCapabilities, EntityPermissions, EntityViews, FormViewSpec, KanbanCardSpec,
+    KanbanViewSpec, ListViewSpec, TenantBranding, TenantBusinessConfig, TenantConfig,
+    TenantFeatures, TenantUiConfig, UiConfig, UiEntityMeta, UiFieldMeta, UiWhen, UiWidget,
+    ViewSectionSpec, WidgetOptions, UI_SCHEMA_VERSION,
 };
 pub use validate::{
     destructive_field_removals, validate_bundle, InstalledAppRef, ValidationReport,
