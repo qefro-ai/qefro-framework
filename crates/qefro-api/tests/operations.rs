@@ -628,7 +628,7 @@ async fn operations_pipeline_transactions_events_and_agent() {
     assert_eq!(confirmed["status"], "Confirmed");
     assert_eq!(confirmed["_operation"]["status"], "completed");
     assert_eq!(confirmed["_operation"]["operation"], "confirm");
-    let op_id = confirmed["_operation"]["id"].as_str().cloned();
+    let op_id = confirmed["_operation"]["id"].as_str().map(|s| s.to_string());
     assert!(confirmed["_actions"]
         .as_array()
         .unwrap()
