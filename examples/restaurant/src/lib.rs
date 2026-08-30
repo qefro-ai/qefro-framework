@@ -14,9 +14,15 @@ pub fn module() -> AppModule {
         .version("1.0.0")
         .label("Restaurant")
         .description("Tables, reservations, menus, orders, and payments")
-        .nav(NavItem::new("Reservations", "Reservation"))
-        .nav(NavItem::new("Tables", "DiningTable"))
         .nav(NavItem::new("Orders", "Order"))
+        .nav(NavItem::new("Reservations", "Reservation"))
+        .nav(
+            NavItem::new("Kitchen", "Order")
+                .query("status=Preparing")
+                .view("kanban"),
+        )
+        .nav(NavItem::new("Tables", "DiningTable"))
+        .nav(NavItem::new("Menu", "MenuItem"))
         .nav(NavItem::new("Customers", "Customer"))
         .entity(entities::customer())
         .entity(entities::restaurant())
@@ -39,6 +45,16 @@ pub fn module() -> AppModule {
                 .fields(&["order_date", "grand_total"])
                 .group_by(&["order_date"])
                 .sum("grand_total")
+                .chart("bar"),
+        )
+        .report(
+            ReportDef::new("orders-by-status", "Order")
+                .label("Orders By Status")
+                .module("restaurant")
+                .fields(&["status", "grand_total"])
+                .group_by(&["status"])
+                .sum("grand_total")
+                .count("id")
                 .chart("bar"),
         )
         .notification(
@@ -134,7 +150,13 @@ mod tests {
         let module = crate::module();
         assert_eq!(
             module.default_nav_slugs(),
-            vec!["reservations", "tables", "orders", "customers"]
+            vec![
+                "orders",
+                "reservations",
+                "tables",
+                "menu-items",
+                "customers"
+            ]
         );
         let hidden = module.default_hidden_slugs();
         for slug in [
@@ -142,7 +164,6 @@ mod tests {
             "restaurant-settings",
             "branches",
             "menu-categories",
-            "menu-items",
             "payments",
             "ui-showcases",
         ] {

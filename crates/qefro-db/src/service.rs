@@ -1813,10 +1813,23 @@ impl EntityService {
         ctx: &OpContext,
         card: &qefro_core::DashboardCard,
     ) -> QefroResult<Value> {
-        use qefro_search::parse_query;
+        if !card.roles.is_empty()
+            && !ctx.is_admin()
+            && !card.roles.iter().any(|r| ctx.has_role(r))
+        {
+            return Err(QefroError::forbidden("dashboard card is not visible"));
+        }
+        let kind = normalize_card_kind(&card.kind);
+        if kind == "audit" {
+            if !ctx.is_admin() {
+                return Err(QefroError::forbidden("audit widgets are Admin-only"));
+            }
+            return self.audit_card_value(ctx, card).await;
+        }
         let entity = self.registry.get(&card.entity)?;
         self.ensure_app(ctx, &entity)?;
         self.permissions.check(ctx, &entity.name, Action::List)?;
+        use qefro_search::parse_query;
         let mut raw: Vec<(String, String)> = card
             .filters
             .iter()
@@ -1831,19 +1844,21 @@ impl EntityService {
             .collect();
         raw.push(("page_size".into(), "1".into()));
         let query = parse_query(&entity, &raw)?;
-        let kind = if card.kind.is_empty() {
-            "metric"
-        } else {
-            card.kind.as_str()
-        };
-        if matches!(kind, "chart" | "status_breakdown") {
+        if matches!(kind.as_str(), "chart" | "status_breakdown" | "workflow") {
             let group_by = card
                 .group_by
                 .as_deref()
                 .ok_or_else(|| QefroError::bad_request("chart cards require group_by"))?;
             let series = self
                 .repo
-                .aggregate_group(&entity, ctx, &query, group_by)
+                .aggregate_group_with(
+                    &entity,
+                    ctx,
+                    &query,
+                    group_by,
+                    &card.metric,
+                    card.field.as_deref(),
+                )
                 .await?;
             let value: f64 = series
                 .iter()
@@ -1857,11 +1872,45 @@ impl EntityService {
                 "chart": card.chart,
                 "group_by": group_by,
                 "filters": card.filters,
+                "size": card.size,
                 "series": series,
                 "value": value,
             }));
         }
-        if matches!(kind, "list" | "table" | "activity") {
+        if kind == "activity" {
+            let limit = card.limit.unwrap_or(8).clamp(1, 50);
+            let rows = self
+                .activity
+                .list_recent(ctx.tenant_id, Some(&entity.name), limit as i64)
+                .await?;
+            let items: Vec<Value> = rows
+                .into_iter()
+                .map(|row| {
+                    json!({
+                        "id": row.id,
+                        "entity": row.entity_type,
+                        "entity_id": row.entity_id,
+                        "activity_type": row.activity_type,
+                        "message": row.message,
+                        "actor_name": row.actor_name,
+                        "created_at": row.created_at,
+                    })
+                })
+                .collect();
+            let total = items.len();
+            return Ok(json!({
+                "title": card.title,
+                "entity": card.entity,
+                "metric": card.metric,
+                "kind": "activity",
+                "filters": card.filters,
+                "size": card.size,
+                "items": items,
+                "total": total,
+                "value": total,
+            }));
+        }
+        if matches!(kind.as_str(), "list" | "table" | "saved_view") {
             let limit = card.limit.unwrap_or(8).clamp(1, 50);
             raw.pop();
             raw.push(("page_size".into(), limit.to_string()));
@@ -1873,6 +1922,8 @@ impl EntityService {
                 "metric": card.metric,
                 "kind": kind,
                 "filters": card.filters,
+                "size": card.size,
+                "saved_view": card.saved_view,
                 "items": page.items,
                 "total": page.total,
                 "value": page.total,
@@ -1886,9 +1937,83 @@ impl EntityService {
             "title": card.title,
             "entity": card.entity,
             "metric": card.metric,
-            "kind": "metric",
+            "kind": if kind == "kpi" { "kpi" } else { "metric" },
             "filters": card.filters,
+            "size": card.size,
             "value": value,
+        }))
+    }
+
+    pub async fn entity_aggregates(
+        &self,
+        ctx: &OpContext,
+        entity_name: &str,
+        group_by: &str,
+        metric: &str,
+        field: Option<&str>,
+        query: Query,
+    ) -> QefroResult<Value> {
+        let entity = self.registry.get(entity_name)?;
+        self.ensure_app(ctx, &entity)?;
+        self.permissions.check(ctx, &entity.name, Action::List)?;
+        if entity.get_field(group_by).is_none() && !entity.has_column(group_by) {
+            return Err(QefroError::forbidden(format!(
+                "unknown or unauthorized group_by field '{group_by}'"
+            )));
+        }
+        let series = self
+            .repo
+            .aggregate_group_with(&entity, ctx, &query, group_by, metric, field)
+            .await?;
+        Ok(json!({
+            "entity": entity.name,
+            "group_by": group_by,
+            "metric": metric,
+            "field": field,
+            "series": series,
+        }))
+    }
+
+    async fn audit_card_value(
+        &self,
+        ctx: &OpContext,
+        card: &qefro_core::DashboardCard,
+    ) -> QefroResult<Value> {
+        let items = self.audit.list(ctx, None, None, 200).await?;
+        let today = chrono::Utc::now().date_naive();
+        let value = match card.metric.as_str() {
+            "failed" => items
+                .iter()
+                .filter(|r| {
+                    r.action.contains("fail")
+                        || r.action.contains("denied")
+                        || r.action.contains("error")
+                })
+                .count(),
+            "user_disabled" => items
+                .iter()
+                .filter(|r| r.action.contains("disable") || r.entity == qefro_core::USER_ENTITY)
+                .filter(|r| {
+                    r.created_at.date_naive() == today
+                        && r.new_values
+                            .as_ref()
+                            .and_then(|v| v.get("enabled"))
+                            .and_then(|v| v.as_bool())
+                            == Some(false)
+                })
+                .count(),
+            _ => items
+                .iter()
+                .filter(|r| r.created_at.date_naive() == today)
+                .count(),
+        };
+        Ok(json!({
+            "title": card.title,
+            "entity": "_audit",
+            "metric": card.metric,
+            "kind": "audit",
+            "size": card.size,
+            "value": value as f64,
         }))
     }
 
@@ -2336,5 +2461,14 @@ impl WithUser for DomainEvent {
     fn with_user(mut self, user_id: Uuid) -> Self {
         self.user_id = Some(user_id);
         self
+    }
+}
+
+fn normalize_card_kind(kind: &str) -> String {
+    match kind {
+        "" => "metric".into(),
+        "kpi" => "kpi".into(),
+        "workflow" => "workflow".into(),
+        other => other.into(),
     }
 }

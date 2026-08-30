@@ -11,9 +11,13 @@ Agents                 →  EntityOps    →  EntityService
 
 ## Methods
 
-Typed methods cover UI metadata, records, workflow, and uploads:
+Typed methods cover UI metadata, records, workflow, search, reports, dashboards, and uploads:
 
 - `ui()` — `GET /api/v1/meta/ui`
+- `getSearch()` / `search()`
+- `getSavedViews()` / `saveView()` / `deleteView()`
+- `getReport()` / `runReport()`
+- `getDashboard()` / `workspace()` / `aggregates()`
 - `list` / `get` / `create` / `update` / `remove`
 - `action` / `transition` / `workflow` / `getWorkflow`
 - `activity` / `getActivity` / `addComment`
@@ -22,7 +26,7 @@ Typed methods cover UI metadata, records, workflow, and uploads:
 - `audit` (Admin)
 - `upload` / `uploadAttachment`
 
-There is no `IdentityClient`, `WorkflowClient`, or `BusinessObjectClient`. Studio, RelationPicker, Kanban drag, and entity pages all call this client. Do not add a second UI API.
+There is no `IdentityClient`, `WorkflowClient`, `ReportClient`, `DashboardClient`, or `SearchClient`. Studio, RelationPicker, Kanban drag, and entity pages all call this client. Do not add a second UI API.
 
 ## Related SDKs
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, type TenantConfig, type UiEntity } from "../api";
 import { Chart } from "../components/dashboards/Chart";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
@@ -22,7 +22,24 @@ type Card = {
   series?: Array<{ label: string; value: number }>;
   items?: Record<string, unknown>[];
   total?: number;
+  size?: string | null;
+  rows?: Array<Record<string, unknown>>;
 };
+
+function cardClass(card: Card) {
+  const size = card.size || "";
+  const kind = card.kind || "metric";
+  const wide = ["chart", "status_breakdown", "workflow", "list", "table", "activity", "saved_view", "report"].includes(kind);
+  const classes = ["card"];
+  if (size === "xl" || (wide && !size)) classes.push("card-wide");
+  if (size === "lg") classes.push("card-lg");
+  if (size === "sm") classes.push("card-sm");
+  return classes.join(" ");
+}
+
+function itemLabel(item: Record<string, unknown>) {
+  return String(item.name ?? item.title ?? item.code ?? item.message ?? item.doc_no ?? item.id);
+}
 
 export default function Dashboard({
   entities,
@@ -42,6 +59,7 @@ export default function Dashboard({
   const [branch, setBranch] = useState("");
   const [segment, setSegment] = useState<{ field: string; value: string } | null>(null);
   const theme = useTenantTheme();
+  const navigate = useNavigate();
 
   const quick = useMemo(() => {
     const all = entities.filter((e) => e.standalone !== false && !e.singleton && !e.child_of);
@@ -171,16 +189,26 @@ export default function Dashboard({
         {cards.map((card) => {
           const slug = slugFor(card.entity);
           const kind = card.kind || "metric";
-          if (kind === "chart" || kind === "status_breakdown") {
+          if (kind === "chart" || kind === "status_breakdown" || kind === "workflow" || kind === "report") {
+            const series = card.series ?? (card.rows ?? []).map((row) => ({
+              label: String(row.label ?? Object.values(row)[0] ?? ""),
+              value: Number(row.value ?? Object.values(row)[1] ?? 0),
+            }));
             return (
-              <div key={card.title} className="card card-wide">
+              <div key={card.title} className={cardClass(card)}>
                 <div className="muted">{card.title}</div>
                 <Chart
                   kind={card.chart || "bar"}
-                  series={card.series ?? []}
+                  series={series}
                   onSegmentClick={
                     card.group_by
                       ? (label) => {
+                          if (slug && (kind === "workflow" || kind === "status_breakdown")) {
+                            const params = new URLSearchParams();
+                            params.set(card.group_by as string, label);
+                            navigate(`/${slug}?${params.toString()}`);
+                            return;
+                          }
                           setSegment({ field: card.group_by as string, value: label });
                           if (card.group_by === "status") setStatus(label);
                         }
@@ -190,32 +218,31 @@ export default function Dashboard({
               </div>
             );
           }
-          if (kind === "list" || kind === "table" || kind === "activity") {
+          if (kind === "list" || kind === "table" || kind === "activity" || kind === "saved_view") {
             return (
-              <div key={card.title} className="card card-wide">
+              <div key={card.title} className={cardClass(card)}>
                 <div className="muted">{card.title}</div>
                 {(card.items ?? []).length === 0 ? (
                   <p className="empty">Nothing to show.</p>
                 ) : (
                   <ul className="dash-list">
-                    {(card.items ?? []).map((item) => (
-                      <li key={String(item.id)}>
-                        {slug ? (
-                          <Link to={`/${slug}/${item.id}`}>
-                            {String(item.name ?? item.title ?? item.code ?? item.id)}
-                          </Link>
-                        ) : (
-                          String(item.name ?? item.id)
-                        )}
-                      </li>
-                    ))}
+                    {(card.items ?? []).map((item) => {
+                      const id = String(item.id ?? item.entity_id ?? "");
+                      const href = slug && id ? (item.entity_id ? `/${slug}/${item.entity_id}` : `/${slug}/${item.id}`) : "";
+                      return (
+                        <li key={id || itemLabel(item)}>
+                          {href ? <Link to={href}>{itemLabel(item)}</Link> : itemLabel(item)}
+                          {item.created_at ? <span className="muted"> · {String(item.created_at).slice(11, 16)}</span> : null}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
             );
           }
           const display =
-            card.metric === "sum"
+            card.metric === "sum" || card.metric === "avg"
               ? formatMoney(card.value, theme.currency, theme.locale)
               : String(card.value);
           const inner = (
@@ -224,13 +251,13 @@ export default function Dashboard({
               <div className="card-value">{display}</div>
             </>
           );
-          const href = slug ? drilldownPath(slug, card.filters) : "";
-          return slug ? (
-            <Link key={card.title} className="card" to={href}>
+          const href = slug && slug !== "_audit" ? drilldownPath(slug, card.filters) : "";
+          return slug && href ? (
+            <Link key={card.title} className={cardClass(card)} to={href}>
               {inner}
             </Link>
           ) : (
-            <div key={card.title} className="card">
+            <div key={card.title} className={cardClass(card)}>
               {inner}
             </div>
           );

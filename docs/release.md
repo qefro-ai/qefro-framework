@@ -23,7 +23,7 @@ cargo install --path crates/qefro-cli --locked --force
 
 Record in the release notes:
 
-- framework version (`1.2.0`)
+- framework version (`1.3.0`)
 - git commit
 - Rustc version (`rustc -V`)
 - Node version

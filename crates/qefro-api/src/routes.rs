@@ -37,6 +37,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/meta/modules", get(meta_modules))
         .route("/api/v1/meta/dashboards", get(meta_dashboards))
         .route("/api/v1/meta/reports", get(meta_reports))
+        .route("/api/v1/meta/workspace", get(meta_workspace))
         .nest("/api/v1/studio", crate::studio::router())
         .route("/api/openapi.json", get(openapi))
         .route("/docs", get(docs))
@@ -75,10 +76,19 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/saved-filters/{id}",
             axum::routing::delete(delete_saved_filter),
         )
+        .route(
+            "/api/v1/saved-views",
+            get(list_saved_filters).post(create_saved_filter),
+        )
+        .route(
+            "/api/v1/saved-views/{id}",
+            axum::routing::delete(delete_saved_filter),
+        )
         .route("/api/v1/dashboards/{name}", get(get_dashboard))
         .route("/api/v1/reports", get(meta_reports))
         .route("/api/v1/reports/{name}", get(get_report))
         .route("/api/v1/reports/{name}/run", post(run_report))
+        .route("/api/v1/{slug}/aggregates", get(entity_aggregates))
         .route("/api/v1/{slug}/{id}/print", get(print_document))
         .route("/api/v1/{slug}/{id}/print.pdf", get(print_document_pdf))
         .route("/api/v1/{slug}/{id}/preview", get(print_document))
@@ -353,6 +363,7 @@ async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<
             .into_iter()
             .filter(|r| ctx.allows_app(r.module.as_deref()))
             .collect::<Vec<_>>(),
+        "workspace": workspace_payload(&state, &ctx, &config),
     })))
 }
 
@@ -407,6 +418,9 @@ async fn list_tools(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Valu
         .available(&ctx, state.entities.permissions())
         .into_iter()
         .filter(|t| {
+            if t.entity.is_empty() {
+                return true;
+            }
             state
                 .entities
                 .registry()
@@ -438,7 +452,7 @@ async fn invoke_tool(
     let result = state
         .tools
         .invoke(
-            &crate::EntityServiceOps(state.entities.as_ref()),
+            &crate::EntityServiceOps(&state),
             &ctx,
             &name,
             input,
@@ -492,6 +506,7 @@ fn reject_reserved(slug: &str) -> Result<(), ApiError> {
         "jobs",
         "files",
         "saved-filters",
+        "saved-views",
         "reports",
         "print",
         "studio",
@@ -501,6 +516,7 @@ fn reject_reserved(slug: &str) -> Result<(), ApiError> {
         "attachments",
         "realtime",
         "public",
+        "workspace",
     ];
     if RESERVED.contains(&slug) {
         Err(QefroError::not_found(format!("entity '{slug}' not found")).into())
@@ -682,6 +698,54 @@ async fn meta_dashboards(State(state): State<AppState>, Auth(ctx): Auth) -> Json
     Json(json!({ "dashboards": dashboards }))
 }
 
+async fn meta_workspace(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+) -> Result<Json<Value>, ApiError> {
+    let config = state.tenants.get_config(ctx.tenant_id).await?;
+    Ok(Json(workspace_payload(&state, &ctx, &config)))
+}
+
+fn workspace_payload(
+    state: &AppState,
+    ctx: &qefro_core::OpContext,
+    config: &TenantConfig,
+) -> Value {
+    let dashboards: Vec<_> = state
+        .dashboards_live()
+        .into_iter()
+        .filter(|d| ctx.allows_app(d.module.as_deref()))
+        .map(|d| json!({ "name": d.name, "label": d.label, "module": d.module }))
+        .collect();
+    let reports: Vec<_> = state
+        .reports_live()
+        .into_iter()
+        .filter(|r| ctx.allows_app(r.module.as_deref()))
+        .map(|r| json!({ "name": r.name, "label": r.label, "entity": r.entity, "module": r.module }))
+        .collect();
+    let default_dashboard = if config
+        .ui_config
+        .default_dashboard
+        .as_ref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+    {
+        config.ui_config.default_dashboard.clone()
+    } else {
+        state
+            .dashboards_live()
+            .into_iter()
+            .find(|d| ctx.allows_app(d.module.as_deref()))
+            .map(|d| d.name)
+    };
+    json!({
+        "navigation": state.default_nav_items.clone(),
+        "default_dashboard": default_dashboard,
+        "dashboards": dashboards,
+        "reports": reports,
+    })
+}
+
 async fn get_dashboard(
     State(state): State<AppState>,
     Auth(ctx): Auth,
@@ -704,6 +768,28 @@ async fn get_dashboard(
     let mut cards = Vec::new();
     for card in &dash.cards {
         let mut card = card.clone();
+        if !card.roles.is_empty()
+            && !ctx.is_admin()
+            && !card.roles.iter().any(|r| ctx.has_role(r))
+        {
+            continue;
+        }
+        if let Some(view_name) = card.saved_view.clone() {
+            match state
+                .saved_filters
+                .list(ctx.tenant_id, ctx.user_id, &card.entity)
+                .await
+            {
+                Ok(items) => {
+                    if let Some(view) = items.into_iter().find(|v| v.name == view_name) {
+                        apply_saved_query(&mut card, &view.query);
+                    } else {
+                        continue;
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
         for extra_f in &extra {
             let base = extra_f
                 .field
@@ -716,7 +802,34 @@ async fn get_dashboard(
             });
             card.filters.push(extra_f.clone());
         }
-        cards.push(state.entities.dashboard_card_value(&ctx, &card).await?);
+        if let Some(report_name) = card.report.clone() {
+            let report = state
+                .reports_live()
+                .into_iter()
+                .find(|r| r.name == report_name);
+            let Some(report) = report else {
+                continue;
+            };
+            match state.entities.run_report(&ctx, &report, json!([])).await {
+                Ok(mut value) => {
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert("title".into(), json!(card.title));
+                        obj.insert("kind".into(), json!("report"));
+                        obj.insert("size".into(), json!(card.size));
+                        obj.insert("entity".into(), json!(card.entity));
+                    }
+                    cards.push(value);
+                }
+                Err(err) if skippable_card_error(&err) => continue,
+                Err(err) => return Err(err.into()),
+            }
+            continue;
+        }
+        match state.entities.dashboard_card_value(&ctx, &card).await {
+            Ok(value) => cards.push(value),
+            Err(err) if skippable_card_error(&err) => continue,
+            Err(err) => return Err(err.into()),
+        }
     }
     Ok(Json(json!({
         "name": dash.name,
@@ -724,6 +837,35 @@ async fn get_dashboard(
         "module": dash.module,
         "cards": cards,
     })))
+}
+
+fn skippable_card_error(err: &QefroError) -> bool {
+    matches!(
+        err,
+        QefroError::Forbidden { .. } | QefroError::NotFound { .. } | QefroError::AppNotEnabled { .. }
+    )
+}
+
+fn apply_saved_query(card: &mut qefro_core::DashboardCard, query: &Value) {
+    let Some(obj) = query.as_object() else {
+        return;
+    };
+    for (key, value) in obj {
+        if matches!(key.as_str(), "sort" | "view" | "page" | "page_size" | "columns") {
+            continue;
+        }
+        let text = match value {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            Value::Bool(b) => b.to_string(),
+            _ => continue,
+        };
+        card.filters.retain(|f| f.field != *key);
+        card.filters.push(qefro_core::ui::DashboardFilter {
+            field: key.clone(),
+            value: text,
+        });
+    }
 }
 
 async fn meta_reports(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
@@ -768,6 +910,44 @@ async fn run_report(
     let filters = body.get("filters").cloned().unwrap_or(json!([]));
     Ok(Json(
         state.entities.run_report(&ctx, &report, filters).await?,
+    ))
+}
+
+async fn entity_aggregates(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(slug): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    reject_reserved(&slug)?;
+    let entity = state.entities.registry().get(&slug)?;
+    let group_by = params
+        .get("group_by")
+        .cloned()
+        .ok_or_else(|| QefroError::bad_request("group_by is required"))?;
+    let metric = params
+        .get("metric")
+        .or_else(|| params.get("aggregation"))
+        .cloned()
+        .unwrap_or_else(|| "count".into());
+    let field = params.get("field").cloned();
+    let raw: Vec<(String, String)> = params
+        .into_iter()
+        .filter(|(k, _)| !matches!(k.as_str(), "group_by" | "metric" | "aggregation" | "field"))
+        .collect();
+    let query = parse_query(&entity, &raw)?;
+    Ok(Json(
+        state
+            .entities
+            .entity_aggregates(
+                &ctx,
+                &entity.name,
+                &group_by,
+                &metric,
+                field.as_deref(),
+                query,
+            )
+            .await?,
     ))
 }
 
@@ -1116,7 +1296,7 @@ async fn list_saved_filters(
     let entity = params
         .get("entity")
         .ok_or_else(|| QefroError::bad_request("entity is required"))?;
-    ensure_entity_app(&state, &ctx, entity)?;
+    ensure_entity_list(&state, &ctx, entity)?;
     let items = state
         .saved_filters
         .list(ctx.tenant_id, ctx.user_id, entity)
@@ -1129,7 +1309,7 @@ async fn create_saved_filter(
     Auth(ctx): Auth,
     Json(body): Json<SavedFilterBody>,
 ) -> Result<Json<Value>, ApiError> {
-    ensure_entity_app(&state, &ctx, &body.entity)?;
+    ensure_entity_list(&state, &ctx, &body.entity)?;
     if body.name.trim().is_empty() {
         return Err(QefroError::bad_request("name is required").into());
     }
@@ -1167,5 +1347,18 @@ fn ensure_entity_app(
     if !ctx.allows_app(entity.module.as_deref()) {
         return Err(QefroError::not_found(format!("entity '{name}' not found")).into());
     }
+    Ok(())
+}
+
+fn ensure_entity_list(
+    state: &AppState,
+    ctx: &qefro_core::OpContext,
+    name: &str,
+) -> Result<(), ApiError> {
+    ensure_entity_app(state, ctx, name)?;
+    state
+        .entities
+        .permissions()
+        .check(ctx, name, Action::List)?;
     Ok(())
 }

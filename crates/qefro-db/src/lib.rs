@@ -29,7 +29,7 @@ pub mod service;
 pub mod studio;
 pub mod webhooks;
 
-pub use activity::{ActivityRecord, ActivityStore};
+pub use global_search::{SearchGroup, SearchHit, SearchResponse};
 pub use app_registry::AppRegistryRow;
 pub use attachments::{Attachment, AttachmentStore};
 pub use audit::AuditLogger;

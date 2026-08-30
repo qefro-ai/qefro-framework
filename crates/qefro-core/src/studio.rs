@@ -104,6 +104,8 @@ pub struct FieldUiPatch {
     pub readonly: Option<bool>,
     pub hidden: Option<bool>,
     pub searchable: Option<bool>,
+    pub search_weight: Option<i32>,
+    pub search_exact: Option<bool>,
     pub sortable: Option<bool>,
     pub filterable: Option<bool>,
     pub widget: Option<String>,
@@ -209,6 +211,16 @@ pub fn apply_field_ui_patch(field: &mut FieldDef, patch: &FieldUiPatch) {
     }
     if let Some(v) = patch.searchable {
         field.searchable = v;
+    }
+    if let Some(v) = patch.search_weight {
+        field.search_weight = v.max(1);
+        field.searchable = true;
+    }
+    if let Some(v) = patch.search_exact {
+        field.search_exact = v;
+        if v {
+            field.searchable = true;
+        }
     }
     if let Some(v) = patch.sortable {
         field.ui.sortable = v;

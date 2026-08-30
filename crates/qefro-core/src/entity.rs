@@ -458,7 +458,13 @@ impl EntityDef {
     }
 
     pub fn searchable_fields(&self) -> Vec<&FieldDef> {
-        self.fields.iter().filter(|f| f.searchable).collect()
+        let mut fields: Vec<&FieldDef> = self
+            .fields
+            .iter()
+            .filter(|f| f.searchable && !f.secret)
+            .collect();
+        fields.sort_by(|a, b| b.search_weight.cmp(&a.search_weight).then(a.name.cmp(&b.name)));
+        fields
     }
 
     pub fn validate_idents(&self) -> QefroResult<()> {
@@ -507,7 +513,9 @@ impl EntityDef {
                     detail_visible: f.ui.detail && !f.ui.hidden,
                     filter: f.ui.filter,
                     filterable: f.ui.filter,
-                    searchable: f.searchable,
+                    searchable: f.searchable && !f.secret,
+                    search_weight: f.search_weight,
+                    search_exact: f.search_exact,
                     sortable: f.ui.sortable
                         || matches!(f.name.as_str(), "created_at" | "updated_at" | "name"),
                     hidden: f.ui.hidden,
@@ -740,5 +748,26 @@ fields:
         let subtotal = ui.fields.iter().find(|f| f.name == "subtotal").unwrap();
         assert!(subtotal.computed);
         assert!(subtotal.readonly);
+    }
+
+    #[test]
+    fn searchable_fields_skip_secrets_and_rank_by_weight() {
+        let def = EntityDef::new("Account")
+            .field(FieldDef::string("email").searchable().search_weight(2))
+            .field(FieldDef::string("name").searchable().search_weight(10))
+            .field(FieldDef::string("password").searchable().secret())
+            .build();
+        let names: Vec<_> = def
+            .searchable_fields()
+            .into_iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["name", "email"]);
+        let ui = def.to_ui_meta();
+        let password = ui.fields.iter().find(|f| f.name == "password").unwrap();
+        assert!(!password.searchable);
+        let name = ui.fields.iter().find(|f| f.name == "name").unwrap();
+        assert_eq!(name.search_weight, 10);
+        assert_eq!(ui.schema_version, "1");
     }
 }

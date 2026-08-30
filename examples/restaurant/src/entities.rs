@@ -1,4 +1,4 @@
-use qefro_core::ui::{ListColumnSpec, SortSpec};
+use qefro_core::ui::{ChartMeasureSpec, ChartViewSpec, ListColumnSpec, SortSpec};
 use qefro_core::{
     CalendarViewSpec, ChildTableDef, DocumentConfig, EntityActionDef, EntityDef, EntityViews,
     FieldDef, KanbanCardSpec, KanbanViewSpec, LinkDef, ListViewSpec, NamingConfig, PrintFormat,
@@ -25,7 +25,7 @@ pub fn customer() -> EntityDef {
         .field(
             FieldDef::string("name")
                 .required()
-                .searchable()
+                .search_weight(10)
                 .max_length(200)
                 .filterable()
                 .section("Contact"),
@@ -328,7 +328,7 @@ pub fn reservation() -> EntityDef {
         .field(
             FieldDef::string("guest_name")
                 .nullable()
-                .searchable()
+                .search_weight(8)
                 .label("Name")
                 .section("Booking Details"),
         )
@@ -395,6 +395,7 @@ pub fn order() -> EntityDef {
         .icon("receipt")
         .workflow("order")
         .views(EntityViews {
+            default: Some("kanban".into()),
             kanban: Some(KanbanViewSpec {
                 group_by: Some("status".into()),
                 card: Some(KanbanCardSpec {
@@ -403,6 +404,15 @@ pub fn order() -> EntityDef {
                     ..Default::default()
                 }),
                 ..Default::default()
+            }),
+            chart: Some(ChartViewSpec {
+                enabled: true,
+                chart_type: Some("bar".into()),
+                dimension: Some("status".into()),
+                measure: Some(ChartMeasureSpec {
+                    field: Some("grand_total".into()),
+                    aggregation: Some("sum".into()),
+                }),
             }),
             ..Default::default()
         })
@@ -447,6 +457,7 @@ pub fn order() -> EntityDef {
                 .default_from("current_date")
                 .filterable()
                 .sortable()
+                .indexed()
                 .ui(UiConfig::date()),
         )
         .field(

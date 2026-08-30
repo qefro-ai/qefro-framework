@@ -457,6 +457,9 @@ fn schema_version() -> String {
 /// Additive view metadata. `schema_version` stays `"1"`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct EntityViews {
+    /// Default collection view: `list`, `card`, `kanban`, `calendar`, or `chart`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub list: Option<ListViewSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -469,6 +472,31 @@ pub struct EntityViews {
     pub kanban: Option<KanbanViewSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calendar: Option<CalendarViewSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chart: Option<ChartViewSpec>,
+}
+
+/// Generic chart view. Renderer must not branch on entity name.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ChartViewSpec {
+    #[serde(default = "default_view_enabled")]
+    pub enabled: bool,
+    /// `bar`, `line`, `area`, `pie`, `donut`.
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "type")]
+    pub chart_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measure: Option<ChartMeasureSpec>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ChartMeasureSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    /// `count`, `sum`, `avg`, `min`, `max`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aggregation: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -646,6 +674,10 @@ pub struct UiFieldView {
     pub filter: bool,
     pub filterable: bool,
     pub searchable: bool,
+    #[serde(default = "default_search_weight_view")]
+    pub search_weight: i32,
+    #[serde(default)]
+    pub search_exact: bool,
     pub sortable: bool,
     pub hidden: bool,
     pub disabled: bool,
@@ -698,17 +730,22 @@ fn widget_options_empty(opts: &WidgetOptions) -> bool {
     opts == &WidgetOptions::default()
 }
 
+fn default_search_weight_view() -> i32 {
+    1
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardCard {
     pub title: String,
     pub entity: String,
-    /// `count` or `sum` (legacy metric). Charts use `group_by`.
+    /// `count`, `sum`, `avg`, `min`, `max`. Charts use `group_by`.
     #[serde(default = "default_metric")]
     pub metric: String,
-    /// `metric`, `table`, `chart`, `list`, `status_breakdown`, `activity`.
+    /// `metric`/`kpi`, `table`, `chart`, `list`, `status_breakdown`/`workflow`,
+    /// `activity`, `saved_view`, `report`, `audit`.
     #[serde(default = "default_card_kind")]
     pub kind: String,
-    /// `bar`, `line`, `pie`, `donut`.
+    /// `bar`, `line`, `area`, `pie`, `donut`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chart: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -719,6 +756,18 @@ pub struct DashboardCard {
     pub filters: Vec<DashboardFilter>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    /// Layout hint: `sm`, `md`, `lg`, `xl`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<String>,
+    /// When non-empty, only these roles see the card. Others skip it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roles: Vec<String>,
+    /// Saved view name for `saved_view` widgets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub saved_view: Option<String>,
+    /// Report name for `report` widgets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<String>,
 }
 
 fn default_metric() -> String {
@@ -767,18 +816,35 @@ impl DashboardDef {
 }
 
 impl DashboardCard {
-    pub fn count(title: impl Into<String>, entity: impl Into<String>) -> Self {
+    fn base(
+        title: impl Into<String>,
+        entity: impl Into<String>,
+        metric: impl Into<String>,
+        kind: impl Into<String>,
+    ) -> Self {
         Self {
             title: title.into(),
             entity: entity.into(),
-            metric: "count".into(),
-            kind: "metric".into(),
+            metric: metric.into(),
+            kind: kind.into(),
             chart: None,
             group_by: None,
             field: None,
             filters: Vec::new(),
             limit: None,
+            size: None,
+            roles: Vec::new(),
+            saved_view: None,
+            report: None,
         }
+    }
+
+    pub fn count(title: impl Into<String>, entity: impl Into<String>) -> Self {
+        Self::base(title, entity, "count", "metric")
+    }
+
+    pub fn kpi(title: impl Into<String>, entity: impl Into<String>) -> Self {
+        Self::base(title, entity, "count", "kpi")
     }
 
     pub fn sum(
@@ -786,17 +852,9 @@ impl DashboardCard {
         entity: impl Into<String>,
         field: impl Into<String>,
     ) -> Self {
-        Self {
-            title: title.into(),
-            entity: entity.into(),
-            metric: "sum".into(),
-            kind: "metric".into(),
-            chart: None,
-            group_by: None,
-            field: Some(field.into()),
-            filters: Vec::new(),
-            limit: None,
-        }
+        let mut card = Self::base(title, entity, "sum", "metric");
+        card.field = Some(field.into());
+        card
     }
 
     pub fn chart(
@@ -805,17 +863,10 @@ impl DashboardCard {
         chart: impl Into<String>,
         group_by: impl Into<String>,
     ) -> Self {
-        Self {
-            title: title.into(),
-            entity: entity.into(),
-            metric: "count".into(),
-            kind: "chart".into(),
-            chart: Some(chart.into()),
-            group_by: Some(group_by.into()),
-            field: None,
-            filters: Vec::new(),
-            limit: None,
-        }
+        let mut card = Self::base(title, entity, "count", "chart");
+        card.chart = Some(chart.into());
+        card.group_by = Some(group_by.into());
+        card
     }
 
     pub fn status_breakdown(
@@ -823,37 +874,59 @@ impl DashboardCard {
         entity: impl Into<String>,
         field: impl Into<String>,
     ) -> Self {
-        Self {
-            title: title.into(),
-            entity: entity.into(),
-            metric: "count".into(),
-            kind: "status_breakdown".into(),
-            chart: Some("donut".into()),
-            group_by: Some(field.into()),
-            field: None,
-            filters: Vec::new(),
-            limit: None,
-        }
+        let mut card = Self::base(title, entity, "count", "status_breakdown");
+        card.chart = Some("donut".into());
+        card.group_by = Some(field.into());
+        card
+    }
+
+    pub fn workflow(title: impl Into<String>, entity: impl Into<String>) -> Self {
+        let mut card = Self::status_breakdown(title, entity, "status");
+        card.kind = "workflow".into();
+        card
     }
 
     pub fn recent(title: impl Into<String>, entity: impl Into<String>, limit: u32) -> Self {
-        Self {
-            title: title.into(),
-            entity: entity.into(),
-            metric: "count".into(),
-            kind: "list".into(),
-            chart: None,
-            group_by: None,
-            field: None,
-            filters: Vec::new(),
-            limit: Some(limit),
-        }
+        let mut card = Self::base(title, entity, "count", "list");
+        card.limit = Some(limit);
+        card
     }
 
     pub fn table(title: impl Into<String>, entity: impl Into<String>, limit: u32) -> Self {
         let mut card = Self::recent(title, entity, limit);
         card.kind = "table".into();
         card
+    }
+
+    pub fn activity(title: impl Into<String>, entity: impl Into<String>, limit: u32) -> Self {
+        let mut card = Self::base(title, entity, "count", "activity");
+        card.limit = Some(limit);
+        card
+    }
+
+    pub fn saved_view(
+        title: impl Into<String>,
+        entity: impl Into<String>,
+        view: impl Into<String>,
+    ) -> Self {
+        let mut card = Self::base(title, entity, "count", "saved_view");
+        card.saved_view = Some(view.into());
+        card.limit = Some(8);
+        card
+    }
+
+    pub fn report_card(
+        title: impl Into<String>,
+        entity: impl Into<String>,
+        report: impl Into<String>,
+    ) -> Self {
+        let mut card = Self::base(title, entity, "count", "report");
+        card.report = Some(report.into());
+        card
+    }
+
+    pub fn audit(title: impl Into<String>) -> Self {
+        Self::base(title, "_audit", "count", "audit")
     }
 
     pub fn filter(mut self, field: impl Into<String>, value: impl Into<String>) -> Self {
@@ -863,6 +936,40 @@ impl DashboardCard {
         });
         self
     }
+
+    pub fn size(mut self, size: impl Into<String>) -> Self {
+        self.size = Some(size.into());
+        self
+    }
+
+    pub fn roles(mut self, roles: &[&str]) -> Self {
+        self.roles = roles.iter().map(|s| (*s).to_string()).collect();
+        self
+    }
+
+    pub fn measure_field(mut self, field: impl Into<String>) -> Self {
+        self.field = Some(field.into());
+        self
+    }
+
+    pub fn metric_name(mut self, metric: impl Into<String>) -> Self {
+        self.metric = metric.into();
+        self
+    }
+}
+
+/// Workspace navigation item. Labels come from the app module, not hardcoded restaurant names.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceNavItem {
+    pub label: String,
+    pub entity: String,
+    pub slug: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

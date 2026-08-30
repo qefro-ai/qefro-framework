@@ -94,8 +94,14 @@ async fn global_search(
     if !state.search_limiter.allow(&key) {
         return Err(QefroError::rate_limited("search rate limit exceeded").into());
     }
-    let results = state.entities.global_search(&ctx, &query.q, 10).await?;
-    Ok(Json(json!({ "results": results })))
+    let results = state
+        .entities
+        .global_search_grouped(&ctx, &query.q, 10)
+        .await?;
+    Ok(Json(json!({
+        "results": results.results,
+        "groups": results.groups,
+    })))
 }
 
 async fn list_notifications(

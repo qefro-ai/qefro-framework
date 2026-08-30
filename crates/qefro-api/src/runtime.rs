@@ -269,6 +269,8 @@ impl QefroRuntime {
             "POST /api/v1/studio/drafts".into(),
             "POST /api/v1/studio/validate".into(),
             "GET /api/v1/studio/publish".into(),
+            "GET /api/v1/meta/workspace".into(),
+            "GET /api/v1/saved-views".into(),
             "GET /api/v1/search".into(),
             "GET /api/v1/settings/:slug".into(),
             "GET /api/v1/notifications".into(),
@@ -472,6 +474,25 @@ impl QefroRuntime {
             .iter()
             .flat_map(|a| a.module.default_nav_slugs())
             .collect();
+        let default_nav_items: Vec<qefro_core::WorkspaceNavItem> = self
+            .apps
+            .iter()
+            .flat_map(|a| {
+                a.module.navigation.iter().filter_map(|item| {
+                    let entity = a.module.entities.iter().find(|e| {
+                        e.name == item.entity || e.slug == item.entity
+                    })?;
+                    Some(qefro_core::WorkspaceNavItem {
+                        label: item.label.clone(),
+                        entity: entity.name.clone(),
+                        slug: entity.slug.clone(),
+                        query: item.query.clone(),
+                        view: item.view.clone(),
+                        module: Some(a.module.name.clone()),
+                    })
+                })
+            })
+            .collect();
         let mut default_hidden_entities: Vec<String> = vec![
             qefro_core::PERSON_SLUG.into(),
             qefro_core::ORGANIZATION_SLUG.into(),
@@ -514,6 +535,7 @@ impl QefroRuntime {
             )),
             installed_apps,
             default_navigation,
+            default_nav_items,
             default_hidden_entities,
             blob_store,
             blobs,

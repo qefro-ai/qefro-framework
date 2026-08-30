@@ -1,4 +1,4 @@
-use qefro_core::ui::{ListColumnSpec, SortSpec};
+use qefro_core::ui::{ChartMeasureSpec, ChartViewSpec, ListColumnSpec, SortSpec};
 use qefro_core::{
     CalendarViewSpec, ChildTableDef, EntityDef, EntityViews, FieldDef, KanbanCardSpec,
     KanbanViewSpec, ListViewSpec, UiConfig,
@@ -25,7 +25,7 @@ pub fn crm_customer() -> EntityDef {
         .field(
             FieldDef::string("name")
                 .required()
-                .searchable()
+                .search_weight(10)
                 .max_length(200)
                 .filterable()
                 .section("Contact"),
@@ -212,6 +212,7 @@ pub fn opportunity() -> EntityDef {
                 .label("Value"),
         )
         .views(EntityViews {
+            default: Some("kanban".into()),
             kanban: Some(KanbanViewSpec {
                 group_by: Some("status".into()),
                 card: Some(KanbanCardSpec {
@@ -225,6 +226,15 @@ pub fn opportunity() -> EntityDef {
             calendar: Some(CalendarViewSpec {
                 enabled: false,
                 ..Default::default()
+            }),
+            chart: Some(ChartViewSpec {
+                enabled: true,
+                chart_type: Some("bar".into()),
+                dimension: Some("status".into()),
+                measure: Some(ChartMeasureSpec {
+                    field: Some("amount".into()),
+                    aggregation: Some("sum".into()),
+                }),
             }),
             ..Default::default()
         })

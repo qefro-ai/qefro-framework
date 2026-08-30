@@ -52,4 +52,15 @@ describe("CommandPalette", () => {
     await userEvent.type(screen.getByLabelText("Command or search"), "Ahmed");
     expect(await screen.findByText("Ahmed")).toBeInTheDocument();
   });
+
+  it("shows recent searches", async () => {
+    localStorage.setItem("qefro_recent_searches", JSON.stringify(["Ahmed"]));
+    render(
+      <MemoryRouter>
+        <CommandPalette entities={[customer]} open onOpenChange={() => undefined} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Recent searches")).toBeInTheDocument();
+    expect(screen.getByText("Ahmed")).toBeInTheDocument();
+  });
 });

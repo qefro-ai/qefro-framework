@@ -5,6 +5,22 @@ import { api, type UiEntity } from "../../api";
 type Hit = { entity: string; slug: string; id: string; label: string; snippet: string };
 type Command = { id: string; group: string; label: string; hint?: string; run: () => void };
 
+const RECENT_KEY = "qefro_recent_searches";
+
+function readRecent(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+    return Array.isArray(raw) ? raw.filter((v) => typeof v === "string").slice(0, 8) : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberSearch(q: string) {
+  const next = [q, ...readRecent().filter((item) => item.toLowerCase() !== q.toLowerCase())].slice(0, 8);
+  localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+}
+
 export default function CommandPalette({
   entities,
   studio,
@@ -19,6 +35,7 @@ export default function CommandPalette({
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Hit[]>([]);
   const [reports, setReports] = useState<Array<{ name: string; label: string }>>([]);
+  const [recent, setRecent] = useState<string[]>(() => readRecent());
   const [active, setActive] = useState(0);
   const navigate = useNavigate();
 
@@ -39,6 +56,7 @@ export default function CommandPalette({
       setQ("");
       setResults([]);
       setActive(0);
+      setRecent(readRecent());
       return;
     }
     api
@@ -120,6 +138,7 @@ export default function CommandPalette({
     if (!item) return;
     if (item.kind === "cmd") item.cmd.run();
     else {
+      rememberSearch(q.trim());
       navigate(`/${item.hit.slug}/${item.hit.id}`);
       onOpenChange(false);
     }
@@ -184,6 +203,7 @@ export default function CommandPalette({
                     className={idx === active ? "active ghost" : "ghost"}
                     onMouseEnter={() => setActive(idx)}
                     onClick={() => {
+                      rememberSearch(q.trim());
                       navigate(`/${r.slug}/${r.id}`);
                       onOpenChange(false);
                     }}
@@ -195,6 +215,24 @@ export default function CommandPalette({
               })}
             </li>
           ))}
+          {!q && recent.length > 0 ? (
+            <li className="palette-group">
+              <div className="palette-heading">Recent searches</div>
+              {recent.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    setQ(item);
+                    setActive(0);
+                  }}
+                >
+                  {item}
+                </button>
+              ))}
+            </li>
+          ) : null}
           {q && flat.length === 0 ? <li className="muted">No matches.</li> : null}
         </ul>
       </div>

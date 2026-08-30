@@ -121,6 +121,49 @@ impl ActivityStore {
         .map_err(|e| QefroError::database(e.to_string()))
     }
 
+    pub async fn list_recent(
+        &self,
+        tenant_id: Uuid,
+        entity_type: Option<&str>,
+        limit: i64,
+    ) -> QefroResult<Vec<ActivityRecord>> {
+        let limit = limit.clamp(1, 200);
+        if let Some(entity_type) = entity_type {
+            sqlx::query_as::<_, ActivityRecord>(
+                r#"
+                SELECT id, tenant_id, entity_type, entity_id, actor_id, actor_name,
+                       activity_type, message, metadata, created_at
+                FROM qefro_activity
+                WHERE tenant_id = $1 AND entity_type = $2
+                ORDER BY created_at DESC
+                LIMIT $3
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(entity_type)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))
+        } else {
+            sqlx::query_as::<_, ActivityRecord>(
+                r#"
+                SELECT id, tenant_id, entity_type, entity_id, actor_id, actor_name,
+                       activity_type, message, metadata, created_at
+                FROM qefro_activity
+                WHERE tenant_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+                "#,
+            )
+            .bind(tenant_id)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))
+        }
+    }
+
     pub async fn purge_older_than(&self, days: i64) -> QefroResult<u64> {
         let days = days.max(1);
         let result = sqlx::query(

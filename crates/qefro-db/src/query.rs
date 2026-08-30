@@ -160,8 +160,13 @@ pub fn apply_filters(
                         qb.push(" OR ");
                     }
                     qb.push(quote_ident(&field.column_name())?);
-                    qb.push(" ILIKE ");
-                    qb.push_bind(format!("%{search}%"));
+                    if field.search_exact {
+                        qb.push("::text ILIKE ");
+                        qb.push_bind(search.clone());
+                    } else {
+                        qb.push("::text ILIKE ");
+                        qb.push_bind(format!("%{search}%"));
+                    }
                 }
                 qb.push(")");
             }
