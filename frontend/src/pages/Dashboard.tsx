@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { api, type TenantConfig, type UiEntity } from "../api";
 import { Chart } from "../components/dashboards/Chart";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
+import { PageHeader } from "../components/ui/PageHeader";
+import { SectionHeader } from "../components/ui/SectionHeader";
 import { datePresetRange } from "../format";
 import { friendlyError } from "../friendlyError";
 import { dateFieldsFromFilters, drilldownPath } from "../metadata/dashboard";
@@ -26,14 +28,32 @@ type Card = {
   rows?: Array<Record<string, unknown>>;
 };
 
+const CHART_KINDS = ["chart", "status_breakdown", "workflow", "report"];
+const LIST_KINDS = ["list", "table", "activity", "saved_view"];
+
+function cardKind(card: Card) {
+  return card.kind || "metric";
+}
+
+function isChartCard(card: Card) {
+  return CHART_KINDS.includes(cardKind(card));
+}
+
+function isListCard(card: Card) {
+  return LIST_KINDS.includes(cardKind(card));
+}
+
 function cardClass(card: Card) {
   const size = card.size || "";
-  const kind = card.kind || "metric";
-  const wide = ["chart", "status_breakdown", "workflow", "list", "table", "activity", "saved_view", "report"].includes(kind);
+  const kind = cardKind(card);
+  const wide = CHART_KINDS.includes(kind) || LIST_KINDS.includes(kind);
   const classes = ["card"];
-  if (size === "xl" || (wide && size !== "sm")) classes.push("card-wide");
-  if (size === "lg") classes.push("card-lg");
-  if (size === "sm") classes.push("card-sm");
+  if (isChartCard(card)) classes.push("chart-card");
+  else if (isListCard(card)) classes.push("list-card");
+  else classes.push("metric-card");
+  if (size === "xl" || (wide && size !== "sm" && size !== "lg")) classes.push("card-wide");
+  else if (size === "lg" || (wide && size !== "sm")) classes.push("card-lg");
+  else classes.push("card-sm");
   return classes.join(" ");
 }
 
@@ -53,6 +73,79 @@ function itemLabel(item: Record<string, unknown>) {
       item.doc_no ??
       related ??
       item.id,
+  );
+}
+
+function DashboardCard({
+  card,
+  slug,
+  currency,
+  locale,
+  onSegment,
+}: {
+  card: Card;
+  slug?: string;
+  currency: string;
+  locale: string;
+  onSegment: (card: Card, slug: string | undefined, label: string) => void;
+}) {
+  const kind = cardKind(card);
+  if (isChartCard(card)) {
+    const series = card.series ?? (card.rows ?? []).map((row) => ({
+      label: String(row.label ?? Object.values(row)[0] ?? ""),
+      value: Number(row.value ?? Object.values(row)[1] ?? 0),
+    }));
+    return (
+      <div className={cardClass(card)}>
+        <div className="muted">{card.title}</div>
+        <Chart
+          kind={kind === "workflow" || kind === "status_breakdown" ? "bar" : card.chart || "bar"}
+          series={series}
+          onSegmentClick={card.group_by ? (label) => onSegment(card, slug, label) : undefined}
+        />
+      </div>
+    );
+  }
+  if (isListCard(card)) {
+    return (
+      <div className={cardClass(card)}>
+        <div className="muted">{card.title}</div>
+        {(card.items ?? []).length === 0 ? (
+          <p className="empty">Nothing to show.</p>
+        ) : (
+          <ul className="dash-list">
+            {(card.items ?? []).map((item) => {
+              const id = String(item.id ?? item.entity_id ?? "");
+              const href = slug && id ? (item.entity_id ? `/${slug}/${item.entity_id}` : `/${slug}/${item.id}`) : "";
+              return (
+                <li key={id || itemLabel(item)}>
+                  {href ? <Link to={href}>{itemLabel(item)}</Link> : itemLabel(item)}
+                  {item.created_at ? <span className="muted"> · {String(item.created_at).slice(11, 16)}</span> : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    );
+  }
+  const display =
+    card.metric === "sum" || card.metric === "avg"
+      ? formatMoney(card.value, currency, locale)
+      : String(card.value);
+  const inner = (
+    <>
+      <div className="muted">{card.title}</div>
+      <div className="card-value">{display}</div>
+    </>
+  );
+  const href = slug && slug !== "_audit" ? drilldownPath(slug, card.filters) : "";
+  return slug && href ? (
+    <Link className={cardClass(card)} to={href}>
+      {inner}
+    </Link>
+  ) : (
+    <div className={cardClass(card)}>{inner}</div>
   );
 }
 
@@ -131,6 +224,20 @@ export default function Dashboard({
     return entities.find((e) => e.entity === entityName)?.slug;
   }
 
+  function onSegment(card: Card, slug: string | undefined, label: string) {
+    const kind = cardKind(card);
+    if (slug && (kind === "workflow" || kind === "status_breakdown") && card.group_by) {
+      const params = new URLSearchParams();
+      params.set(card.group_by, label);
+      navigate(`/${slug}?${params.toString()}`);
+      return;
+    }
+    if (card.group_by) {
+      setSegment({ field: card.group_by, value: label });
+      if (card.group_by === "status") setStatus(label);
+    }
+  }
+
   const statuses = useMemo(() => {
     const found = new Set<string>();
     for (const card of cards) {
@@ -145,19 +252,29 @@ export default function Dashboard({
   const hasDate = cards.some((c) => dateFieldsFromFilters(c.filters).length > 0);
   const hasBranch = entities.some((e) => e.fields.some((f) => f.name === "branch_id"));
 
+  const kpis = cards.filter((c) => !isChartCard(c) && !isListCard(c));
+  const operational = cards.filter(isChartCard);
+  const activity = cards.filter(isListCard);
+
   return (
     <div className="page workspace">
-      <div className="badge">Overview</div>
-      <h2>{label}</h2>
-      {quick.length > 0 ? (
-        <div className="quick-actions">
-          {quick.map((e) => (
-            <Link key={e.slug} to={`/${e.slug}/new`}>
-              <button type="button">New {e.label}</button>
-            </Link>
-          ))}
-        </div>
-      ) : null}
+      <PageHeader
+        kicker="Overview"
+        title={label}
+        actions={
+          quick.length > 0 ? (
+            <>
+              {quick.slice(0, 3).map((e) => (
+                <Link key={e.slug} to={`/${e.slug}/new`}>
+                  <button type="button" className="ghost">
+                    New {e.label}
+                  </button>
+                </Link>
+              ))}
+            </>
+          ) : undefined
+        }
+      />
       {cards.length > 0 ? (
         <div className="dash-filters">
           {hasDate ? (
@@ -196,92 +313,61 @@ export default function Dashboard({
         </div>
       ) : null}
       {error && <ErrorState message={`Unable to load dashboard. ${error}`} />}
-      {loading && <Skeleton rows={4} />}
+      {loading && <Skeleton rows={4} variant="dashboard" />}
       {cards.length === 0 && !error && !loading && (
         <EmptyState title="No dashboard is configured" description="Enable an application with workspace cards." />
       )}
-      <div className="cards">
-        {cards.map((card) => {
-          const slug = slugFor(card.entity);
-          const kind = card.kind || "metric";
-          if (kind === "chart" || kind === "status_breakdown" || kind === "workflow" || kind === "report") {
-            const series = card.series ?? (card.rows ?? []).map((row) => ({
-              label: String(row.label ?? Object.values(row)[0] ?? ""),
-              value: Number(row.value ?? Object.values(row)[1] ?? 0),
-            }));
-            return (
-              <div key={card.title} className={cardClass(card)}>
-                <div className="muted">{card.title}</div>
-                <Chart
-                  kind={
-                    kind === "workflow" || kind === "status_breakdown"
-                      ? "bar"
-                      : card.chart || "bar"
-                  }
-                  series={series}
-                  onSegmentClick={
-                    card.group_by
-                      ? (label) => {
-                          if (slug && (kind === "workflow" || kind === "status_breakdown")) {
-                            const params = new URLSearchParams();
-                            params.set(card.group_by as string, label);
-                            navigate(`/${slug}?${params.toString()}`);
-                            return;
-                          }
-                          setSegment({ field: card.group_by as string, value: label });
-                          if (card.group_by === "status") setStatus(label);
-                        }
-                      : undefined
-                  }
-                />
-              </div>
-            );
-          }
-          if (kind === "list" || kind === "table" || kind === "activity" || kind === "saved_view") {
-            return (
-              <div key={card.title} className={cardClass(card)}>
-                <div className="muted">{card.title}</div>
-                {(card.items ?? []).length === 0 ? (
-                  <p className="empty">Nothing to show.</p>
-                ) : (
-                  <ul className="dash-list">
-                    {(card.items ?? []).map((item) => {
-                      const id = String(item.id ?? item.entity_id ?? "");
-                      const href = slug && id ? (item.entity_id ? `/${slug}/${item.entity_id}` : `/${slug}/${item.id}`) : "";
-                      return (
-                        <li key={id || itemLabel(item)}>
-                          {href ? <Link to={href}>{itemLabel(item)}</Link> : itemLabel(item)}
-                          {item.created_at ? <span className="muted"> · {String(item.created_at).slice(11, 16)}</span> : null}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
-            );
-          }
-          const display =
-            card.metric === "sum" || card.metric === "avg"
-              ? formatMoney(card.value, theme.currency, theme.locale)
-              : String(card.value);
-          const inner = (
-            <>
-              <div className="muted">{card.title}</div>
-              <div className="card-value">{display}</div>
-            </>
-          );
-          const href = slug && slug !== "_audit" ? drilldownPath(slug, card.filters) : "";
-          return slug && href ? (
-            <Link key={card.title} className={cardClass(card)} to={href}>
-              {inner}
-            </Link>
-          ) : (
-            <div key={card.title} className={cardClass(card)}>
-              {inner}
-            </div>
-          );
-        })}
-      </div>
+      {kpis.length > 0 ? (
+        <section className="dash-section">
+          <SectionHeader title="Key metrics" />
+          <div className="dash-grid">
+            {kpis.map((card) => (
+              <DashboardCard
+                key={card.title}
+                card={card}
+                slug={slugFor(card.entity)}
+                currency={theme.currency}
+                locale={theme.locale}
+                onSegment={onSegment}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+      {operational.length > 0 ? (
+        <section className="dash-section">
+          <SectionHeader title="Operational" />
+          <div className="dash-grid">
+            {operational.map((card) => (
+              <DashboardCard
+                key={card.title}
+                card={card}
+                slug={slugFor(card.entity)}
+                currency={theme.currency}
+                locale={theme.locale}
+                onSegment={onSegment}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+      {activity.length > 0 ? (
+        <section className="dash-section">
+          <SectionHeader title="Activity" />
+          <div className="dash-grid">
+            {activity.map((card) => (
+              <DashboardCard
+                key={card.title}
+                card={card}
+                slug={slugFor(card.entity)}
+                currency={theme.currency}
+                locale={theme.locale}
+                onSegment={onSegment}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
       {quick.length > 0 ? (
         <div className="shortcuts panel">
           <h3>Shortcuts</h3>

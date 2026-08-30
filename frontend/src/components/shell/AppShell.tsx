@@ -184,19 +184,22 @@ export function AppShell({
           <NavLink to="/reports" className={({ isActive }) => (isActive ? "active" : "")}>
             <span className="nav-label">Reports</span>
           </NavLink>
-          <NavLink to="/settings" className={({ isActive }) => (isActive ? "active" : "")}>
-            <span className="nav-label">Settings</span>
-          </NavLink>
-          {roles.some((r) => r.toLowerCase() === "admin") ? (
-            <NavLink to="/settings/audit" className={({ isActive }) => (isActive ? "active" : "")}>
-              <span className="nav-label">Audit log</span>
+          <div className="nav-group">
+            <div className="nav-group-label">Administration</div>
+            <NavLink to="/settings" className={({ isActive }) => (isActive ? "active" : "")}>
+              <span className="nav-label">Settings</span>
             </NavLink>
-          ) : null}
-          {studio ? (
-            <NavLink to="/studio" className={({ isActive }) => (isActive ? "active" : "")}>
-              <span className="nav-label">Studio</span>
-            </NavLink>
-          ) : null}
+            {roles.some((r) => r.toLowerCase() === "admin") ? (
+              <NavLink to="/settings/audit" className={({ isActive }) => (isActive ? "active" : "")}>
+                <span className="nav-label">Audit log</span>
+              </NavLink>
+            ) : null}
+            {studio ? (
+              <NavLink to="/studio" className={({ isActive }) => (isActive ? "active" : "")}>
+                <span className="nav-label">Studio</span>
+              </NavLink>
+            ) : null}
+          </div>
         </div>
       </aside>
       <main id="main" className="main" tabIndex={-1}>
@@ -208,7 +211,7 @@ export function AppShell({
       <CommandPalette entities={allEntities ?? navEntities} studio={studio} open={palette} onOpenChange={setPalette} />
       {helpOpen ? (
         <div className="palette-backdrop" onClick={() => setHelpOpen(false)}>
-          <div className="palette" role="dialog" aria-label="Keyboard shortcuts" onClick={(e) => e.stopPropagation()}>
+          <div className="palette dialog" role="dialog" aria-label="Keyboard shortcuts" onClick={(e) => e.stopPropagation()}>
             <h3>Shortcuts</h3>
             <ul className="help-list">
               <li>
@@ -217,9 +220,11 @@ export function AppShell({
               <li>Search, create records, and jump to lists from metadata.</li>
               <li>Theme and density are saved per signed-in user on this device.</li>
             </ul>
-            <button type="button" className="ghost" onClick={() => setHelpOpen(false)}>
-              Close
-            </button>
+            <div className="dialog-actions">
+              <button type="button" className="ghost" onClick={() => setHelpOpen(false)}>
+                Close
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { Chart } from "../components/dashboards/Chart";
+import { PageHeader } from "../components/ui/PageHeader";
+import { ErrorState } from "../components/ui/EmptyState";
 import { formatMoney } from "../metadata/timezone";
 import { useTenantTheme } from "../metadata/context";
 
@@ -65,8 +67,12 @@ export default function Reports() {
 
   return (
     <div className="page">
-      <h2>Reports</h2>
-      <form className="form" onSubmit={onRun}>
+      <PageHeader
+        kicker="Analytics"
+        title="Reports"
+        description="Run saved reports against live records."
+      />
+      <form className="form report-toolbar" onSubmit={onRun}>
         <label>
           Report
           <select value={selected} onChange={(e) => setSelected(e.target.value)}>
@@ -89,13 +95,9 @@ export default function Reports() {
           {running ? "Running…" : "Run Report"}
         </button>
       </form>
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
+      {error && <ErrorState message={error} />}
       {result && (
-        <div className="panel">
+        <div className="panel report-result">
           <h3>{result.label}</h3>
           {result.series && result.series.length > 0 && (
             <Chart kind={result.chart || "bar"} series={result.series.map((s) => ({ label: String(s.label), value: Number(s.value) }))} />

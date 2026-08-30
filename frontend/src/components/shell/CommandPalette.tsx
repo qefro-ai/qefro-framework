@@ -17,6 +17,30 @@ function readRecent(): string[] {
   }
 }
 
+function highlightMatch(text: string, q: string) {
+  const needle = q.trim();
+  if (!needle) return text;
+  const idx = text.toLowerCase().indexOf(needle.toLowerCase());
+  if (idx < 0) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark>{text.slice(idx, idx + needle.length)}</mark>
+      {text.slice(idx + needle.length)}
+    </>
+  );
+}
+
+function groupCommands(commands: Command[]): Array<[string, Command[]]> {
+  const map = new Map<string, Command[]>();
+  for (const cmd of commands) {
+    const list = map.get(cmd.group) ?? [];
+    list.push(cmd);
+    map.set(cmd.group, list);
+  }
+  return Array.from(map.entries());
+}
+
 function rememberSearch(q: string) {
   const next = [q, ...readRecent().filter((item) => item.toLowerCase() !== q.toLowerCase())].slice(0, 8);
   localStorage.setItem(RECENT_KEY, JSON.stringify(next));
@@ -176,7 +200,7 @@ export default function CommandPalette({
       >
         <input
           autoFocus
-          placeholder="Create, go to, or search…"
+          placeholder="Search Qefro"
           value={q}
           aria-label="Command or search"
           onChange={(e) => {
@@ -199,16 +223,23 @@ export default function CommandPalette({
           }}
         />
         <ul>
-          {commands.map((c, i) => (
-            <li key={c.id}>
-              <button
-                type="button"
-                className={i === active ? "active ghost" : "ghost"}
-                onMouseEnter={() => setActive(i)}
-                onClick={() => c.run()}
-              >
-                <span className="muted">{c.group}</span> {c.label}
-              </button>
+          {groupCommands(commands).map(([group, items]) => (
+            <li key={group} className="palette-group">
+              <div className="palette-heading">{group}</div>
+              {items.map((c) => {
+                const i = commands.indexOf(c);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={i === active ? "active ghost" : "ghost"}
+                    onMouseEnter={() => setActive(i)}
+                    onClick={() => c.run()}
+                  >
+                    {highlightMatch(c.label, q)}
+                  </button>
+                );
+              })}
             </li>
           ))}
           {groupedHits.map(([entity, hits]) => (
@@ -228,7 +259,7 @@ export default function CommandPalette({
                       onOpenChange(false);
                     }}
                   >
-                    <strong>{r.label}</strong>
+                    <strong>{highlightMatch(r.label, q)}</strong>
                     {r.snippet ? <span className="muted"> · {r.snippet}</span> : null}
                   </button>
                 );
@@ -253,8 +284,8 @@ export default function CommandPalette({
               ))}
             </li>
           ) : null}
-          {q && searching && results.length === 0 ? <li className="muted">Searching…</li> : null}
-          {q && !searching && flat.length === 0 ? <li className="muted">No matches.</li> : null}
+          {q && searching && results.length === 0 ? <li className="palette-empty muted">Searching…</li> : null}
+          {q && !searching && flat.length === 0 ? <li className="palette-empty muted">No matches.</li> : null}
         </ul>
       </div>
     </div>

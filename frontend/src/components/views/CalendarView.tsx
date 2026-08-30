@@ -203,6 +203,11 @@ export default function CalendarView({
       </div>
       {mode === "month" ? (
         <div className="cal-grid cal-month">
+          {Array.from({ length: 7 }, (_, i) => addDays(startOfWeek(new Date()), i)).map((day) => (
+            <div key={day.getDay()} className="cal-dow">
+              {day.toLocaleDateString(theme.locale, { weekday: "short" })}
+            </div>
+          ))}
           {days.map((day) => {
             const key = isoDate(day);
             const items = events.filter((e) => isoDate(e.when!) === key);

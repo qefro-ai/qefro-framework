@@ -19,8 +19,14 @@ export function ConfirmDialog({
 }) {
   const ref = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    if (open) ref.current?.focus();
-  }, [open]);
+    if (!open) return;
+    ref.current?.focus();
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") onCancel();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onCancel]);
   if (!open) return null;
   return (
     <div className="palette-backdrop" onClick={onCancel} role="presentation">
@@ -29,10 +35,11 @@ export function ConfirmDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-title"
+        aria-describedby="confirm-desc"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 id="confirm-title">{title || "Confirm"}</h3>
-        <p>{message}</p>
+        <p id="confirm-desc">{message}</p>
         <div className="dialog-actions">
           <button type="button" className="ghost" onClick={onCancel}>
             Cancel
