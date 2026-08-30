@@ -48,6 +48,20 @@ pub fn module() -> AppModule {
                 .title("Reservation confirmed")
                 .module("restaurant"),
         )
+        .notification(
+            NotificationDef::new("order_confirmed", "order.confirmed")
+                .channels(&["in_app"])
+                .recipients(&["Admin", "Staff", "Manager", "owner"])
+                .title("Order confirmed")
+                .module("restaurant"),
+        )
+        .notification(
+            NotificationDef::new("order_ready", "order.ready")
+                .channels(&["in_app"])
+                .recipients(&["Admin", "Staff", "Manager", "owner"])
+                .title("Order is ready")
+                .module("restaurant"),
+        )
         .webhook(
             WebhookDef::new(
                 "reservation-created",
@@ -176,5 +190,17 @@ mod tests {
             .columns;
         assert!(columns.iter().any(|c| c.field == "person_id"));
         assert!(columns.iter().any(|c| c.field == "name"));
+    }
+
+    #[test]
+    fn kitchen_order_notifications_are_declared() {
+        let module = crate::module();
+        let names: Vec<_> = module
+            .notifications
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect();
+        assert!(names.contains(&"order_confirmed"), "{names:?}");
+        assert!(names.contains(&"order_ready"), "{names:?}");
     }
 }
