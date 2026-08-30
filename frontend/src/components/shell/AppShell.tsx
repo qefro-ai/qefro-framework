@@ -1,6 +1,7 @@
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { clearToken, type UiEntity } from "../../api";
+import type { WorkspaceNavItem } from "../../metadata/types";
 import { usePrefs } from "../../prefsContext";
 import { useRealtime } from "../../realtime";
 import NotificationBell from "../NotificationBell";
@@ -12,6 +13,7 @@ export function AppShell({
   appName,
   logo,
   navEntities,
+  workspaceNav,
   allEntities,
   studio,
   userName,
@@ -22,6 +24,7 @@ export function AppShell({
   appName: string;
   logo?: string | null;
   navEntities: UiEntity[];
+  workspaceNav?: WorkspaceNavItem[];
   allEntities?: UiEntity[];
   studio: boolean;
   userName: string;
@@ -146,7 +149,24 @@ export function AppShell({
           <NavLink to="/" className={({ isActive }) => (isActive ? "active" : "")} end>
             <span className="nav-label">Dashboard</span>
           </NavLink>
-          {groups.map(([group, items]) => (
+          {workspaceNav && workspaceNav.length > 0
+            ? workspaceNav.map((item) => {
+                const search = [item.query, item.view ? `view=${item.view}` : ""]
+                  .filter(Boolean)
+                  .join("&");
+                const to = search ? `/${item.slug}?${search}` : `/${item.slug}`;
+                return (
+                  <NavLink
+                    key={`${item.label}-${to}`}
+                    to={to}
+                    className={({ isActive }) => (isActive ? "active" : "")}
+                    title={item.label}
+                  >
+                    <span className="nav-label">{item.label}</span>
+                  </NavLink>
+                );
+              })
+            : groups.map(([group, items]) => (
             <div key={group} className="nav-group">
               <div className="nav-group-label">{group}</div>
               {items.map((e) => (

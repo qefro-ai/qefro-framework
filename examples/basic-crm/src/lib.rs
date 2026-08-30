@@ -5,7 +5,7 @@ mod permissions;
 mod workflows;
 
 use qefro_api::InstalledApp;
-use qefro_core::AppModule;
+use qefro_core::{AppModule, NavItem, ReportDef};
 use qefro_permissions::PermissionGrant;
 use qefro_workflow::WorkflowDef;
 
@@ -14,6 +14,9 @@ pub fn module() -> AppModule {
         .version("1.0.0")
         .label("CRM")
         .description("Leads, contacts, opportunities, and activities")
+        .nav(NavItem::new("Customers", "CrmCustomer"))
+        .nav(NavItem::new("Opportunities", "Opportunity"))
+        .nav(NavItem::new("Leads", "Lead"))
         .entity(entities::crm_customer())
         .entity(entities::lead())
         .entity(entities::contact())
@@ -21,6 +24,15 @@ pub fn module() -> AppModule {
         .entity(entities::opportunity_item())
         .entity(entities::activity())
         .dashboard(dashboard::ops())
+        .report(
+            ReportDef::new("pipeline-by-status", "Opportunity")
+                .label("Pipeline By Status")
+                .module("crm")
+                .fields(&["status", "amount"])
+                .group_by(&["status"])
+                .sum("amount")
+                .chart("bar"),
+        )
         .build()
 }
 

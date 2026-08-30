@@ -25,7 +25,7 @@ import { downloadCsv, isoDate } from "../format";
 import { friendlyError } from "../friendlyError";
 import { formatMoney } from "../metadata/timezone";
 import { useTenantTheme } from "../metadata/context";
-import { availableViews, calendarStartField, canCreate, canDelete, listGroupField, listViewSpec } from "../metadata/views";
+import { availableViews, calendarStartField, canCreate, canDelete, defaultView, listGroupField, listViewSpec } from "../metadata/views";
 import type { ViewKind } from "../metadata/types";
 import { usePrefsOptional } from "../prefsContext";
 import { useRealtime } from "../realtime";
@@ -44,9 +44,10 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
     : "-created_at";
   const sort = params.get("sort") ?? table?.sort ?? defaultSort;
   const views = useMemo(() => (meta ? availableViews(meta) : (["list"] as ViewKind[])), [meta]);
-  const view = (["list", "card", "kanban", "calendar"].includes(params.get("view") || "")
+  const fallbackView = meta ? defaultView(meta) : "list";
+  const view = (views.includes((params.get("view") || "") as ViewKind)
     ? (params.get("view") as ViewKind)
-    : ((table?.view as ViewKind) || "list")) as ViewKind;
+    : ((table?.view as ViewKind) || fallbackView)) as ViewKind;
   const currentView = views.includes(view) ? view : "list";
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
@@ -103,6 +104,12 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
 
   useEffect(() => {
     if (!slug || !meta || meta.singleton) return;
+    if (currentView === "chart") {
+      setRows([]);
+      setTotal(0);
+      setLoading(false);
+      return;
+    }
     const q = new URLSearchParams();
     if (search) q.set("search", search);
     q.set("sort", sort);

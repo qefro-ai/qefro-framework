@@ -161,12 +161,27 @@ impl EntityRepository {
         let tenant = entity.tenant_owned.then_some(ctx.tenant_id);
         let mut qb = QueryBuilder::<Postgres>::new("SELECT ");
         match metric {
-            "sum" => {
+            "sum" | "avg" | "min" | "max" => {
                 let name = field.ok_or_else(|| {
-                    QefroError::bad_request("dashboard sum metric requires a field")
+                    QefroError::bad_request(format!("dashboard {metric} metric requires a field"))
                 })?;
+                if let Some(def) = entity.get_field(name) {
+                    if !def.field_type.is_numeric() {
+                        return Err(QefroError::bad_request(format!(
+                            "{metric} is not valid for field '{name}'"
+                        )));
+                    }
+                }
                 let ident = column_ident(entity, name)?;
-                qb.push("COALESCE(SUM(");
+                let agg = match metric {
+                    "sum" => "SUM",
+                    "avg" => "AVG",
+                    "min" => "MIN",
+                    _ => "MAX",
+                };
+                qb.push("COALESCE(");
+                qb.push(agg);
+                qb.push("(");
                 qb.push(ident);
                 qb.push("), 0)::float8");
             }
@@ -190,17 +205,53 @@ impl EntityRepository {
         query: &Query,
         group_by: &str,
     ) -> QefroResult<Vec<Value>> {
+        self.aggregate_group_with(entity, ctx, query, group_by, "count", None)
+            .await
+    }
+
+    pub async fn aggregate_group_with(
+        &self,
+        entity: &EntityDef,
+        ctx: &OpContext,
+        query: &Query,
+        group_by: &str,
+        metric: &str,
+        field: Option<&str>,
+    ) -> QefroResult<Vec<Value>> {
         let table = table_ident(entity)?;
         let col = column_ident(entity, group_by)?;
         let tenant = entity.tenant_owned.then_some(ctx.tenant_id);
         let mut qb = QueryBuilder::<Postgres>::new("SELECT ");
         qb.push(col.clone());
-        qb.push("::text AS key, COUNT(*)::float8 AS value FROM ");
+        qb.push("::text AS key, ");
+        let metric = metric.to_ascii_lowercase();
+        match metric.as_str() {
+            "sum" | "avg" | "min" | "max" => {
+                let name = field.ok_or_else(|| {
+                    QefroError::bad_request(format!("{metric} aggregation requires a field"))
+                })?;
+                let ident = column_ident(entity, name)?;
+                let agg = match metric.as_str() {
+                    "sum" => "SUM",
+                    "avg" => "AVG",
+                    "min" => "MIN",
+                    _ => "MAX",
+                };
+                qb.push("COALESCE(");
+                qb.push(agg);
+                qb.push("(");
+                qb.push(ident);
+                qb.push("), 0)::float8 AS value FROM ");
+            }
+            _ => {
+                qb.push("COUNT(*)::float8 AS value FROM ");
+            }
+        }
         qb.push(&table);
         apply_filters(&mut qb, entity, tenant, query)?;
         qb.push(" GROUP BY ");
         qb.push(col);
-        qb.push(" ORDER BY value DESC LIMIT 24");
+        qb.push(" ORDER BY value DESC LIMIT 50");
         let rows: Vec<(Option<String>, f64)> = qb
             .build_query_as()
             .fetch_all(&self.pool)

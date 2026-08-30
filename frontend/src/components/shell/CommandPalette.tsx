@@ -3,7 +3,24 @@ import { useNavigate } from "react-router-dom";
 import { api, type UiEntity } from "../../api";
 
 type Hit = { entity: string; slug: string; id: string; label: string; snippet: string };
+type SearchGroup = { entity: string; label: string; hits: Hit[] };
 type Command = { id: string; group: string; label: string; hint?: string; run: () => void };
+
+const RECENT_KEY = "qefro_recent_searches";
+
+function readRecent(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+    return Array.isArray(raw) ? raw.filter((v) => typeof v === "string").slice(0, 8) : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberSearch(q: string) {
+  const next = [q, ...readRecent().filter((item) => item.toLowerCase() !== q.toLowerCase())].slice(0, 8);
+  localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+}
 
 export default function CommandPalette({
   entities,
@@ -18,7 +35,9 @@ export default function CommandPalette({
 }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Hit[]>([]);
+  const [groups, setGroups] = useState<SearchGroup[]>([]);
   const [reports, setReports] = useState<Array<{ name: string; label: string }>>([]);
+  const [recent, setRecent] = useState<string[]>(() => readRecent());
   const [active, setActive] = useState(0);
   const navigate = useNavigate();
 
@@ -38,7 +57,9 @@ export default function CommandPalette({
     if (!open) {
       setQ("");
       setResults([]);
+      setGroups([]);
       setActive(0);
+      setRecent(readRecent());
       return;
     }
     api
@@ -50,10 +71,20 @@ export default function CommandPalette({
   useEffect(() => {
     if (!open || !q.trim()) {
       setResults([]);
+      setGroups([]);
       return;
     }
     const handle = window.setTimeout(() => {
-      api.search(q).then((d) => setResults(d.results)).catch(() => setResults([]));
+      api
+        .search(q)
+        .then((d) => {
+          setResults(d.results);
+          setGroups(d.groups ?? []);
+        })
+        .catch(() => {
+          setResults([]);
+          setGroups([]);
+        });
     }, 150);
     return () => window.clearTimeout(handle);
   }, [open, q]);
@@ -101,6 +132,9 @@ export default function CommandPalette({
   }, [standalone, reports, q, navigate, onOpenChange, studio]);
 
   const groupedHits = useMemo(() => {
+    if (groups.length > 0) {
+      return groups.map((g) => [g.label || g.entity, g.hits] as [string, Hit[]]);
+    }
     const map = new Map<string, Hit[]>();
     for (const hit of results) {
       const list = map.get(hit.entity) ?? [];
@@ -108,7 +142,7 @@ export default function CommandPalette({
       map.set(hit.entity, list);
     }
     return Array.from(map.entries());
-  }, [results]);
+  }, [results, groups]);
 
   const flat: Array<{ kind: "cmd"; cmd: Command } | { kind: "hit"; hit: Hit }> = [
     ...commands.map((cmd) => ({ kind: "cmd" as const, cmd })),
@@ -120,6 +154,7 @@ export default function CommandPalette({
     if (!item) return;
     if (item.kind === "cmd") item.cmd.run();
     else {
+      rememberSearch(q.trim());
       navigate(`/${item.hit.slug}/${item.hit.id}`);
       onOpenChange(false);
     }
@@ -184,6 +219,7 @@ export default function CommandPalette({
                     className={idx === active ? "active ghost" : "ghost"}
                     onMouseEnter={() => setActive(idx)}
                     onClick={() => {
+                      rememberSearch(q.trim());
                       navigate(`/${r.slug}/${r.id}`);
                       onOpenChange(false);
                     }}
@@ -195,6 +231,24 @@ export default function CommandPalette({
               })}
             </li>
           ))}
+          {!q && recent.length > 0 ? (
+            <li className="palette-group">
+              <div className="palette-heading">Recent searches</div>
+              {recent.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    setQ(item);
+                    setActive(0);
+                  }}
+                >
+                  {item}
+                </button>
+              ))}
+            </li>
+          ) : null}
           {q && flat.length === 0 ? <li className="muted">No matches.</li> : null}
         </ul>
       </div>

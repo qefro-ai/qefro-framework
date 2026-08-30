@@ -89,4 +89,23 @@ describe("view metadata", () => {
     });
     expect(availableViews(disabled)).toEqual(["list"]);
   });
+
+  it("adds Charts when views.chart is present", () => {
+    const deal = entity({
+      entity: "Deal",
+      views: { chart: { type: "bar", dimension: "status", measure: { field: "amount", aggregation: "sum" } } },
+      fields: [field({ name: "status", type: "enum", enum_values: ["Lead"] }), field({ name: "amount", type: "decimal" })],
+    });
+    expect(availableViews(deal)).toEqual(["list", "chart"]);
+  });
+
+  it("uses views.default when that view is available", () => {
+    const order = entity({
+      entity: "Order",
+      workflow: "order",
+      views: { default: "kanban", kanban: { group_by: "status" } },
+      fields: [field({ name: "status", type: "enum", widget: "status", enum_values: ["Draft"] })],
+    });
+    expect(availableViews(order)).toContain("kanban");
+  });
 });

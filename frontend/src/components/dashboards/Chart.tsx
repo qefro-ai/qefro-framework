@@ -39,7 +39,7 @@ export function Chart({
       </svg>
     );
   }
-  if (kind === "line") {
+  if (kind === "line" || kind === "area") {
     const pts = series
       .map((s, i) => {
         const x = (i / Math.max(series.length - 1, 1)) * 100;
@@ -47,8 +47,10 @@ export function Chart({
         return `${x},${y}`;
       })
       .join(" ");
+    const area = `0,100 ${pts} 100,100`;
     return (
       <svg viewBox="0 0 100 100" className="chart" preserveAspectRatio="none" role="img">
+        {kind === "area" ? <polygon fill="var(--accent)" fillOpacity="0.2" points={area} /> : null}
         <polyline fill="none" stroke="var(--accent)" strokeWidth="2" points={pts} />
       </svg>
     );

@@ -29,12 +29,12 @@ pub mod service;
 pub mod studio;
 pub mod webhooks;
 
-pub use activity::{ActivityRecord, ActivityStore};
 pub use app_registry::AppRegistryRow;
 pub use attachments::{Attachment, AttachmentStore};
 pub use audit::AuditLogger;
 pub use blobs::{BlobMeta, BlobMetaStore};
 pub use document_ops::register_document_operations;
+pub use global_search::{SearchGroup, SearchHit, SearchResponse};
 pub use import::{ImportMapping, ImportPreview, ImportResult};
 pub use jobs::{JobHandler, JobQueue, JobRecord, JobRegistry, LogNotificationJob};
 pub use notifications::{EmailNotifyJob, InAppNotification, NotificationStore, PlatformDispatcher};

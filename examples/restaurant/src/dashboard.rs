@@ -4,23 +4,52 @@ pub fn ops() -> DashboardDef {
     DashboardDef::new("restaurant-ops", "Restaurant operations")
         .module("restaurant")
         .card(
-            DashboardCard::count("Today's reservations", "Reservation")
-                .filter("reservation_date", "today"),
+            DashboardCard::kpi("Today's reservations", "Reservation")
+                .filter("reservation_date", "today")
+                .size("sm"),
+        )
+        .card(
+            DashboardCard::kpi("Orders", "Order")
+                .filter("status", "Confirmed")
+                .size("sm"),
+        )
+        .card(
+            DashboardCard::kpi("Reservations", "Reservation")
+                .filter("reservation_date", "today")
+                .size("sm"),
         )
         .card(DashboardCard::count("Available tables", "DiningTable").filter("status", "available"))
         .card(DashboardCard::count("Occupied tables", "DiningTable").filter("status", "occupied"))
         .card(DashboardCard::count("Draft orders", "Order").filter("status", "Draft"))
         .card(DashboardCard::count("Orders preparing", "Order").filter("status", "Preparing"))
-        .card(DashboardCard::count("Orders ready", "Order").filter("status", "Ready"))
-        .card(DashboardCard::sum("Today's sales", "Payment", "amount").filter("status", "captured"))
+        .card(
+            DashboardCard::kpi("Ready orders", "Order")
+                .filter("status", "Ready")
+                .size("sm"),
+        )
+        .card(
+            DashboardCard::sum("Today's sales", "Payment", "amount")
+                .filter("status", "captured")
+                .roles(&["Admin", "Manager"]),
+        )
+        .card(
+            DashboardCard::chart("Sales trend", "Order", "area", "order_date")
+                .metric_name("sum")
+                .measure_field("grand_total")
+                .size("xl"),
+        )
+        .card(DashboardCard::workflow("Kitchen status", "Order").size("md"))
+        .card(DashboardCard::status_breakdown("Table status", "DiningTable", "status").size("md"))
         .card(DashboardCard::status_breakdown(
             "Reservations by status",
             "Reservation",
             "status",
         ))
+        .card(DashboardCard::activity("Recent order events", "Order", 8).size("lg"))
         .card(DashboardCard::recent(
-            "Recent reservations",
+            "Upcoming reservations",
             "Reservation",
             8,
         ))
+        .card(DashboardCard::audit("Changes today").roles(&["Admin"]))
 }

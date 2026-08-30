@@ -21,25 +21,24 @@ pub use state::AppState;
 
 use qefro_agent::EntityOps;
 use qefro_core::{OpContext, QefroResult};
-use qefro_db::EntityService;
 use qefro_search::Query;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-pub(crate) struct EntityServiceOps<'a>(pub &'a EntityService);
+pub(crate) struct EntityServiceOps<'a>(pub &'a AppState);
 
 impl EntityOps for EntityServiceOps<'_> {
     async fn list(&self, ctx: &OpContext, entity: &str, query: Query) -> QefroResult<Value> {
-        let page = self.0.list(ctx, entity, query).await?;
+        let page = self.0.entities.list(ctx, entity, query).await?;
         serde_json::to_value(page).map_err(|e| qefro_core::QefroError::internal(e.to_string()))
     }
 
     async fn get(&self, ctx: &OpContext, entity: &str, id: Uuid) -> QefroResult<Value> {
-        self.0.get(ctx, entity, id).await
+        self.0.entities.get(ctx, entity, id).await
     }
 
     async fn create(&self, ctx: &OpContext, entity: &str, data: Value) -> QefroResult<Value> {
-        self.0.create(ctx, entity, data).await
+        self.0.entities.create(ctx, entity, data).await
     }
 
     async fn update(
@@ -49,11 +48,11 @@ impl EntityOps for EntityServiceOps<'_> {
         id: Uuid,
         data: Value,
     ) -> QefroResult<Value> {
-        self.0.update(ctx, entity, id, data).await
+        self.0.entities.update(ctx, entity, id, data).await
     }
 
     async fn delete(&self, ctx: &OpContext, entity: &str, id: Uuid) -> QefroResult<Value> {
-        self.0.delete(ctx, entity, id).await
+        self.0.entities.delete(ctx, entity, id).await
     }
 
     async fn transition(
@@ -63,7 +62,10 @@ impl EntityOps for EntityServiceOps<'_> {
         id: Uuid,
         transition: &str,
     ) -> QefroResult<Value> {
-        self.0.transition(ctx, entity, id, transition).await
+        self.0
+            .entities
+            .transition(ctx, entity, id, transition)
+            .await
     }
 
     async fn execute(
@@ -74,11 +76,11 @@ impl EntityOps for EntityServiceOps<'_> {
         name: &str,
         input: Value,
     ) -> QefroResult<Value> {
-        self.0.execute(ctx, entity, id, name, input).await
+        self.0.entities.execute(ctx, entity, id, name, input).await
     }
 
     async fn list_activity(&self, ctx: &OpContext, entity: &str, id: Uuid) -> QefroResult<Value> {
-        let items = self.0.list_activity(ctx, entity, id, 50).await?;
+        let items = self.0.entities.list_activity(ctx, entity, id, 50).await?;
         serde_json::to_value(json!({ "items": items }))
             .map_err(|e| qefro_core::QefroError::internal(e.to_string()))
     }
@@ -90,7 +92,11 @@ impl EntityOps for EntityServiceOps<'_> {
         id: Uuid,
         message: &str,
     ) -> QefroResult<Value> {
-        let row = self.0.add_comment(ctx, entity, id, message).await?;
+        let row = self
+            .0
+            .entities
+            .add_comment(ctx, entity, id, message)
+            .await?;
         serde_json::to_value(row).map_err(|e| qefro_core::QefroError::internal(e.to_string()))
     }
 
@@ -100,9 +106,74 @@ impl EntityOps for EntityServiceOps<'_> {
         entity: &str,
         id: Uuid,
     ) -> QefroResult<Value> {
-        let items = self.0.list_record_attachments(ctx, entity, id).await?;
+        let items = self
+            .0
+            .entities
+            .list_record_attachments(ctx, entity, id)
+            .await?;
         serde_json::to_value(json!({ "items": items }))
             .map_err(|e| qefro_core::QefroError::internal(e.to_string()))
+    }
+
+    async fn search(&self, ctx: &OpContext, q: &str, limit: usize) -> QefroResult<Value> {
+        let results = self.0.entities.global_search_grouped(ctx, q, limit).await?;
+        serde_json::to_value(results).map_err(|e| qefro_core::QefroError::internal(e.to_string()))
+    }
+
+    async fn run_report(&self, ctx: &OpContext, name: &str, filters: Value) -> QefroResult<Value> {
+        let report = self
+            .0
+            .reports_live()
+            .into_iter()
+            .find(|r| r.name == name)
+            .ok_or_else(|| {
+                qefro_core::QefroError::not_found(format!("report '{name}' not found"))
+            })?;
+        if !ctx.allows_app(report.module.as_deref()) {
+            return Err(qefro_core::QefroError::not_found(format!(
+                "report '{name}' not found"
+            )));
+        }
+        self.0.entities.run_report(ctx, &report, filters).await
+    }
+
+    async fn get_dashboard(&self, ctx: &OpContext, name: &str) -> QefroResult<Value> {
+        let dash = self
+            .0
+            .dashboards_live()
+            .into_iter()
+            .find(|d| d.name == name)
+            .ok_or_else(|| {
+                qefro_core::QefroError::not_found(format!("dashboard '{name}' not found"))
+            })?;
+        if !ctx.allows_app(dash.module.as_deref()) {
+            return Err(qefro_core::QefroError::not_found(format!(
+                "dashboard '{name}' not found"
+            )));
+        }
+        let mut cards = Vec::new();
+        for card in &dash.cards {
+            match self.0.entities.dashboard_card_value(ctx, card).await {
+                Ok(value) => cards.push(value),
+                Err(err)
+                    if matches!(
+                        err,
+                        qefro_core::QefroError::Forbidden { .. }
+                            | qefro_core::QefroError::NotFound { .. }
+                            | qefro_core::QefroError::AppNotEnabled { .. }
+                    ) =>
+                {
+                    continue
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(json!({
+            "name": dash.name,
+            "label": dash.label,
+            "module": dash.module,
+            "cards": cards,
+        }))
     }
 }
 

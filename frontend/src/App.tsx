@@ -4,6 +4,7 @@ import StudioApp from "./studio/StudioApp";
 import { api, ApiError, clearToken, hasToken, METADATA_EVENT, onAuthChange, type TenantConfig, type UiEntity } from "./api";
 import { TenantThemeContext } from "./metadata/context";
 import { primaryNavEntities } from "./metadata/navigation";
+import type { WorkspaceNavItem } from "./metadata/types";
 import { PrefsProvider } from "./prefsContext";
 import { AppShell } from "./components/shell/AppShell";
 import "./widgets";
@@ -41,7 +42,8 @@ function Shell() {
     navigation: string[];
     hidden_entities: string[];
     default_dashboard?: string | null;
-  }>({ navigation: [], hidden_entities: [] });
+    workspaceNav: WorkspaceNavItem[];
+  }>({ navigation: [], hidden_entities: [], workspaceNav: [] });
   const [userName, setUserName] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
@@ -61,6 +63,7 @@ function Shell() {
             navigation: d.navigation ?? [],
             hidden_entities: d.hidden_entities ?? [],
             default_dashboard: d.default_dashboard,
+            workspaceNav: d.workspace?.navigation ?? [],
           });
           if (d.branding) {
             setConfig((prev) =>
@@ -190,6 +193,7 @@ function Shell() {
                     navigation: d.navigation ?? [],
                     hidden_entities: d.hidden_entities ?? [],
                     default_dashboard: d.default_dashboard,
+                    workspaceNav: d.workspace?.navigation ?? [],
                   });
                 })
                 .catch(() => undefined);
@@ -225,6 +229,7 @@ function Shell() {
           appName={appName}
           logo={config?.branding.logo}
           navEntities={navEntities}
+          workspaceNav={uiMeta.workspaceNav}
           allEntities={entities}
           studio={studio}
           userName={userName}
