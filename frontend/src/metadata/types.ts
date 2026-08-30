@@ -196,6 +196,67 @@ export type WorkspaceNavItem = {
   view?: string | null;
   module?: string | null;
   section?: string | null;
+  page?: string | null;
+};
+
+export type PageTab = {
+  name: string;
+  label: string;
+};
+
+export type PageActionRef = {
+  entity: string;
+  action: string;
+  label?: string | null;
+};
+
+export type PageSection = {
+  name?: string;
+  title: string;
+  kind?: string;
+  entity?: string | null;
+  view?: string | null;
+  report?: string | null;
+  relation?: string | null;
+  action?: string | null;
+  query?: string | null;
+  dashboard?: string | null;
+  widget?: string | null;
+  size?: string | null;
+  roles?: string[];
+  tab?: string | null;
+  pane?: string | null;
+  card?: {
+    title: string;
+    entity: string;
+    metric?: string;
+    kind?: string;
+    chart?: string;
+    group_by?: string;
+    field?: string;
+    filters?: Array<{ field: string; value: string }>;
+    limit?: number;
+    size?: string | null;
+    report?: string;
+    saved_view?: string;
+  };
+};
+
+export type PageDef = {
+  name: string;
+  label: string;
+  slug?: string;
+  description?: string | null;
+  module?: string | null;
+  layout?: string;
+  template?: string | null;
+  roles?: string[];
+  context_entity?: string | null;
+  context_param?: string | null;
+  tabs?: PageTab[];
+  sections?: PageSection[];
+  actions?: PageActionRef[];
+  filters?: string[];
 };
 
 export type WorkspaceShortcut = {

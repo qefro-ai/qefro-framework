@@ -12,7 +12,7 @@ import { formatMoney } from "../metadata/timezone";
 import { useTenantTheme } from "../metadata/context";
 import { useRealtime } from "../realtime";
 
-type Card = {
+export type DashboardWidgetCard = {
   title: string;
   entity: string;
   metric: string;
@@ -27,6 +27,7 @@ type Card = {
   size?: string | null;
   rows?: Array<Record<string, unknown>>;
 };
+type Card = DashboardWidgetCard;
 
 const CHART_KINDS = ["chart", "status_breakdown", "workflow", "report"];
 const LIST_KINDS = ["list", "table", "activity", "saved_view"];
@@ -76,7 +77,7 @@ function itemLabel(item: Record<string, unknown>) {
   );
 }
 
-function DashboardCard({
+export function DashboardWidget({
   card,
   slug,
   currency,
@@ -87,7 +88,7 @@ function DashboardCard({
   slug?: string;
   currency: string;
   locale: string;
-  onSegment: (card: Card, slug: string | undefined, label: string) => void;
+  onSegment?: (card: Card, slug: string | undefined, label: string) => void;
 }) {
   const kind = cardKind(card);
   if (isChartCard(card)) {
@@ -101,7 +102,7 @@ function DashboardCard({
         <Chart
           kind={kind === "workflow" || kind === "status_breakdown" ? "bar" : card.chart || "bar"}
           series={series}
-          onSegmentClick={card.group_by ? (label) => onSegment(card, slug, label) : undefined}
+          onSegmentClick={card.group_by && onSegment ? (label) => onSegment(card, slug, label) : undefined}
         />
       </div>
     );
@@ -346,7 +347,7 @@ export default function Dashboard({
           <SectionHeader title="Key metrics" />
           <div className="dash-grid">
             {kpis.map((card) => (
-              <DashboardCard
+              <DashboardWidget
                 key={card.title}
                 card={card}
                 slug={slugFor(card.entity)}
@@ -363,7 +364,7 @@ export default function Dashboard({
           <SectionHeader title="Operational" />
           <div className="dash-grid">
             {operational.map((card) => (
-              <DashboardCard
+              <DashboardWidget
                 key={card.title}
                 card={card}
                 slug={slugFor(card.entity)}
@@ -380,7 +381,7 @@ export default function Dashboard({
           <SectionHeader title="Activity" />
           <div className="dash-grid">
             {activity.map((card) => (
-              <DashboardCard
+              <DashboardWidget
                 key={card.title}
                 card={card}
                 slug={slugFor(card.entity)}

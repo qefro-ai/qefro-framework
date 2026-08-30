@@ -221,9 +221,11 @@ export class QefroClient {
           view?: string | null;
           module?: string | null;
           section?: string | null;
+          page?: string | null;
         }>;
         shortcuts?: Array<{ label: string; to: string; entity?: string; kind?: string }>;
         default_dashboard?: string | null;
+        pages?: Array<{ name: string; label: string; slug: string; route?: string }>;
       };
     }>("/api/v1/meta/ui");
   tenant = () => request<Record<string, unknown>>("/api/v1/tenant");
@@ -264,6 +266,10 @@ export class QefroClient {
     }>(`/api/v1/dashboards/${name}${q ? `?${q}` : ""}`);
   };
   getDashboard = (name: string, extra?: URLSearchParams) => this.dashboard(name, extra);
+  pages = () =>
+    request<{ pages: Array<import("../metadata/types").PageDef> }>("/api/v1/meta/pages");
+  page = (name: string) =>
+    request<import("../metadata/types").PageDef>(`/api/v1/meta/pages/${encodeURIComponent(name)}`);
   workspace = () =>
     request<{
       navigation: Array<{
@@ -447,6 +453,8 @@ export class QefroClient {
     request<{ dashboards: Array<Record<string, unknown>> }>("/api/v1/studio/dashboards");
   studioDashboard = (name: string) =>
     request<Record<string, unknown>>(`/api/v1/studio/dashboards/${name}`);
+  studioPages = () => request<{ pages: Array<Record<string, unknown>> }>("/api/v1/studio/pages");
+  studioPage = (name: string) => request<Record<string, unknown>>(`/api/v1/studio/pages/${name}`);
   studioPrintFormats = () =>
     request<{ print_formats: Array<Record<string, unknown>> }>("/api/v1/studio/print-formats");
   studioPrintFormat = (name: string) =>

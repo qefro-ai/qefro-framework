@@ -37,6 +37,8 @@ pub fn router() -> Router<AppState> {
         .route("/reports/{report}", get(get_report))
         .route("/dashboards", get(list_dashboards))
         .route("/dashboards/{dashboard}", get(get_dashboard))
+        .route("/pages", get(list_pages))
+        .route("/pages/{page}", get(get_page))
         .route("/print-formats", get(list_print_formats))
         .route("/print-formats/{format}", get(get_print_format))
         .route("/print-formats/{format}/preview", get(preview_print_format))
@@ -115,6 +117,7 @@ async fn overview(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json
         "workflows": workflows.len(),
         "reports": state.reports_live().len(),
         "dashboards": state.dashboards_live().len(),
+        "pages": state.pages_live().len(),
         "print_formats": state.print_formats_live().len(),
         "automations": state.automation.defs().len(),
         "apps": apps,
@@ -196,6 +199,12 @@ async fn get_app(
         .into_iter()
         .filter(|d| d.module.as_deref() == Some(app.as_str()))
         .map(|d| d.name)
+        .collect::<Vec<_>>());
+    body["pages"] = json!(state
+        .pages_live()
+        .into_iter()
+        .filter(|p| p.module.as_deref() == Some(app.as_str()))
+        .map(|p| p.name)
         .collect::<Vec<_>>());
     body["print_formats"] = json!(state
         .print_formats_live()
@@ -511,6 +520,32 @@ async fn get_dashboard(
     })))
 }
 
+async fn list_pages(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    Ok(Json(json!({ "pages": state.pages_live() })))
+}
+
+async fn get_page(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(page): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let def = state
+        .pages_live()
+        .into_iter()
+        .find(|p| p.name == page || p.slug() == page)
+        .ok_or_else(|| QefroError::not_found(format!("page '{page}' not found")))?;
+    Ok(Json(json!({
+        "page": def,
+        "json": serde_json::to_string_pretty(&def).unwrap_or_default(),
+        "yaml": to_yaml(&def)?,
+    })))
+}
+
 async fn list_print_formats(
     State(state): State<AppState>,
     Auth(ctx): Auth,
@@ -747,6 +782,11 @@ async fn search(
     for dash in state.dashboards_live() {
         if dash.name.to_lowercase().contains(&q) || dash.label.to_lowercase().contains(&q) {
             results.push(json!({ "kind": "dashboard", "name": dash.name, "label": dash.label }));
+        }
+    }
+    for page in state.pages_live() {
+        if page.name.to_lowercase().contains(&q) || page.label.to_lowercase().contains(&q) {
+            results.push(json!({ "kind": "page", "name": page.name, "label": page.label }));
         }
     }
     for pf in state.print_formats_live() {

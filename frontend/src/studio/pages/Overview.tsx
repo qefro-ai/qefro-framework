@@ -26,6 +26,7 @@ export default function Overview() {
         <Stat label="Workflows" value={data.workflows} to="/studio/workflows" />
         <Stat label="Reports" value={data.reports} to="/studio/reports" />
         <Stat label="Dashboards" value={data.dashboards} to="/studio/dashboards" />
+        <Stat label="Pages" value={data.pages} to="/studio/pages" />
       </div>
       {warnings.length > 0 && (
         <section className="card">

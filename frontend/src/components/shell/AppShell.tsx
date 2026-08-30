@@ -2,6 +2,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { clearToken, type UiEntity } from "../../api";
 import type { WorkspaceNavItem } from "../../metadata/types";
+import { workspaceItemHref } from "../../metadata/navigation";
 import { usePrefs } from "../../prefsContext";
 import { useRealtime } from "../../realtime";
 import NotificationBell from "../NotificationBell";
@@ -174,10 +175,7 @@ export function AppShell({
                 <div key={section || "workspace"} className="nav-group">
                   {section ? <div className="nav-group-label">{section}</div> : null}
                   {items.map((item) => {
-                    const search = [item.query, item.view ? `view=${item.view}` : ""]
-                      .filter(Boolean)
-                      .join("&");
-                    const to = search ? `/${item.slug}?${search}` : `/${item.slug}`;
+                    const to = workspaceItemHref(item);
                     return (
                       <NavLink
                         key={`${item.label}-${to}`}

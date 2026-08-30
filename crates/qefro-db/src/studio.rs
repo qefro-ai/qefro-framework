@@ -12,7 +12,7 @@ use qefro_core::ui::DashboardDef;
 use qefro_core::{
     classify_entity_change, detect_cycles, entity_referrers, find_app_root, snake_case,
     ChangeAnalysis, EntityDef, EntityRegistry, EntityViews, FieldDef, FieldUiPatch, OpContext,
-    PrintFormat, QefroError, QefroResult, ReportDef, SchemaImpact, StudioCatalog,
+    PageDef, PrintFormat, QefroError, QefroResult, ReportDef, SchemaImpact, StudioCatalog,
 };
 use qefro_permissions::{PermissionGrant, PermissionRegistry};
 use qefro_workflow::WorkflowDef;
@@ -250,7 +250,7 @@ impl MetadataChangeService {
                 analysis.diff.push(format!("~ permissions {target}"));
                 Ok(analysis)
             }
-            "report" | "dashboard" | "print_format" => {
+            "report" | "dashboard" | "page" | "print_format" => {
                 let mut analysis = ChangeAnalysis::safe();
                 analysis.diff.push(format!("~ {kind} {target}"));
                 Ok(analysis)
@@ -333,6 +333,30 @@ impl MetadataChangeService {
                             card.title, card.entity
                         )));
                     }
+                }
+            }
+            "page" => {
+                qefro_core::reject_unsafe_page_payload(payload)?;
+                let mut page: PageDef = serde_json::from_value(payload.clone())
+                    .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                page.normalize();
+                let reports = self.catalog.merge_reports(&[]);
+                let dashboards = self.catalog.merge_dashboards(&[]);
+                let slugs: Vec<String> = self
+                    .registry
+                    .list()
+                    .into_iter()
+                    .map(|e| e.slug.clone())
+                    .collect();
+                let errors = qefro_core::validate_page(
+                    &page,
+                    self.registry.as_ref(),
+                    &reports,
+                    &dashboards,
+                    &slugs,
+                );
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
                 }
             }
             "print_format" => {
@@ -494,6 +518,10 @@ impl MetadataChangeService {
                 .catalog
                 .dashboard(target)
                 .and_then(|d| serde_json::to_value(d).ok()),
+            "page" => self
+                .catalog
+                .page(target)
+                .and_then(|p| serde_json::to_value(p).ok()),
             "print_format" => self
                 .catalog
                 .print_format(target)
@@ -557,6 +585,13 @@ impl MetadataChangeService {
                 let dash: DashboardDef = serde_json::from_value(payload.clone())
                     .map_err(|e| QefroError::bad_request(e.to_string()))?;
                 self.catalog.upsert_dashboard(dash);
+            }
+            "page" => {
+                qefro_core::reject_unsafe_page_payload(payload)?;
+                let mut page: PageDef = serde_json::from_value(payload.clone())
+                    .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                page.normalize();
+                self.catalog.upsert_page(page);
             }
             "print_format" => {
                 let pf: PrintFormat = serde_json::from_value(payload.clone())

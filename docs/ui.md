@@ -13,7 +13,7 @@ From `EntityDef::new("Customer")`:
 /customers/:id/edit
 ```
 
-Reserved paths: `/`, `/login`, `/settings`. Dashboard cards come from `GET /api/v1/meta/dashboards` and `GET /api/v1/dashboards/{name}`.
+Reserved paths: `/`, `/login`, `/settings`, `/reports`, `/pages/:name`. Dashboard cards come from `GET /api/v1/meta/dashboards` and `GET /api/v1/dashboards/{name}`. Composed pages come from `GET /api/v1/meta/pages/{name}` — see [Pages](pages.md).
 
 ## Widget registry
 

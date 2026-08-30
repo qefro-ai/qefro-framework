@@ -1,4 +1,10 @@
-import type { UiEntity } from "./types";
+import type { UiEntity, WorkspaceNavItem } from "./types";
+
+export function workspaceItemHref(item: WorkspaceNavItem) {
+  if (item.page) return `/pages/${item.page}`;
+  const search = [item.query, item.view ? `view=${item.view}` : ""].filter(Boolean).join("&");
+  return search ? `/${item.slug}?${search}` : `/${item.slug}`;
+}
 
 export function isNavCandidate(entity: UiEntity): boolean {
   return entity.standalone !== false && !entity.child_of;

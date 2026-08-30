@@ -97,9 +97,10 @@ enum Commands {
         #[arg(default_value = "all")]
         app: String,
     },
-    /// Inspect an entity's fields, relations, permissions, workflow, and views
+    /// Inspect an entity or composed page (`qefro inspect page sales_workspace`)
     Inspect {
         name: String,
+        target: Option<String>,
         #[arg(long, default_value = "all")]
         app: String,
     },
@@ -340,7 +341,7 @@ async fn main() -> Result<()> {
         Commands::Worker => runtime_for("all")?.run_worker().await?,
         Commands::Doctor => app_cmd::cmd_doctor().await?,
         Commands::Validate { app } => cmd_validate(&app)?,
-        Commands::Inspect { name, app } => cmd_entity_show(&app, &name)?,
+        Commands::Inspect { name, target, app } => cmd_inspect(&app, &name, target.as_deref())?,
     }
     Ok(())
 }
@@ -517,6 +518,96 @@ pub(crate) fn write_catalog_stub(root: &Path, name: &str) -> Result<()> {
             "# {label}\n\nBuilt-in Qefro application. Runtime source: `examples/{name}`.\nEntities, workflows, and permissions are registered from Rust — they are not hardcoded in framework core.\n"
         ),
     )?;
+    Ok(())
+}
+
+fn cmd_inspect(app: &str, name: &str, target: Option<&str>) -> Result<()> {
+    if name.eq_ignore_ascii_case("page") {
+        let page_name =
+            target.ok_or_else(|| anyhow::anyhow!("usage: qefro inspect page <name>"))?;
+        return cmd_page_show(app, page_name);
+    }
+    let runtime = runtime_for(app)?;
+    if runtime.page(name).is_some() {
+        return cmd_page_show(app, name);
+    }
+    cmd_entity_show(app, name)
+}
+
+fn cmd_page_show(app: &str, name: &str) -> Result<()> {
+    let runtime = runtime_for(app)?;
+    let Some(mut page) = runtime.page(name) else {
+        let known: Vec<String> = runtime.pages().into_iter().map(|p| p.name).collect();
+        let hint = suggest_similar(name, known.iter().map(|s| s.as_str()))
+            .map(|s| format!(" Did you mean '{s}'?"))
+            .unwrap_or_default();
+        bail!("page '{name}' not found.{hint}");
+    };
+    page.normalize();
+    println!("name:           {}", page.name);
+    println!("label:          {}", page.label);
+    println!("slug:           {}", page.slug());
+    println!("route:          {}", page.route());
+    println!(
+        "module:         {}",
+        page.module.clone().unwrap_or_default()
+    );
+    println!("layout:         {}", page.layout);
+    println!(
+        "template:       {}",
+        page.template.clone().unwrap_or_else(|| "(none)".into())
+    );
+    println!(
+        "permissions:    page roles={}",
+        if page.roles.is_empty() {
+            "(inherit section)".into()
+        } else {
+            page.roles.join(",")
+        }
+    );
+    if let Some(entity) = &page.context_entity {
+        println!(
+            "context:        {} via {}",
+            entity,
+            page.context_param.as_deref().unwrap_or("id")
+        );
+    }
+    if !page.tabs.is_empty() {
+        println!("tabs:");
+        for tab in &page.tabs {
+            println!("  {}  {}", tab.name, tab.label);
+        }
+    }
+    println!("components:");
+    for section in &page.sections {
+        println!(
+            "  {:<22} {:<12} entity={} view={} report={} widget={}",
+            section.title,
+            section.resolved_kind(),
+            section.entity.clone().unwrap_or_default(),
+            section.view.clone().unwrap_or_default(),
+            section.report.clone().unwrap_or_default(),
+            section
+                .widget
+                .clone()
+                .or(section.card.as_ref().map(|c| c.title.clone()))
+                .unwrap_or_default()
+        );
+        if !section.roles.is_empty() {
+            println!("                     roles={}", section.roles.join(","));
+        }
+    }
+    if !page.actions.is_empty() {
+        println!("actions:");
+        for action in &page.actions {
+            println!(
+                "  {} {}.{}",
+                action.label.clone().unwrap_or_default(),
+                action.entity,
+                action.action
+            );
+        }
+    }
     Ok(())
 }
 
@@ -762,6 +853,25 @@ fn cmd_validate(app: &str) -> Result<()> {
                     dash.name, card.entity
                 ));
             }
+        }
+    }
+    let entity_slugs: Vec<String> = registry
+        .list()
+        .into_iter()
+        .map(|e| e.slug.clone())
+        .collect();
+    let reports = runtime.reports();
+    let dashboards = runtime.dashboards();
+    let mut page_slugs = std::collections::HashSet::new();
+    for mut page in runtime.pages() {
+        page.normalize();
+        let slug = page.slug().to_string();
+        if !page_slugs.insert(slug.clone()) {
+            errors.push(format!("duplicate page route '/pages/{slug}'"));
+        }
+        for err in qefro_core::validate_page(&page, &registry, &reports, &dashboards, &entity_slugs)
+        {
+            errors.push(err);
         }
     }
     for auto in runtime.automations() {

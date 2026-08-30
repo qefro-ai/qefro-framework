@@ -12,6 +12,9 @@ export type CollectionViewProps = {
   onError: (message: string) => void;
   queryActive?: boolean;
   onClearQuery?: () => void;
+  onSelect?: (id: string) => void;
+  selectedId?: string;
+  compact?: boolean;
 };
 
 export type CollectionView = (props: CollectionViewProps) => ReactNode;

@@ -9,6 +9,7 @@ use crate::entity::EntityDef;
 use crate::error::{QefroError, QefroResult};
 use crate::field::{FieldDef, FieldType};
 use crate::formula::{eval_formula, parse_formula, FormulaContext};
+use crate::page::PageDef;
 use crate::registry::EntityRegistry;
 use crate::ui::{DashboardDef, WidgetOptions};
 use serde::{Deserialize, Serialize};
@@ -546,6 +547,7 @@ pub const FORMULA_FUNCTIONS: &[&str] = &[
 pub struct StudioCatalog {
     reports: RwLock<HashMap<String, ReportDef>>,
     dashboards: RwLock<HashMap<String, DashboardDef>>,
+    pages: RwLock<HashMap<String, PageDef>>,
     print_formats: RwLock<HashMap<String, PrintFormat>>,
 }
 
@@ -558,6 +560,12 @@ impl StudioCatalog {
 
     pub fn upsert_dashboard(&self, def: DashboardDef) {
         if let Ok(mut g) = self.dashboards.write() {
+            g.insert(def.name.clone(), def);
+        }
+    }
+
+    pub fn upsert_page(&self, def: PageDef) {
+        if let Ok(mut g) = self.pages.write() {
             g.insert(def.name.clone(), def);
         }
     }
@@ -576,6 +584,10 @@ impl StudioCatalog {
         self.dashboards.read().ok()?.get(name).cloned()
     }
 
+    pub fn page(&self, name: &str) -> Option<PageDef> {
+        self.pages.read().ok()?.get(name).cloned()
+    }
+
     pub fn print_format(&self, name: &str) -> Option<PrintFormat> {
         self.print_formats.read().ok()?.get(name).cloned()
     }
@@ -590,6 +602,10 @@ impl StudioCatalog {
         merge_named(base, self.dashboards.read().ok().as_deref(), |d| {
             d.name.clone()
         })
+    }
+
+    pub fn merge_pages(&self, base: &[PageDef]) -> Vec<PageDef> {
+        merge_named(base, self.pages.read().ok().as_deref(), |p| p.name.clone())
     }
 
     pub fn merge_print_formats(&self, base: &[PrintFormat]) -> Vec<PrintFormat> {

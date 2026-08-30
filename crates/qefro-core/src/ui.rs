@@ -1061,6 +1061,53 @@ pub struct WorkspaceNavItem {
     /// Workspace section heading, e.g. Operations / Catalog / Analytics.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
+    /// Composed page slug. When set, the shell links to `/pages/{page}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
+}
+
+impl WorkspaceNavItem {
+    pub fn new(
+        label: impl Into<String>,
+        entity: impl Into<String>,
+        slug: impl Into<String>,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            entity: entity.into(),
+            slug: slug.into(),
+            query: None,
+            view: None,
+            module: None,
+            section: None,
+            page: None,
+        }
+    }
+
+    pub fn query(mut self, query: impl Into<String>) -> Self {
+        self.query = Some(query.into());
+        self
+    }
+
+    pub fn view(mut self, view: impl Into<String>) -> Self {
+        self.view = Some(view.into());
+        self
+    }
+
+    pub fn module(mut self, module: impl Into<String>) -> Self {
+        self.module = Some(module.into());
+        self
+    }
+
+    pub fn section(mut self, section: impl Into<String>) -> Self {
+        self.section = Some(section.into());
+        self
+    }
+
+    pub fn page(mut self, page: impl Into<String>) -> Self {
+        self.page = Some(page.into());
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

@@ -12,6 +12,8 @@ export default function ListView({
   loading,
   queryActive,
   onClearQuery,
+  onSelect,
+  selectedId,
 }: CollectionViewProps) {
   const cols = meta.fields.filter((f) => f.list !== false && !f.hidden).slice(0, 8);
   const groupBy = listGroupField(meta);
@@ -64,7 +66,11 @@ export default function ListView({
                 </tr>
               ) : null}
               {groupRows.map((row) => (
-                <tr key={String(row.id)}>
+                <tr
+                  key={String(row.id)}
+                  className={selectedId && String(row.id) === selectedId ? "is-selected" : undefined}
+                  onClick={onSelect ? () => onSelect(String(row.id)) : undefined}
+                >
                   {cols.map((c, i) => (
                     <td
                       key={c.name}
@@ -72,9 +78,15 @@ export default function ListView({
                       className={c.widget === "currency" || c.type === "decimal" ? "num" : undefined}
                     >
                       {i === 0 ? (
-                        <Link to={`/${slug}/${row.id}`}>
-                          <FieldValue row={row} field={c} />
-                        </Link>
+                        onSelect ? (
+                          <button type="button" className="linkish" onClick={() => onSelect(String(row.id))}>
+                            <FieldValue row={row} field={c} />
+                          </button>
+                        ) : (
+                          <Link to={`/${slug}/${row.id}`}>
+                            <FieldValue row={row} field={c} />
+                          </Link>
+                        )
                       ) : (
                         <FieldValue row={row} field={c} />
                       )}
