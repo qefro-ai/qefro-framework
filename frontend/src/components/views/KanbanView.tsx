@@ -144,9 +144,9 @@ export default function KanbanView({ meta, slug, rows, loading, onReload, onErro
                           compact
                           actions={actions}
                           transitions={actions.length ? [] : transitions}
-                          onAction={async (name) => {
+                          onAction={async (name, _action, input) => {
                             try {
-                              await api.action(slug, String(row.id), name);
+                              await api.action(slug, String(row.id), name, input ?? {});
                               onReload();
                             } catch (err) {
                               onError(friendlyError(err));

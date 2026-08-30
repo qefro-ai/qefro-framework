@@ -1,8 +1,8 @@
 use crate::audit::AuditLogger;
 use crate::jobs::{JobQueue, JobRegistry};
 use crate::operation::{
-    available_for_record, crud_operation_defs, execute_operation, operation_allowed,
-    OperationRegistry,
+    available_for_record, crud_operation_defs, execute_operation_with, operation_allowed,
+    ExecuteOpts, OperationRegistry,
 };
 use crate::outbox::Outbox;
 use crate::repository::{record_id, EntityRepository, Page};
@@ -142,10 +142,23 @@ impl EntityService {
         name: &str,
         input: Value,
     ) -> QefroResult<Value> {
+        self.execute_with(ctx, entity_name, id, name, input, ExecuteOpts::default())
+            .await
+    }
+
+    pub async fn execute_with(
+        &self,
+        ctx: &OpContext,
+        entity_name: &str,
+        id: Uuid,
+        name: &str,
+        input: Value,
+        opts: ExecuteOpts,
+    ) -> QefroResult<Value> {
         let entity = self.registry.get(entity_name)?;
         self.ensure_app(ctx, &entity)?;
         reject_client_tenant(&input)?;
-        let (record, _events) = execute_operation(
+        let (record, _events) = execute_operation_with(
             &self.repo,
             &self.registry,
             &self.permissions,
@@ -160,10 +173,30 @@ impl EntityService {
             id,
             name,
             input,
+            opts,
         )
         .await?;
         let _ = self.dispatch_outbox().await;
-        self.present(ctx, &entity, record).await
+        if record.get("id").is_none() {
+            return Ok(record);
+        }
+        let mut presented = self.present(ctx, &entity, record.clone()).await?;
+        if let Some(op) = record.get("_operation") {
+            if let Some(obj) = presented.as_object_mut() {
+                obj.insert("_operation".into(), op.clone());
+            }
+        }
+        Ok(presented)
+    }
+
+    pub async fn get_operation_run(
+        &self,
+        ctx: &OpContext,
+        id: Uuid,
+    ) -> QefroResult<crate::operation_run::OperationRun> {
+        crate::operation_run::OperationRunStore::new(self.pool().clone())
+            .get(ctx, id)
+            .await
     }
 
     pub fn list_operations(&self, ctx: &OpContext) -> Vec<OperationDef> {

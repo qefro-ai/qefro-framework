@@ -106,6 +106,21 @@ async fn crm_operations_without_framework_core_changes() {
     .await;
     assert_eq!(status, StatusCode::OK, "{converted}");
     assert_eq!(converted["status"], "Qualified");
+    assert_eq!(converted["_operation"]["status"], "completed");
+    let (status, tasks) = json(
+        clone_router(&router),
+        get("/api/v1/tasks", token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tasks}");
+    assert!(
+        tasks["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["title"].as_str().unwrap_or("").contains("Onboard")),
+        "convert should create a follow-up task: {tasks}"
+    );
 
     let lead2 = json(
         clone_router(&router),

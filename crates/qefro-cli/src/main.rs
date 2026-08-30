@@ -604,9 +604,9 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
         .filter(|d| d.entity.eq_ignore_ascii_case(&entity.name))
         .collect();
     if !ops.is_empty() {
-        println!("operations:");
+        println!("Operations");
         for def in ops {
-            println!("  {}  {}  {}", def.name, def.label, def.permission);
+            println!("  {}", def.label);
         }
     }
     println!("permissions:");

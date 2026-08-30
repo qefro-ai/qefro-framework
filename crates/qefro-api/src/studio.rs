@@ -441,11 +441,18 @@ async fn get_operations(
             json!({
                 "name": b.def.name,
                 "label": b.def.label,
+                "description": b.def.description,
                 "roles": b.def.roles,
                 "permission": b.def.permission,
                 "kind": b.def.kind,
                 "source_managed": true,
                 "workflow_transition": b.def.workflow_transition,
+                "event": b.def.event,
+                "execution": b.def.execution,
+                "idempotent": b.def.idempotent,
+                "input_schema": b.def.input_schema,
+                "requires_confirmation": b.def.requires_confirmation,
+                "confirmation_message": b.def.confirmation_message,
             })
         })
         .collect();

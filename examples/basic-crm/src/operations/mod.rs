@@ -3,6 +3,7 @@ mod lead;
 mod opportunity;
 
 use qefro_api::{InstalledApp, NoopOperationHandler, OperationDef};
+use serde_json::json;
 
 pub fn register(app: InstalledApp) -> InstalledApp {
     app.operation(
@@ -18,11 +19,21 @@ pub fn register(app: InstalledApp) -> InstalledApp {
     .operation(
         OperationDef::new("convert", "Lead")
             .label("Convert")
-            .description("Convert a contacted lead into a CRM customer")
+            .description("Convert a contacted lead into a CRM customer and follow-up task")
             .permission("lead.convert")
             .roles(&["Manager"])
             .event("lead.converted")
-            .transition("qualify"),
+            .transition("qualify")
+            .input_schema(json!({
+                "type": "object",
+                "properties": {
+                    "note": {
+                        "type": "string",
+                        "title": "Handoff note",
+                        "description": "Optional note for the follow-up task"
+                    }
+                }
+            })),
         lead::ConvertLead,
     )
     .operation(

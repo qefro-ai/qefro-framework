@@ -238,6 +238,32 @@ ALTER TABLE qefro_attachments ADD COLUMN IF NOT EXISTS description TEXT;
 CREATE INDEX IF NOT EXISTS qefro_attachments_filename_idx
     ON qefro_attachments (tenant_id, filename);
 
+CREATE TABLE IF NOT EXISTS qefro_operation_runs (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id UUID,
+    entity TEXT NOT NULL,
+    entity_id UUID NOT NULL,
+    operation TEXT NOT NULL,
+    status TEXT NOT NULL,
+    request_id UUID,
+    idempotency_key TEXT,
+    progress INT NOT NULL DEFAULT 0,
+    result JSONB,
+    error TEXT,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS qefro_operation_runs_idemp_uidx
+    ON qefro_operation_runs (tenant_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS qefro_operation_runs_record_idx
+    ON qefro_operation_runs (tenant_id, entity, entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS qefro_operation_runs_status_idx
+    ON qefro_operation_runs (tenant_id, status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS qefro_notifications (
     id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,

@@ -11,9 +11,9 @@ use qefro_core::{
 use qefro_db::{
     apply_schema, connect, AttachmentPurgeJob, AttachmentStore, AutomationEngine, BlobMetaStore,
     DueReminderJob, EmailNotifyJob, EntityService, JobHandler, JobQueue, JobRegistry,
-    LogNotificationJob, MetadataChangeService, NotificationStore, OperationHandler,
-    OperationRegistry, PlatformDispatcher, SavedFilterStore, WebhookLog, ATTACHMENT_PURGE_JOB,
-    DUE_REMINDER_JOB,
+    LogNotificationJob, MetadataChangeService, NotificationStore, OperationExecuteJob,
+    OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore, WebhookLog,
+    ATTACHMENT_PURGE_JOB, DUE_REMINDER_JOB, OPERATION_EXECUTE_JOB,
 };
 use qefro_events::InProcessEventBus;
 use qefro_permissions::{PermissionGrant, PermissionRegistry};
@@ -453,6 +453,8 @@ impl QefroRuntime {
         job_handlers.register("notify.email", Arc::new(EmailNotifyJob));
         let due_reminder = DueReminderJob::new();
         job_handlers.register(DUE_REMINDER_JOB, due_reminder.clone());
+        let operation_execute = OperationExecuteJob::new();
+        job_handlers.register(OPERATION_EXECUTE_JOB, operation_execute.clone());
         let attachment_purge = AttachmentPurgeJob::new();
         job_handlers.register(ATTACHMENT_PURGE_JOB, attachment_purge.clone());
         job_handlers.register(
@@ -514,6 +516,7 @@ impl QefroRuntime {
         );
         automation.bind(entities.clone());
         due_reminder.bind(entities.clone());
+        operation_execute.bind(entities.clone());
         entities
             .events()
             .subscribe_async(
