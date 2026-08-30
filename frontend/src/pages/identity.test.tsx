@@ -300,6 +300,74 @@ describe("identity generic UI", () => {
     expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
   });
 
+  it("returns from related create with the relation populated", async () => {
+    const orderEntity: UiEntity = {
+      entity: "Order",
+      label: "Order",
+      label_plural: "Orders",
+      slug: "orders",
+      searchable: true,
+      display_field: "name",
+      standalone: true,
+      permissions: { list: true, create: true, read: true, update: true, delete: true },
+      fields: [
+        field({
+          name: "customer_id",
+          label: "Customer",
+          type: "relation",
+          widget: "relation",
+          relation: "Customer",
+          relation_kind: "many_to_one",
+        }),
+        field({ name: "notes", label: "Notes" }),
+      ],
+    };
+    const customerEntity: UiEntity = {
+      entity: "Customer",
+      label: "Customer",
+      label_plural: "Customers",
+      slug: "customers",
+      searchable: true,
+      display_field: "name",
+      standalone: true,
+      permissions: { list: true, create: true, read: true, update: true, delete: true },
+      fields: [
+        field({ name: "name", label: "Name", required: true }),
+        field({ name: "email", label: "Email", widget: "email" }),
+      ],
+    };
+    vi.spyOn(api, "create").mockResolvedValue({ id: "c1", name: "Walk-in Ada" });
+    vi.spyOn(api, "get").mockResolvedValue({ id: "c1", name: "Walk-in Ada" });
+    vi.spyOn(api, "list").mockResolvedValue({
+      items: [{ id: "c1", name: "Walk-in Ada" }],
+      total: 1,
+      page: 1,
+      page_size: 25,
+    });
+    const router = createMemoryRouter(
+      [
+        {
+          element: shell(<Outlet />),
+          children: [
+            { path: "/:slug/new", element: <EntityForm entities={[orderEntity, customerEntity]} /> },
+          ],
+        },
+      ],
+      { initialEntries: ["/orders/new"] },
+    );
+    render(<RouterProvider router={router} />);
+    await userEvent.type(await screen.findByLabelText("Notes"), "hold the table");
+    expect(screen.getByLabelText("Notes")).toHaveValue("hold the table");
+    await userEvent.click(screen.getByRole("button", { name: "Create Customer" }));
+    expect(await screen.findByText("New Customer")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Name *"), "Walk-in Ada");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByText("New Order")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Notes")).toHaveValue("hold the table"));
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveValue("Walk-in Ada"));
+    expect(screen.getByRole("button", { name: "Create" })).not.toBeDisabled();
+  });
+
   it("summarizes server field errors and focuses the field", async () => {
     vi.spyOn(api, "create").mockRejectedValue(
       new ApiError("Invalid email", 400, [{ field: "email", message: "Invalid email" }]),

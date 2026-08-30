@@ -42,6 +42,13 @@ function safeReturnPath(raw: string | null): string | null {
   return raw;
 }
 
+function draftTargetFromPath(pathname: string): { slug: string; id?: string } | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length >= 2 && parts[1] === "new") return { slug: parts[0] };
+  if (parts.length >= 3 && parts[2] === "edit") return { slug: parts[0], id: parts[1] };
+  return null;
+}
+
 function previewDefault(field: UiField): unknown {
   if (field.default != null && field.default !== "") return field.default;
   if (field.default_from === "current_date") return new Date().toISOString().slice(0, 10);
@@ -50,6 +57,11 @@ function previewDefault(field: UiField): unknown {
 }
 
 export default function EntityForm({ entities }: { entities: UiEntity[] }) {
+  const { slug, id } = useParams();
+  return <EntityFormEditor key={`${slug}:${id ?? "new"}`} entities={entities} />;
+}
+
+function EntityFormEditor({ entities }: { entities: UiEntity[] }) {
   const { slug, id } = useParams();
   const [searchParams] = useSearchParams();
   const meta = entities.find((e) => e.slug === slug);
@@ -86,6 +98,9 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
   }
 
   useEffect(() => {
+    setSaved(false);
+    setError("");
+    setFieldErrors({});
     if (id && slug) {
       setLoading(true);
       api
@@ -133,6 +148,11 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
     window.addEventListener("beforeunload", onBefore);
     return () => window.removeEventListener("beforeunload", onBefore);
   }, [dirty, saving]);
+
+  useEffect(() => {
+    if (!slug || !dirty) return;
+    writeDraft(slug, id, values);
+  }, [slug, id, dirty, values]);
 
   const blocker = useBlocker(({ nextLocation }) => {
     if (!dirty || saving) return false;
@@ -183,7 +203,12 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
       if (returnTo && createdId && returnField) {
         const dest = new URL(returnTo, window.location.origin);
         dest.searchParams.set(returnField, createdId);
-        navigate(`${dest.pathname}${dest.search}`);
+        const origin = draftTargetFromPath(dest.pathname);
+        if (origin) {
+          const draft = readDraft(origin.slug, origin.id) ?? {};
+          writeDraft(origin.slug, origin.id, { ...draft, [returnField]: createdId });
+        }
+        navigate(`${dest.pathname}${dest.search}${dest.hash}`);
         return;
       }
       if (id) {
