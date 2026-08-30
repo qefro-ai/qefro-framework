@@ -5,8 +5,8 @@ use qefro_core::{
     PrintFormat, ReportDef, StudioCatalog, WebhookDef,
 };
 use qefro_db::{
-    AttachmentStore, BlobMetaStore, EntityService, MetadataChangeService, NotificationStore,
-    SavedFilterStore, WebhookLog,
+    AttachmentStore, AutomationEngine, BlobMetaStore, EntityService, MetadataChangeService,
+    NotificationStore, SavedFilterStore, WebhookLog,
 };
 use qefro_tenant::TenantService;
 use std::sync::Arc;
@@ -44,6 +44,7 @@ pub struct AppState {
     pub attachments: Arc<AttachmentStore>,
     pub notification_defs: Vec<NotificationDef>,
     pub webhooks: Vec<WebhookDef>,
+    pub automation: Arc<AutomationEngine>,
 }
 
 impl AppState {

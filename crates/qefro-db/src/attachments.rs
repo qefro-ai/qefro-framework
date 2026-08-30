@@ -1,5 +1,4 @@
 use qefro_core::{BlobStore, QefroError, QefroResult};
-use qefro_events::EventBus;
 use qefro_permissions::Action;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -244,7 +243,8 @@ impl EntityService {
             json!({ "filename": filename, "attachment_id": id }),
         );
         event.user_id = Some(ctx.user_id);
-        let _ = self.events().publish(event).await;
+        self.outbox().enqueue(&event).await?;
+        let _ = self.dispatch_outbox().await;
         Ok(row)
     }
 

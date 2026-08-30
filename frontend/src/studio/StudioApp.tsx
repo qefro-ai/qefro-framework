@@ -51,6 +51,7 @@ export default function StudioApp() {
         <NavLink to="/studio/permissions">Permissions</NavLink>
         <NavLink to="/studio/notifications">Notifications</NavLink>
         <NavLink to="/studio/webhooks">Webhooks</NavLink>
+        <NavLink to="/studio/automations">Automations</NavLink>
         <NavLink to="/studio/public-forms">Public Forms</NavLink>
         <NavLink to="/studio/reports">Reports</NavLink>
         <NavLink to="/studio/dashboards">Dashboards</NavLink>
@@ -72,6 +73,7 @@ export default function StudioApp() {
           <Route path="permissions/:entity" element={<Permissions caps={caps} />} />
           <Route path="notifications" element={<Platform kind="notifications" />} />
           <Route path="webhooks" element={<Platform kind="webhooks" />} />
+          <Route path="automations" element={<Platform kind="automations" />} />
           <Route path="public-forms" element={<Platform kind="public-forms" />} />
           <Route path="reports" element={<ReportsStudio kind="reports" caps={caps} />} />
           <Route path="reports/:name" element={<ReportsStudio kind="reports" caps={caps} />} />

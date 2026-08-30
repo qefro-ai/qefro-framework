@@ -318,6 +318,30 @@ async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<
                 update: permissions.allows(&ctx.roles, &e.name, Action::Update),
                 delete: permissions.allows(&ctx.roles, &e.name, Action::Delete),
             });
+            let ops = state.entities.operations().for_entity(&e.name);
+            if let Some(cap) = meta.capabilities.as_mut() {
+                cap.actions = cap.actions || !ops.is_empty();
+            }
+            for binding in ops {
+                if meta.actions.iter().any(|a| {
+                    a.name == binding.def.name || a.operation == binding.def.name
+                }) {
+                    continue;
+                }
+                let mut action = qefro_core::EntityActionDef::new(&binding.def.name)
+                    .label(&binding.def.label)
+                    .operation(&binding.def.name);
+                if binding.def.requires_confirmation {
+                    action = action.confirm(
+                        binding
+                            .def
+                            .confirmation_message
+                            .clone()
+                            .unwrap_or_else(|| format!("Run {}?", binding.def.label)),
+                    );
+                }
+                meta.actions.push(action);
+            }
             meta
         })
         .collect();
@@ -474,11 +498,14 @@ async fn invoke_tool(
 }
 
 async fn list_events(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
-    let events = state
+    let events: Vec<Value> = state
         .entities
         .events()
         .recent_for_tenant(ctx.tenant_id, 100)
-        .await;
+        .await
+        .into_iter()
+        .map(|e| e.to_public_json())
+        .collect();
     Json(json!({ "items": events }))
 }
 

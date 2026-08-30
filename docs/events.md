@@ -18,11 +18,15 @@ Payload:
 ```json
 {
   "id": "...",
+  "event_id": "...",
   "name": "reservation.confirmed",
+  "event_type": "reservation.confirmed",
   "entity": "Reservation",
   "entity_id": "...",
+  "record_id": "...",
   "tenant_id": "...",
   "user_id": "...",
+  "actor": "...",
   "timestamp": "...",
   "payload": { "status": "Confirmed" }
 }
@@ -38,4 +42,4 @@ Job rows are still inserted in the same SQLx transaction as the mutation, so the
 
 The in-process bus keeps a recent debug log (`GET /api/v1/events`). It is not a durable queue. Background work belongs in jobs.
 
-Trace a business action with `request_id` (HTTP), `DomainEvent.id` (event), job id, and webhook delivery id.
+Trace a business action with `request_id` (HTTP), `DomainEvent.id` (event), automation `execution_id`, job id, and webhook delivery id. See [Automation](automation.md).

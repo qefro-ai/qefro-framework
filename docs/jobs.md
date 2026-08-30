@@ -6,7 +6,7 @@ Qefro V0.3 ships a PostgreSQL-backed job queue. There is no Kafka, RabbitMQ, or 
 
 `jobs` stores `tenant_id`, `user_id`, `name`, `payload`, `status`, `attempts`, `max_attempts`, `run_at`, `last_error`, and optional `idempotency_key`.
 
-Statuses: `pending` → `running` → `succeeded` | `failed`. Failed attempts with remaining retries return to `pending` with exponential backoff (capped at 5 minutes).
+Statuses: `pending` → `running` → `succeeded` | `failed`. Failed attempts with remaining retries return to `pending` with exponential backoff (capped at 5 minutes). Client JSON may alias `pending` as `queued` and `succeeded` as `completed` without renaming columns.
 
 Workers claim rows with `FOR UPDATE SKIP LOCKED`.
 

@@ -542,13 +542,18 @@ async fn execute_in_transaction(
         activity
             .record_tx(tx, ctx, &entity.name, id, atype, &message, metadata)
             .await?;
-        if binding.def.workflow_transition.is_some() {
+        if let Some(tname) = &binding.def.workflow_transition {
             let mut evt = DomainEvent::new(
                 "workflow.transitioned",
                 entity.name.clone(),
                 id,
                 ctx.tenant_id,
-                json!({ "status": record.get("status") }),
+                json!({
+                    "status": record.get("status"),
+                    "from": current.get("status"),
+                    "to": record.get("status"),
+                    "transition": tname,
+                }),
             );
             evt.user_id = Some(ctx.user_id);
             if !events.iter().any(|e| e.name == "workflow.transitioned") {

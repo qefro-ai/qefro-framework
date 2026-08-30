@@ -5,7 +5,9 @@ mod permissions;
 mod workflows;
 
 use qefro_api::InstalledApp;
-use qefro_core::{AppModule, NavItem, ReportDef};
+use qefro_core::{
+    AppModule, AutomationAction, AutomationDef, AutomationTrigger, Condition, NavItem, ReportDef,
+};
 use qefro_permissions::PermissionGrant;
 use qefro_workflow::WorkflowDef;
 
@@ -32,6 +34,15 @@ pub fn module() -> AppModule {
                 .group_by(&["status"])
                 .sum("amount")
                 .chart("bar"),
+        )
+        .automation(
+            AutomationDef::new(
+                "customer_created_activity",
+                AutomationTrigger::event("entity.created"),
+            )
+            .description("Record activity when a CRM customer is created")
+            .conditions(Condition::field_equals("entity", "CrmCustomer"))
+            .action(AutomationAction::create_activity("Customer created")),
         )
         .build()
 }

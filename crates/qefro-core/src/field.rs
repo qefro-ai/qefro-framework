@@ -356,6 +356,15 @@ impl FieldDef {
             .ui_display_entity(target)
     }
 
+    /// Generic assignment convention: `assigned_to` → User.
+    pub fn assigned_to() -> Self {
+        Self::many_to_one("assigned_to", "User")
+            .label("Assigned to")
+            .nullable()
+            .filterable()
+            .search_related()
+    }
+
     pub fn one_to_many(
         name: impl Into<String>,
         target: impl Into<String>,
@@ -497,6 +506,30 @@ impl FieldDef {
         self.validation.max = Some(n);
         self.ui.widget_options.max = Some(Value::from(n));
         self
+    }
+
+    /// Exclusive lower bound. Inclusive bounds use [`Self::min`].
+    pub fn greater_than(mut self, n: f64) -> Self {
+        self.validation.greater_than = Some(n);
+        self
+    }
+
+    /// Exclusive upper bound. Inclusive bounds use [`Self::max`].
+    pub fn less_than(mut self, n: f64) -> Self {
+        self.validation.less_than = Some(n);
+        self
+    }
+
+    pub fn greater_or_equal(self, n: f64) -> Self {
+        self.min(n)
+    }
+
+    pub fn less_or_equal(self, n: f64) -> Self {
+        self.max(n)
+    }
+
+    pub fn range(self, min: f64, max: f64) -> Self {
+        self.min(min).max(max)
     }
 
     pub fn email(mut self) -> Self {

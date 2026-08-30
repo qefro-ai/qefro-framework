@@ -285,6 +285,25 @@ CREATE INDEX IF NOT EXISTS qefro_outbox_pending_idx
     ON qefro_outbox (created_at)
     WHERE published_at IS NULL;
 
+CREATE TABLE IF NOT EXISTS qefro_automation_executions (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    automation_id TEXT NOT NULL,
+    event_id UUID NOT NULL,
+    execution_id UUID NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id, automation_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS qefro_automation_exec_tenant_idx
+    ON qefro_automation_executions (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS qefro_automation_exec_status_idx
+    ON qefro_automation_executions (tenant_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS qefro_automation_exec_event_idx
+    ON qefro_automation_executions (event_id);
+
+
 CREATE TABLE IF NOT EXISTS qefro_activity (
     id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -619,7 +638,14 @@ async fn apply_enum_checks(pool: &PgPool, registry: &EntityRegistry) -> QefroRes
             sqlx::query(&add)
                 .execute(pool)
                 .await
-                .map_err(|e| QefroError::database(e.to_string()))?;
+                .or_else(|e| {
+                    let msg = e.to_string();
+                    if msg.contains("already exists") {
+                        Ok(Default::default())
+                    } else {
+                        Err(QefroError::database(e.to_string()))
+                    }
+                })?;
         }
     }
     Ok(())

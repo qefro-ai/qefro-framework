@@ -228,3 +228,72 @@ async fn crm_operations_without_framework_core_changes() {
     assert_eq!(status, StatusCode::OK, "{done}");
     assert_eq!(done["done"], true);
 }
+
+fn get(path: &str, token: &str) -> Request<Body> {
+    Request::builder()
+        .method("GET")
+        .uri(path)
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+#[tokio::test]
+async fn customer_created_records_activity_via_automation() {
+    let url = db_url();
+    let mut rt = QefroRuntime::new(Config {
+        database_url: url,
+        jwt_secret: "test-secret".into(),
+        bind: "127.0.0.1:0".into(),
+        ..Config::default()
+    });
+    rt.install(installed());
+    let (router, _) = rt.build().await.unwrap();
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let (status, auth) = json(
+        clone_router(&router),
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/register")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "name": "Ada",
+                    "email": format!("crm-auto-{suffix}@example.com"),
+                    "password": "password123",
+                    "tenant_name": format!("CA-{suffix}"),
+                    "tenant_slug": format!("ca-{suffix}")
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{auth}");
+    let token = auth["access_token"].as_str().unwrap();
+
+    let (status, customer) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/crm-customers",
+            token,
+            json!({ "name": "Acme Foods", "email": format!("acme-{suffix}@ex.com") }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{customer}");
+    let id = customer["id"].as_str().unwrap();
+
+    let (status, activity) = json(
+        clone_router(&router),
+        get(&format!("/api/v1/crm-customers/{id}/activity"), token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{activity}");
+    let acts = activity["items"].as_array().cloned().unwrap_or_default();
+    assert!(
+        acts.iter()
+            .any(|a| a["message"].as_str() == Some("Customer created")),
+        "CRM automation should record activity: {activity}"
+    );
+}
