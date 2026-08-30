@@ -35,4 +35,4 @@ There is no `IdentityClient`, `WorkflowClient`, `ReportClient`, `DashboardClient
 | Browser | `QefroClient` | REST `/api/v1` |
 | Agents | `EntityOps` | in-process `EntityService` |
 
-Same tenant, RBAC, validation, and workflow on every path.
+Same tenant, RBAC, validation, and workflow on every path. 422 responses throw `ValidationError` (subclass of `ApiError`) with `fields: [{ field, code, message }]`.

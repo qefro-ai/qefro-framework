@@ -10,10 +10,11 @@ use chrono::Utc;
 use qefro_auth::AuthService;
 use qefro_core::{
     apply_entity_rules, canonicalize_datetime, existence_rules, is_person_link_field,
-    person_backref_field, sanitize_html, strip_secrets, validate_party, validate_record,
-    EntityRegistry, FieldError, FieldType, HookRegistry, OpContext, OperationDef, QefroError,
-    QefroResult, PERSON_ENTITY, PERSON_LINK_FIELD, RELATED_ID_FIELD, RELATED_TYPE_FIELD,
-    STATUS_CANCELLED, STATUS_COMPLETED, USER_ENTITY,
+    person_backref_field, reject_readonly_writes, sanitize_html, strip_computed_fields,
+    strip_secrets, validate_party, validate_record, EntityRegistry, FieldError, FieldType,
+    HookRegistry, OpContext, OperationDef, QefroError, QefroResult, PERSON_ENTITY,
+    PERSON_LINK_FIELD, RELATED_ID_FIELD, RELATED_TYPE_FIELD, STATUS_CANCELLED, STATUS_COMPLETED,
+    USER_ENTITY,
 };
 use qefro_events::{DomainEvent, InProcessEventBus};
 use qefro_permissions::{Action, PermissionRegistry};
@@ -490,6 +491,7 @@ impl EntityService {
         sanitize_values(&entity, &mut patch);
         let current = self.repo.get(&entity, ctx, id).await?;
         self.enforce_row_policy(ctx, &entity, &current)?;
+        reject_readonly_writes(entity.business_fields(), Some(&current), &patch)?;
         if let Some(expected) = patch
             .as_object_mut()
             .and_then(|o| o.remove("_expected_updated_at"))
@@ -755,8 +757,9 @@ impl EntityService {
         }
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Update)?;
-        let current = self.repo.get(&entity, ctx, id).await?;
+        let mut current = self.repo.get(&entity, ctx, id).await?;
         self.enforce_row_policy(ctx, &entity, &current)?;
+        self.expand_child_tables(ctx, &entity, &mut current).await?;
         let wf = self
             .workflows
             .for_entity(&entity.name)
@@ -1710,16 +1713,28 @@ impl EntityService {
                 .cloned()
                 .collect();
             for (i, row) in rows.iter().enumerate() {
+                let mut row_errors = Vec::new();
                 if let Err(qefro_core::QefroError::Validation { fields, .. }) =
                     validate_record(&fields, row, partial)
                 {
-                    for err in fields {
-                        errors.push(FieldError::new(
-                            format!("{}.{}.{}", field.name, i, err.field),
-                            err.code,
-                            err.message,
-                        ));
+                    row_errors.extend(fields);
+                }
+                if let Err(qefro_core::QefroError::Validation { fields, .. }) =
+                    apply_entity_rules(&fields, &child.validation, row, partial)
+                {
+                    row_errors.extend(fields);
+                }
+                for err in row_errors {
+                    let mut mapped = FieldError::new(
+                        format!("{}.{}.{}", field.name, i, err.field),
+                        err.code,
+                        err.message,
+                    )
+                    .with_entity(&child.name);
+                    if let Some(rule) = err.rule {
+                        mapped = mapped.with_rule(rule);
                     }
+                    errors.push(mapped);
                 }
             }
         }
@@ -2729,14 +2744,7 @@ fn extract_children(
 }
 
 fn strip_computed(entity: &qefro_core::EntityDef, data: &mut Value) {
-    let Some(obj) = data.as_object_mut() else {
-        return;
-    };
-    for field in &entity.fields {
-        if field.computed {
-            obj.remove(&field.name);
-        }
-    }
+    strip_computed_fields(&entity.fields, data);
 }
 
 fn coerce_numeric_json(entity: &qefro_core::EntityDef, record: &mut Value) {

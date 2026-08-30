@@ -85,7 +85,7 @@ CLI  ─────────────┤
 EntityOps / Agent ┘
 ```
 
-`EntityDef` is the source of truth. `EntityService` is the execution boundary. The browser talks to REST through `QefroClient` ([sdk.md](sdk.md)). Agents use in-process `EntityOps`. Generic List / Card / Kanban / Calendar / Chart / Form / Detail renderers consume UI metadata. Studio overlays presentation (`entity.field.ui`, `entity.views`); it does not replace the business model.
+`EntityDef` is the source of truth. `EntityService` is the execution boundary. Business rules (`required`, `required_when`, validation, defaults, `readonly_when`, `visible_when`, computed formulas) are declared on that metadata and enforced in EntityService — see [business-rules.md](business-rules.md). The browser talks to REST through `QefroClient` ([sdk.md](sdk.md)). Agents use in-process `EntityOps`. Generic List / Card / Kanban / Calendar / Chart / Form / Detail renderers consume UI metadata. Studio overlays presentation (`entity.field.ui`, `entity.views`); it does not replace the business model.
 
 Clients cannot set `tenant_id` on create, update, action, or agent invoke. `X-Tenant-ID` is ignored. Agents have no SQLx dependency and cannot run SQL. Restaurant and CRM rules live in `examples/`, not in core crates.
 

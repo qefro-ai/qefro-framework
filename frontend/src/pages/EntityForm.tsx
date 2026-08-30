@@ -9,6 +9,7 @@ import { showSnackbar } from "../components/ui/Snackbar";
 import { friendlyError } from "../friendlyError";
 import { t } from "../i18n";
 import { previewFormula } from "../metadata/formula";
+import { fieldReadonly } from "../metadata/conditions";
 import { displayValue } from "../metadata/views";
 import { useBreadcrumbRecord } from "../components/shell/breadcrumbContext";
 
@@ -178,6 +179,7 @@ function EntityFormEditor({ entities }: { entities: UiEntity[] }) {
     const body: Record<string, unknown> = {};
     for (const field of fields) {
       if (field.readonly || field.computed) continue;
+      if (fieldReadonly(field, values)) continue;
       const raw = values[field.name];
       if (raw === "" || raw == null) {
         if (!id && !field.required) continue;

@@ -592,6 +592,39 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
             );
         }
     }
+    let mut any_rules = false;
+    for field in &entity.fields {
+        if field.system {
+            continue;
+        }
+        let lines = qefro_core::field_rule_lines(field);
+        if lines.is_empty() {
+            continue;
+        }
+        if !any_rules {
+            println!("Rules");
+            any_rules = true;
+        }
+        println!("  {}", field.name);
+        for line in lines {
+            println!("    {line}");
+        }
+    }
+    if !entity.validation.is_empty() {
+        if !any_rules {
+            println!("Rules");
+        }
+        println!("  Validation");
+        for rule in &entity.validation {
+            if let Some(line) = qefro_core::compare_rule_line(rule) {
+                println!("    {line}");
+            } else if !rule.require.is_empty() {
+                println!("    require {}", rule.require.join(", "));
+            } else if let Some(field) = &rule.field {
+                println!("    {field} {:?}", rule.rule);
+            }
+        }
+    }
     if !entity.actions.is_empty() {
         println!("actions:");
         for action in &entity.actions {

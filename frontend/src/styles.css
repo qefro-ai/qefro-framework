@@ -1185,11 +1185,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   justify-content: flex-end;
   gap: var(--space-2);
 }
-.field-cell.is-invalid input,
-.field-cell.is-invalid select,
-.field-cell.is-invalid textarea,
-[aria-invalid="true"] {
-  border-color: var(--danger);
+.field-cell.is-computed input,
+.field-cell.is-computed select,
+.field-cell.is-computed textarea {
+  background: color-mix(in srgb, var(--surface-muted, var(--line)) 55%, var(--panel));
+  color: var(--ink-muted, var(--ink));
+}
+.computed-hint {
+  font-weight: 400;
+  font-size: var(--text-xs);
+  color: var(--ink-muted, var(--muted));
+  text-transform: lowercase;
 }
 .panel-title { padding: var(--space-4) var(--space-4) 0; margin: 0; font-size: var(--text-sm); }
 .related-meta { padding: 0 var(--space-4) var(--space-2); }

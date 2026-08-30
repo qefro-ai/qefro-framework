@@ -73,12 +73,6 @@ pub use identity::{
     ORGANIZATION_SLUG, PARTY_TYPE_FIELD, PARTY_TYPE_ORGANIZATION, PARTY_TYPE_PERSON, PERSON_ENTITY,
     PERSON_LINK_FIELD, PERSON_SLUG, SECRET_KEYS, USER_ENTITY, USER_SLUG,
 };
-pub use task::{
-    apply_task_link, platform_entities, task_automations, task_dashboard, task_entity,
-    task_nav_item, task_notifications, task_priorities, task_statuses, RELATED_ID_FIELD,
-    RELATED_TYPE_FIELD, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_IN_PROGRESS, STATUS_OPEN,
-    TASK_ENTITY, TASK_SLUG, TASK_WORKFLOW,
-};
 pub use lifecycle::{lifecycle_event_name, LifecycleHookDef};
 pub use metering::MeteringEvent;
 pub use migration::{sql_is_destructive, AppMigration};
@@ -100,6 +94,12 @@ pub use studio::{
     CAP_EDIT, CAP_MANAGE_APPS, CAP_MANAGE_PERMISSIONS, CAP_MANAGE_WORKFLOWS, CAP_PUBLISH, CAP_VIEW,
     FORMULA_FUNCTIONS,
 };
+pub use task::{
+    apply_task_link, platform_entities, task_automations, task_dashboard, task_entity,
+    task_nav_item, task_notifications, task_priorities, task_statuses, RELATED_ID_FIELD,
+    RELATED_TYPE_FIELD, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_IN_PROGRESS, STATUS_OPEN,
+    TASK_ENTITY, TASK_SLUG, TASK_WORKFLOW,
+};
 pub use timezone::{canonicalize_datetime, local_to_utc, utc_to_local};
 pub use ui::{
     CalendarViewSpec, CardViewSpec, ChartMeasureSpec, ChartViewSpec, DashboardCard, DashboardDef,
@@ -112,8 +112,9 @@ pub use validate::{
     destructive_field_removals, validate_bundle, InstalledAppRef, ValidationReport,
 };
 pub use validation::{
-    apply_entity_rules, existence_rules, validate_record, CompareClause, ValidationRule,
-    ValidationRules, WhenClause,
+    apply_entity_rules, apply_field_rules, compare_rule_line, existence_rules, field_is_readonly,
+    field_rule_lines, reject_readonly_writes, strip_computed_fields, validate_record,
+    CompareClause, ValidationRule, ValidationRules, WhenClause,
 };
 pub use version::{
     is_framework_dep, API_VERSION, APP_API_VERSION, FRAMEWORK_COMPAT_REQ, FRAMEWORK_VERSION,

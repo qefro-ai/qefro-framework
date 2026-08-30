@@ -61,6 +61,12 @@ pub struct FieldError {
     pub field: String,
     pub code: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
 }
 
 impl FieldError {
@@ -73,7 +79,25 @@ impl FieldError {
             field: field.into(),
             code: code.into(),
             message: message.into(),
+            entity: None,
+            record: None,
+            rule: None,
         }
+    }
+
+    pub fn with_entity(mut self, entity: impl Into<String>) -> Self {
+        self.entity = Some(entity.into());
+        self
+    }
+
+    pub fn with_record(mut self, record: impl Into<String>) -> Self {
+        self.record = Some(record.into());
+        self
+    }
+
+    pub fn with_rule(mut self, rule: impl Into<String>) -> Self {
+        self.rule = Some(rule.into());
+        self
     }
 }
 

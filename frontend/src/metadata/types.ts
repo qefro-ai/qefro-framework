@@ -35,6 +35,7 @@ export type UiField = {
   label: string;
   description?: string;
   required: boolean;
+  required_when?: UiWhen;
   list: boolean;
   list_visible?: boolean;
   form: boolean;
