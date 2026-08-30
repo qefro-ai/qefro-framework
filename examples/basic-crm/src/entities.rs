@@ -163,7 +163,8 @@ pub fn contact() -> EntityDef {
         .field(
             FieldDef::many_to_one("customer_id", "CrmCustomer")
                 .nullable()
-                .label("Customer"),
+                .label("Customer")
+                .search_related(),
         )
         .field(FieldDef::string("title").nullable())
         .build()
@@ -179,7 +180,8 @@ pub fn opportunity() -> EntityDef {
         .field(
             FieldDef::many_to_one("customer_id", "CrmCustomer")
                 .nullable()
-                .label("Customer"),
+                .label("Customer")
+                .search_related(),
         )
         .field(
             FieldDef::many_to_one("contact_id", "Contact")
@@ -280,7 +282,8 @@ pub fn activity() -> EntityDef {
         .field(
             FieldDef::many_to_one("customer_id", "CrmCustomer")
                 .nullable()
-                .label("Customer"),
+                .label("Customer")
+                .search_related(),
         )
         .field(
             FieldDef::many_to_one("opportunity_id", "Opportunity")

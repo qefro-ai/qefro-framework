@@ -23,7 +23,11 @@ pub fn ops() -> DashboardDef {
                 .measure_field("amount")
                 .size("xl"),
         )
-        .card(DashboardCard::activity("Recent CRM activity", "CrmCustomer", 8))
+        .card(DashboardCard::activity(
+            "Recent CRM activity",
+            "CrmCustomer",
+            8,
+        ))
         .card(DashboardCard::recent("Recent activities", "Activity", 8))
         .card(
             DashboardCard::report_card("Pipeline report", "Opportunity", "pipeline-by-status")

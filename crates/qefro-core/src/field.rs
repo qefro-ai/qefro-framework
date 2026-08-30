@@ -127,6 +127,10 @@ pub struct FieldDef {
     /// Match the whole field value, not a substring.
     #[serde(default)]
     pub search_exact: bool,
+    /// Search through the related entity's searchable / display fields
+    /// instead of ILIKE on the foreign key UUID.
+    #[serde(default)]
+    pub search_related: bool,
     #[serde(default)]
     pub default: Option<Value>,
     /// Dynamic default: `current_user`, `current_date`, `current_datetime`,
@@ -248,6 +252,7 @@ impl FieldDef {
             searchable: false,
             search_weight: 1,
             search_exact: false,
+            search_related: false,
             default: None,
             default_from: None,
             validation: ValidationRules::default(),
@@ -435,6 +440,13 @@ impl FieldDef {
     pub fn search_exact(mut self) -> Self {
         self.searchable = true;
         self.search_exact = true;
+        self
+    }
+
+    /// Search the related record's display / searchable fields (many-to-one).
+    pub fn search_related(mut self) -> Self {
+        self.searchable = true;
+        self.search_related = true;
         self
     }
 

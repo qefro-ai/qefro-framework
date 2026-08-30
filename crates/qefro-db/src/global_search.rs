@@ -90,8 +90,8 @@ impl EntityService {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or(&label)
                                 .to_string();
-                            let score = rank_text(&needle, &label, 8)
-                                .max(rank_text(&needle, &snippet, 4));
+                            let score =
+                                rank_text(&needle, &label, 8).max(rank_text(&needle, &snippet, 4));
                             hits.push(SearchHit {
                                 entity: entity.name.clone(),
                                 slug: entity.slug.clone(),
@@ -112,11 +112,27 @@ impl EntityService {
                 .searchable_fields()
                 .into_iter()
                 .filter(|f| {
-                    self.permissions()
-                        .can_read_field(ctx, &entity.name, f.permission_level)
+                    f.relation.is_none()
+                        && self
+                            .permissions()
+                            .can_read_field(ctx, &entity.name, f.permission_level)
                 })
                 .collect();
-            if searchable.is_empty() {
+            let related: Vec<_> = entity
+                .fields
+                .iter()
+                .filter(|f| {
+                    f.relation
+                        .as_ref()
+                        .is_some_and(|r| r.kind == qefro_core::RelationKind::ManyToOne)
+                        && (f.search_related || f.searchable)
+                        && !f.secret
+                        && self
+                            .permissions()
+                            .can_read_field(ctx, &entity.name, f.permission_level)
+                })
+                .collect();
+            if searchable.is_empty() && related.is_empty() {
                 continue;
             }
             let table = quote_ident(&entity.table)?;
@@ -134,8 +150,9 @@ impl EntityService {
                 qb.push(" IS NULL AND ");
             }
             qb.push("(");
-            for (i, field) in searchable.iter().enumerate() {
-                if i > 0 {
+            let mut clause = 0usize;
+            for field in &searchable {
+                if clause > 0 {
                     qb.push(" OR ");
                 }
                 qb.push(quote_ident(&field.column_name())?);
@@ -146,6 +163,79 @@ impl EntityService {
                     qb.push("::text ILIKE ");
                     qb.push_bind(like_pattern(q));
                 }
+                clause += 1;
+            }
+            for field in &related {
+                let Some(rel) = &field.relation else { continue };
+                let Some(target) = self.registry().try_get(&rel.target_entity) else {
+                    continue;
+                };
+                if target.skip_ddl {
+                    continue;
+                }
+                if self
+                    .permissions()
+                    .check(ctx, &target.name, Action::List)
+                    .is_err()
+                {
+                    continue;
+                }
+                let related_searchable: Vec<_> = target
+                    .searchable_fields()
+                    .into_iter()
+                    .filter(|f| {
+                        f.relation.is_none()
+                            && self.permissions().can_read_field(
+                                ctx,
+                                &target.name,
+                                f.permission_level,
+                            )
+                    })
+                    .collect();
+                if related_searchable.is_empty() {
+                    continue;
+                }
+                if clause > 0 {
+                    qb.push(" OR ");
+                }
+                qb.push(quote_ident(&field.column_name())?);
+                qb.push(" IN (SELECT ");
+                qb.push(quote_ident("id")?);
+                qb.push(" FROM ");
+                qb.push(quote_ident(&target.table)?);
+                qb.push(" r WHERE ");
+                if target.tenant_owned {
+                    qb.push("r.");
+                    qb.push(quote_ident("tenant_id")?);
+                    qb.push(" = ");
+                    qb.push_bind(ctx.tenant_id);
+                    qb.push(" AND ");
+                }
+                if target.soft_delete {
+                    qb.push("r.");
+                    qb.push(quote_ident("deleted_at")?);
+                    qb.push(" IS NULL AND ");
+                }
+                qb.push("(");
+                for (i, rf) in related_searchable.iter().enumerate() {
+                    if i > 0 {
+                        qb.push(" OR ");
+                    }
+                    qb.push("r.");
+                    qb.push(quote_ident(&rf.column_name())?);
+                    if rf.search_exact {
+                        qb.push("::text ILIKE ");
+                        qb.push_bind(needle.clone());
+                    } else {
+                        qb.push("::text ILIKE ");
+                        qb.push_bind(like_pattern(q));
+                    }
+                }
+                qb.push("))");
+                clause += 1;
+            }
+            if clause == 0 {
+                continue;
             }
             qb.push(") LIMIT ");
             qb.push_bind(per as i64);
@@ -154,12 +244,19 @@ impl EntityService {
                 .fetch_all(self.pool())
                 .await
                 .map_err(|e| QefroError::database(e.to_string()))?;
+            let mut values = Vec::new();
             for row in rows {
                 let mut value: Value = row
                     .try_get(0)
                     .map_err(|e| QefroError::database(e.to_string()))?;
                 qefro_core::strip_secrets(Some(&entity), &mut value);
                 self.strip_search_fields(ctx, &entity, &mut value);
+                values.push(value);
+            }
+            let _ = self
+                .expand_many_to_one_batch(ctx, &entity, &mut values)
+                .await;
+            for value in values {
                 let id = value
                     .get("id")
                     .and_then(|v| v.as_str())
@@ -168,13 +265,13 @@ impl EntityService {
                 let label = entity.display_label(&value);
                 let mut score = rank_text(&needle, &label, 12);
                 let mut snippet = label.clone();
-                for field in &searchable {
+                for field in entity.searchable_fields() {
                     let text = value
                         .get(&field.name)
                         .and_then(|v| {
-                            v.as_str()
-                                .map(|s| s.to_string())
-                                .or_else(|| (!v.is_null()).then(|| v.to_string().trim_matches('"').to_string()))
+                            v.as_str().map(|s| s.to_string()).or_else(|| {
+                                (!v.is_null()).then(|| v.to_string().trim_matches('"').to_string())
+                            })
                         })
                         .unwrap_or_default();
                     if text.is_empty() {
@@ -190,6 +287,9 @@ impl EntityService {
                     for rel in expanded.values() {
                         if let Some(rel_label) = rel.get("label").and_then(|v| v.as_str()) {
                             score = score.max(rank_text(&needle, rel_label, 6));
+                            if snippet == label && rank_text(&needle, rel_label, 6) > 0 {
+                                snippet = rel_label.to_string();
+                            }
                         }
                     }
                 }

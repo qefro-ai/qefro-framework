@@ -62,7 +62,10 @@ impl EntityOps for EntityServiceOps<'_> {
         id: Uuid,
         transition: &str,
     ) -> QefroResult<Value> {
-        self.0.entities.transition(ctx, entity, id, transition).await
+        self.0
+            .entities
+            .transition(ctx, entity, id, transition)
+            .await
     }
 
     async fn execute(
@@ -89,7 +92,11 @@ impl EntityOps for EntityServiceOps<'_> {
         id: Uuid,
         message: &str,
     ) -> QefroResult<Value> {
-        let row = self.0.entities.add_comment(ctx, entity, id, message).await?;
+        let row = self
+            .0
+            .entities
+            .add_comment(ctx, entity, id, message)
+            .await?;
         serde_json::to_value(row).map_err(|e| qefro_core::QefroError::internal(e.to_string()))
     }
 
@@ -99,7 +106,11 @@ impl EntityOps for EntityServiceOps<'_> {
         entity: &str,
         id: Uuid,
     ) -> QefroResult<Value> {
-        let items = self.0.entities.list_record_attachments(ctx, entity, id).await?;
+        let items = self
+            .0
+            .entities
+            .list_record_attachments(ctx, entity, id)
+            .await?;
         serde_json::to_value(json!({ "items": items }))
             .map_err(|e| qefro_core::QefroError::internal(e.to_string()))
     }
@@ -115,7 +126,9 @@ impl EntityOps for EntityServiceOps<'_> {
             .reports_live()
             .into_iter()
             .find(|r| r.name == name)
-            .ok_or_else(|| qefro_core::QefroError::not_found(format!("report '{name}' not found")))?;
+            .ok_or_else(|| {
+                qefro_core::QefroError::not_found(format!("report '{name}' not found"))
+            })?;
         if !ctx.allows_app(report.module.as_deref()) {
             return Err(qefro_core::QefroError::not_found(format!(
                 "report '{name}' not found"

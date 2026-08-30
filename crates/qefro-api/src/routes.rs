@@ -451,12 +451,7 @@ async fn invoke_tool(
     ctx.source = "agent".into();
     let result = state
         .tools
-        .invoke(
-            &crate::EntityServiceOps(&state),
-            &ctx,
-            &name,
-            input,
-        )
+        .invoke(&crate::EntityServiceOps(&state), &ctx, &name, input)
         .await?;
     tracing::info!(
         request_id = %ctx.request_id,
@@ -721,7 +716,9 @@ fn workspace_payload(
         .reports_live()
         .into_iter()
         .filter(|r| ctx.allows_app(r.module.as_deref()))
-        .map(|r| json!({ "name": r.name, "label": r.label, "entity": r.entity, "module": r.module }))
+        .map(
+            |r| json!({ "name": r.name, "label": r.label, "entity": r.entity, "module": r.module }),
+        )
         .collect();
     let default_dashboard = if config
         .ui_config
@@ -768,9 +765,7 @@ async fn get_dashboard(
     let mut cards = Vec::new();
     for card in &dash.cards {
         let mut card = card.clone();
-        if !card.roles.is_empty()
-            && !ctx.is_admin()
-            && !card.roles.iter().any(|r| ctx.has_role(r))
+        if !card.roles.is_empty() && !ctx.is_admin() && !card.roles.iter().any(|r| ctx.has_role(r))
         {
             continue;
         }
@@ -842,7 +837,9 @@ async fn get_dashboard(
 fn skippable_card_error(err: &QefroError) -> bool {
     matches!(
         err,
-        QefroError::Forbidden { .. } | QefroError::NotFound { .. } | QefroError::AppNotEnabled { .. }
+        QefroError::Forbidden { .. }
+            | QefroError::NotFound { .. }
+            | QefroError::AppNotEnabled { .. }
     )
 }
 
@@ -851,7 +848,10 @@ fn apply_saved_query(card: &mut qefro_core::DashboardCard, query: &Value) {
         return;
     };
     for (key, value) in obj {
-        if matches!(key.as_str(), "sort" | "view" | "page" | "page_size" | "columns") {
+        if matches!(
+            key.as_str(),
+            "sort" | "view" | "page" | "page_size" | "columns"
+        ) {
             continue;
         }
         let text = match value {

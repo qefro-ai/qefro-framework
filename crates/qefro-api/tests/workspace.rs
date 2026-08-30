@@ -32,7 +32,11 @@ fn workspace_app() -> InstalledApp {
                             .default_value(json!("Lead"))
                             .filterable(),
                     )
-                    .field(FieldDef::decimal("amount").required().default_value(json!(0)))
+                    .field(
+                        FieldDef::decimal("amount")
+                            .required()
+                            .default_value(json!(0)),
+                    )
                     .field(FieldDef::string("secret_note").searchable().secret())
                     .build(),
             )
@@ -136,7 +140,12 @@ async fn register(router: &axum::Router, suffix: &str) -> String {
     auth["access_token"].as_str().unwrap().to_string()
 }
 
-async fn staff_token(router: &axum::Router, admin: &str, suffix: &str, tenant_slug: &str) -> String {
+async fn staff_token(
+    router: &axum::Router,
+    admin: &str,
+    suffix: &str,
+    tenant_slug: &str,
+) -> String {
     let email = format!("ws-staff-{suffix}@ex.com");
     let (status, created) = json(
         clone_router(router),
@@ -203,10 +212,14 @@ async fn search_is_permission_aware_ranked_and_grouped() {
     for hit in &results {
         let blob = hit.to_string();
         assert!(!blob.contains("classified"), "{hit}");
+        if hit["entity"] == "WsDeal" {
+            assert_eq!(hit["label"], "Ahmed Khan", "{hit}");
+        }
     }
     let groups = body["groups"].as_array().cloned().unwrap_or_default();
     assert!(
-        groups.iter().any(|g| g["entity"] == "WsDeal" && g["hits"].as_array().map(|h| !h.is_empty()).unwrap_or(false)),
+        groups.iter().any(|g| g["entity"] == "WsDeal"
+            && g["hits"].as_array().map(|h| !h.is_empty()).unwrap_or(false)),
         "{body}"
     );
 }
@@ -280,7 +293,13 @@ async fn aggregation_grouping_and_report_authorization() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{report}");
-    assert!(report["rows"].as_array().map(|r| !r.is_empty()).unwrap_or(false), "{report}");
+    assert!(
+        report["rows"]
+            .as_array()
+            .map(|r| !r.is_empty())
+            .unwrap_or(false),
+        "{report}"
+    );
 
     let (status, sql) = json(
         clone_router(&router),

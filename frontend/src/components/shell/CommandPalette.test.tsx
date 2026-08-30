@@ -26,6 +26,13 @@ describe("CommandPalette", () => {
         if (url.includes("/search")) {
           return json({
             results: [{ entity: "Customer", slug: "customers", id: "1", label: "Ahmed", snippet: "ahmed@example.com" }],
+            groups: [
+              {
+                entity: "Customer",
+                label: "Customers",
+                hits: [{ entity: "Customer", slug: "customers", id: "1", label: "Ahmed", snippet: "ahmed@example.com" }],
+              },
+            ],
           });
         }
         return json({});
@@ -51,6 +58,7 @@ describe("CommandPalette", () => {
     );
     await userEvent.type(screen.getByLabelText("Command or search"), "Ahmed");
     expect(await screen.findByText("Ahmed")).toBeInTheDocument();
+    expect(screen.getByText("Customers")).toBeInTheDocument();
   });
 
   it("shows recent searches", async () => {

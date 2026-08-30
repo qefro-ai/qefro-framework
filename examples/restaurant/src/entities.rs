@@ -268,6 +268,7 @@ pub fn reservation() -> EntityDef {
         .label_plural("Reservations")
         .table_name("reservations")
         .icon("calendar")
+        .display_field("guest_name")
         .workflow("reservation")
         .attachments()
         .action(EntityActionDef::new("confirm").label("Confirm"))
@@ -294,7 +295,8 @@ pub fn reservation() -> EntityDef {
                 .nullable()
                 .label("Customer")
                 .section("Booking Details")
-                .filterable(),
+                .filterable()
+                .search_related(),
         )
         .field(
             FieldDef::relation("table_id", "DiningTable")
@@ -439,7 +441,8 @@ pub fn order() -> EntityDef {
         .field(
             FieldDef::many_to_one("customer_id", "Customer")
                 .nullable()
-                .label("Customer"),
+                .label("Customer")
+                .search_related(),
         )
         .field(
             FieldDef::many_to_one("table_id", "DiningTable")

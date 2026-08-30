@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api, type UiEntity } from "../../api";
 
 type Hit = { entity: string; slug: string; id: string; label: string; snippet: string };
+type SearchGroup = { entity: string; label: string; hits: Hit[] };
 type Command = { id: string; group: string; label: string; hint?: string; run: () => void };
 
 const RECENT_KEY = "qefro_recent_searches";
@@ -34,6 +35,7 @@ export default function CommandPalette({
 }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Hit[]>([]);
+  const [groups, setGroups] = useState<SearchGroup[]>([]);
   const [reports, setReports] = useState<Array<{ name: string; label: string }>>([]);
   const [recent, setRecent] = useState<string[]>(() => readRecent());
   const [active, setActive] = useState(0);
@@ -55,6 +57,7 @@ export default function CommandPalette({
     if (!open) {
       setQ("");
       setResults([]);
+      setGroups([]);
       setActive(0);
       setRecent(readRecent());
       return;
@@ -68,10 +71,20 @@ export default function CommandPalette({
   useEffect(() => {
     if (!open || !q.trim()) {
       setResults([]);
+      setGroups([]);
       return;
     }
     const handle = window.setTimeout(() => {
-      api.search(q).then((d) => setResults(d.results)).catch(() => setResults([]));
+      api
+        .search(q)
+        .then((d) => {
+          setResults(d.results);
+          setGroups(d.groups ?? []);
+        })
+        .catch(() => {
+          setResults([]);
+          setGroups([]);
+        });
     }, 150);
     return () => window.clearTimeout(handle);
   }, [open, q]);
@@ -119,6 +132,9 @@ export default function CommandPalette({
   }, [standalone, reports, q, navigate, onOpenChange, studio]);
 
   const groupedHits = useMemo(() => {
+    if (groups.length > 0) {
+      return groups.map((g) => [g.label || g.entity, g.hits] as [string, Hit[]]);
+    }
     const map = new Map<string, Hit[]>();
     for (const hit of results) {
       const list = map.get(hit.entity) ?? [];
@@ -126,7 +142,7 @@ export default function CommandPalette({
       map.set(hit.entity, list);
     }
     return Array.from(map.entries());
-  }, [results]);
+  }, [results, groups]);
 
   const flat: Array<{ kind: "cmd"; cmd: Command } | { kind: "hit"; hit: Hit }> = [
     ...commands.map((cmd) => ({ kind: "cmd" as const, cmd })),

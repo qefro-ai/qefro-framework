@@ -479,9 +479,11 @@ impl QefroRuntime {
             .iter()
             .flat_map(|a| {
                 a.module.navigation.iter().filter_map(|item| {
-                    let entity = a.module.entities.iter().find(|e| {
-                        e.name == item.entity || e.slug == item.entity
-                    })?;
+                    let entity = a
+                        .module
+                        .entities
+                        .iter()
+                        .find(|e| e.name == item.entity || e.slug == item.entity)?;
                     Some(qefro_core::WorkspaceNavItem {
                         label: item.label.clone(),
                         entity: entity.name.clone(),

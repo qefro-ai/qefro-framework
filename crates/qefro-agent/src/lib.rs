@@ -504,10 +504,7 @@ impl ToolRegistry {
                     .or_else(|| input.get("search"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let limit = input
-                    .get("limit")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(10) as usize;
+                let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
                 ops.search(ctx, q, limit).await?
             }
             "run_report" => {

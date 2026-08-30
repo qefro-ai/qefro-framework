@@ -39,9 +39,7 @@ pub fn ops() -> DashboardDef {
                 .size("xl"),
         )
         .card(DashboardCard::workflow("Kitchen status", "Order").size("md"))
-        .card(
-            DashboardCard::status_breakdown("Table status", "DiningTable", "status").size("md"),
-        )
+        .card(DashboardCard::status_breakdown("Table status", "DiningTable", "status").size("md"))
         .card(DashboardCard::status_breakdown(
             "Reservations by status",
             "Reservation",

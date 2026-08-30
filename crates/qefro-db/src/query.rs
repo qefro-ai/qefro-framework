@@ -155,8 +155,12 @@ pub fn apply_filters(
             let searchable = entity.searchable_fields();
             if !searchable.is_empty() {
                 qb.push(" AND (");
-                for (i, field) in searchable.iter().enumerate() {
-                    if i > 0 {
+                let mut clause = 0usize;
+                for field in &searchable {
+                    if field.relation.is_some() {
+                        continue;
+                    }
+                    if clause > 0 {
                         qb.push(" OR ");
                     }
                     qb.push(quote_ident(&field.column_name())?);
@@ -167,6 +171,10 @@ pub fn apply_filters(
                         qb.push("::text ILIKE ");
                         qb.push_bind(format!("%{search}%"));
                     }
+                    clause += 1;
+                }
+                if clause == 0 {
+                    qb.push("TRUE");
                 }
                 qb.push(")");
             }

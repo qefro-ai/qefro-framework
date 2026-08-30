@@ -1181,7 +1181,7 @@ impl EntityService {
         Ok(())
     }
 
-    async fn expand_many_to_one_batch(
+    pub(crate) async fn expand_many_to_one_batch(
         &self,
         ctx: &OpContext,
         entity: &qefro_core::EntityDef,
@@ -1813,9 +1813,7 @@ impl EntityService {
         ctx: &OpContext,
         card: &qefro_core::DashboardCard,
     ) -> QefroResult<Value> {
-        if !card.roles.is_empty()
-            && !ctx.is_admin()
-            && !card.roles.iter().any(|r| ctx.has_role(r))
+        if !card.roles.is_empty() && !ctx.is_admin() && !card.roles.iter().any(|r| ctx.has_role(r))
         {
             return Err(QefroError::forbidden("dashboard card is not visible"));
         }
