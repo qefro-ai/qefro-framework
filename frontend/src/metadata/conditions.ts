@@ -20,10 +20,11 @@ export function fieldVisible(
 }
 
 export function fieldReadonly(
-  field: { readonly?: boolean; readonly_when?: UiWhen; disabled?: boolean },
+  field: { readonly?: boolean; readonly_when?: UiWhen; read_only_when?: UiWhen; disabled?: boolean },
   record: Record<string, unknown>,
 ): boolean {
   if (field.readonly || field.disabled) return true;
-  if (!field.readonly_when) return false;
-  return matchesWhen(field.readonly_when, record);
+  const when = field.readonly_when || field.read_only_when;
+  if (!when) return false;
+  return matchesWhen(when, record);
 }

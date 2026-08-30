@@ -14,10 +14,11 @@ The renderer:
 
 1. Hides fields with `hidden` or failing `visible_when` (presentation only).
 2. Marks fields `readonly` / `readonly_when` (the API still enforces mutations).
-3. Groups by `tab`, then `section`, then `order` / `width`.
+3. Groups by `views.form.sections` (tab / section / columns) when present, otherwise `tab` then `section` then `order` / `width`.
 4. Resolves each field's `widget` in the widget registry.
-5. Shows server `FieldError`s next to the matching input.
-6. Warns on unsaved navigation and marks required fields.
+5. Shows server `FieldError`s next to the matching input, plus a form-level error count that focuses the field.
+6. Warns on unsaved navigation (`Stay` / `Discard`) and marks required fields.
+7. Relation fields can Open, Create (full form, then return), search, and clear.
 
 See [UI 2.0](ui-2.md) and [Forms in UI 2.0](ui-2.md).
 

@@ -258,6 +258,7 @@ pub fn organization_party_field() -> FieldDef {
         .label("Organization")
         .help("Optional. Set when this record is a company, supplier, or partner.")
         .section("Identity")
+        .visible_when(PARTY_TYPE_FIELD, serde_json::json!(PARTY_TYPE_ORGANIZATION))
         .filterable()
 }
 
@@ -478,16 +479,8 @@ pub fn person_entity() -> EntityDef {
             }),
             detail: Some(DetailViewSpec {
                 sections: vec![
-                    ViewSectionSpec {
-                        title: "Identity".into(),
-                        fields: vec!["name".into(), "email".into(), "phone".into()],
-                        visible_when: None,
-                    },
-                    ViewSectionSpec {
-                        title: "Login".into(),
-                        fields: vec!["user_id".into()],
-                        visible_when: None,
-                    },
+                    ViewSectionSpec::new("Identity").fields(&["name", "email", "phone"]),
+                    ViewSectionSpec::new("Login").fields(&["user_id"]),
                 ],
             }),
             ..Default::default()
@@ -591,22 +584,14 @@ pub fn organization_entity() -> EntityDef {
             }),
             detail: Some(DetailViewSpec {
                 sections: vec![
-                    ViewSectionSpec {
-                        title: "Identity".into(),
-                        fields: vec![
-                            "name".into(),
-                            "legal_name".into(),
-                            "email".into(),
-                            "phone".into(),
-                            "website".into(),
-                        ],
-                        visible_when: None,
-                    },
-                    ViewSectionSpec {
-                        title: "Profile".into(),
-                        fields: vec!["address".into(), "logo".into(), "enabled".into()],
-                        visible_when: None,
-                    },
+                    ViewSectionSpec::new("Identity").fields(&[
+                        "name",
+                        "legal_name",
+                        "email",
+                        "phone",
+                        "website",
+                    ]),
+                    ViewSectionSpec::new("Profile").fields(&["address", "logo", "enabled"]),
                 ],
             }),
             ..Default::default()

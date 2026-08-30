@@ -33,16 +33,17 @@ pub fn module() -> AppModule {
         .label("Restaurant")
         .description("Tables, reservations, menus, dine-in and takeaway orders, and payments")
         .branding(branding())
-        .nav(NavItem::new("Orders", "Order"))
-        .nav(NavItem::new("Reservations", "Reservation"))
+        .nav(NavItem::new("Orders", "Order").section("Operations"))
+        .nav(NavItem::new("Reservations", "Reservation").section("Operations"))
         .nav(
             NavItem::new("Kitchen", "Order")
                 .query("status=Preparing")
-                .view("kanban"),
+                .view("kanban")
+                .section("Operations"),
         )
-        .nav(NavItem::new("Tables", "DiningTable"))
-        .nav(NavItem::new("Menu", "MenuItem"))
-        .nav(NavItem::new("Customers", "Customer"))
+        .nav(NavItem::new("Tables", "DiningTable").section("Operations"))
+        .nav(NavItem::new("Menu", "MenuItem").section("Catalog"))
+        .nav(NavItem::new("Customers", "Customer").section("Catalog"))
         .entity(entities::customer())
         .entity(entities::restaurant())
         .entity(entities::restaurant_settings())

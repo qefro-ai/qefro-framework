@@ -1,8 +1,8 @@
 import type { ReactElement } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { api } from "../sdk/client";
+import { createMemoryRouter, Outlet, RouterProvider } from "react-router-dom";
+import { api, ApiError } from "../sdk/client";
 import EntityForm from "./EntityForm";
 import EntityList from "./EntityList";
 import EntityDetail from "./EntityDetail";
@@ -91,20 +91,46 @@ const personEntity: UiEntity = {
   ],
 };
 
-function wrap(ui: ReactElement, path: string) {
-  return render(
+function shell(children: ReactElement) {
+  return (
     <TenantThemeContext.Provider value={{ timezone: "UTC", locale: "en-US", currency: "USD" }}>
-      <MemoryRouter initialEntries={[path]}>
-        <BreadcrumbRecordProvider>
-          <Routes>
-            <Route path="/:slug" element={ui} />
-            <Route path="/:slug/new" element={ui} />
-            <Route path="/:slug/:id" element={ui} />
-          </Routes>
-        </BreadcrumbRecordProvider>
-      </MemoryRouter>
-    </TenantThemeContext.Provider>,
+      <BreadcrumbRecordProvider>{children}</BreadcrumbRecordProvider>
+    </TenantThemeContext.Provider>
   );
+}
+
+function wrap(ui: ReactElement, path: string) {
+  const router = createMemoryRouter(
+    [
+      {
+        element: shell(<Outlet />),
+        children: [
+          { path: "/:slug", element: ui },
+          { path: "/:slug/new", element: ui },
+          { path: "/:slug/:id", element: ui },
+        ],
+      },
+    ],
+    { initialEntries: [path] },
+  );
+  return render(<RouterProvider router={router} />);
+}
+
+function renderUserForm(path: string) {
+  const router = createMemoryRouter(
+    [
+      {
+        element: shell(<Outlet />),
+        children: [
+          { path: "/users", element: <div>User list</div> },
+          { path: "/users/new", element: <EntityForm entities={[userEntity]} /> },
+          { path: "/users/:id", element: <div>User detail</div> },
+        ],
+      },
+    ],
+    { initialEntries: [path] },
+  );
+  return render(<RouterProvider router={router} />);
 }
 
 describe("identity generic UI", () => {
@@ -112,7 +138,10 @@ describe("identity generic UI", () => {
     vi.spyOn(api, "list").mockResolvedValue({ items: [], total: 0, page: 1, page_size: 25 });
     vi.spyOn(api, "get").mockResolvedValue({ id: "u1", name: "Ada", email: "ada@ex.com" });
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    sessionStorage.clear();
+  });
 
   it("lists users without rendering a password column", async () => {
     vi.spyOn(api, "list").mockResolvedValue({
@@ -245,5 +274,43 @@ describe("identity generic UI", () => {
     expect(screen.getByRole("link", { name: "Ada" })).toHaveAttribute("href", "/users/u1");
     expect(screen.getByText("(enabled)")).toBeInTheDocument();
     expect(screen.getByText("Legacy name")).toBeInTheDocument();
+  });
+
+  it("prefills relationship query params on create", async () => {
+    renderUserForm("/users/new?email=ada@ex.com");
+    expect(await screen.findByLabelText("Email *")).toHaveValue("ada@ex.com");
+  });
+
+  it("warns on unsaved navigation and stays when requested", async () => {
+    renderUserForm("/users/new");
+    const name = await screen.findByLabelText("Name *");
+    await userEvent.type(name, "Ada");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByText("Unsaved changes")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Stay" }));
+    expect(screen.getByLabelText("Name *")).toHaveValue("Ada");
+    expect(screen.queryByText("User list")).not.toBeInTheDocument();
+  });
+
+  it("does not interrupt navigation when the form is unchanged", async () => {
+    renderUserForm("/users/new");
+    expect(await screen.findByLabelText("Name *")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByText("User list")).toBeInTheDocument();
+    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+  });
+
+  it("summarizes server field errors and focuses the field", async () => {
+    vi.spyOn(api, "create").mockRejectedValue(
+      new ApiError("Invalid email", 400, [{ field: "email", message: "Invalid email" }]),
+    );
+    renderUserForm("/users/new");
+    await userEvent.type(await screen.findByLabelText("Name *"), "Ada");
+    await userEvent.type(screen.getByLabelText("Email *"), "ada@ex.com");
+    await userEvent.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByRole("button", { name: "1 error" })).toBeInTheDocument();
+    expect(screen.getByText("Email: Invalid email")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Email: Invalid email" }));
+    await waitFor(() => expect(document.activeElement).toHaveAttribute("id", "field-email"));
   });
 });

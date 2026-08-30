@@ -81,4 +81,32 @@ describe("Dashboard widgets", () => {
     );
     expect(await screen.findByText("No dashboard is configured")).toBeInTheDocument();
   });
+
+  it("renders workspace shortcuts from metadata", async () => {
+    vi.spyOn(api, "dashboards").mockResolvedValue({
+      dashboards: [{ name: "ops", label: "Ops" }],
+    });
+    vi.spyOn(api, "dashboard").mockResolvedValue({
+      name: "ops",
+      label: "Restaurant",
+      cards: [{ title: "Ready orders", entity: "Order", metric: "count", kind: "kpi", value: 4 }],
+    });
+    render(
+      <MemoryRouter>
+        <Dashboard
+          entities={entities}
+          config={null}
+          shortcuts={[
+            { label: "New Order", to: "/orders/new", kind: "create" },
+            { label: "Orders", to: "/orders", kind: "list" },
+            { label: "Reports", to: "/reports", kind: "report" },
+          ]}
+        />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(screen.getByText("Restaurant")).toBeInTheDocument());
+    expect(screen.getByRole("link", { name: "New Order" })).toHaveAttribute("href", "/orders/new");
+    expect(screen.getByRole("link", { name: "Orders" })).toHaveAttribute("href", "/orders");
+    expect(screen.getByRole("link", { name: "Reports" })).toHaveAttribute("href", "/reports");
+  });
 });

@@ -48,11 +48,13 @@ function rememberSearch(q: string) {
 
 export default function CommandPalette({
   entities,
+  workspaceNav,
   studio,
   open,
   onOpenChange,
 }: {
   entities: UiEntity[];
+  workspaceNav?: Array<{ label: string; slug: string; query?: string | null; view?: string | null }>;
   studio?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -133,19 +135,35 @@ export default function CommandPalette({
       { id: "settings", group: "Go to", label: "Settings", run: go("/settings") },
     ];
     if (studio) list.push({ id: "studio", group: "Go to", label: "Studio", run: go("/studio") });
+    if (workspaceNav && workspaceNav.length > 0) {
+      for (const item of workspaceNav) {
+        const search = [item.query, item.view ? `view=${item.view}` : ""].filter(Boolean).join("&");
+        const to = search ? `/${item.slug}?${search}` : `/${item.slug}`;
+        list.push({
+          id: `go-${item.label}-${to}`,
+          group: "Go to",
+          label: item.label,
+          run: go(to),
+        });
+      }
+    }
     for (const e of standalone) {
-      list.push({
-        id: `go-${e.slug}`,
-        group: "Go to",
-        label: `Go to ${e.label_plural}`,
-        run: go(`/${e.slug}`),
-      });
-      list.push({
-        id: `new-${e.slug}`,
-        group: "Create",
-        label: `Create ${e.label}`,
-        run: go(`/${e.slug}/new`),
-      });
+      if (!workspaceNav?.some((item) => item.slug === e.slug)) {
+        list.push({
+          id: `go-${e.slug}`,
+          group: "Go to",
+          label: `Go to ${e.label_plural}`,
+          run: go(`/${e.slug}`),
+        });
+      }
+      if (e.permissions?.create !== false) {
+        list.push({
+          id: `new-${e.slug}`,
+          group: "Create",
+          label: `Create ${e.label}`,
+          run: go(`/${e.slug}/new`),
+        });
+      }
     }
     for (const r of reports) {
       list.push({
@@ -157,7 +175,7 @@ export default function CommandPalette({
     }
     const needle = q.trim().toLowerCase();
     return needle ? list.filter((c) => c.label.toLowerCase().includes(needle)) : list;
-  }, [standalone, reports, q, navigate, onOpenChange, studio]);
+  }, [standalone, reports, q, navigate, onOpenChange, studio, workspaceNav]);
 
   const groupedHits = useMemo(() => {
     if (groups.length > 0) {

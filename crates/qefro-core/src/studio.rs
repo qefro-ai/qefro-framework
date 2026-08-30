@@ -119,6 +119,9 @@ pub struct FieldUiPatch {
     pub formula: Option<String>,
     pub permission_level: Option<u8>,
     pub allow_on_submit: Option<bool>,
+    pub visible_when: Option<crate::ui::UiWhen>,
+    #[serde(default, alias = "read_only_when")]
+    pub readonly_when: Option<crate::ui::UiWhen>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,6 +269,12 @@ pub fn apply_field_ui_patch(field: &mut FieldDef, patch: &FieldUiPatch) {
     }
     if let Some(v) = patch.allow_on_submit {
         field.allow_on_submit = v;
+    }
+    if let Some(when) = &patch.visible_when {
+        field.ui.visible_when = Some(when.clone());
+    }
+    if let Some(when) = &patch.readonly_when {
+        field.ui.readonly_when = Some(when.clone());
     }
 }
 

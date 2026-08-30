@@ -21,6 +21,7 @@ import { friendlyError } from "../friendlyError";
 import { relativeTime } from "../format";
 import { useTenantTheme } from "../metadata/context";
 import { canDeleteRecord, canUpdateRecord, displayValue } from "../metadata/views";
+import { resolveLayout } from "../metadata/layout";
 import { useBreadcrumbRecord } from "../components/shell/breadcrumbContext";
 import { useRealtime } from "../realtime";
 
@@ -44,16 +45,6 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
     setRow(data);
     if (meta) {
       setRecord(recordCrumb(meta, entities, data));
-      api
-        .activity(slug, id)
-        .then((d) => setActivity(d.items ?? []))
-        .catch(() => setActivity([]));
-      if (meta.attachments) {
-        api
-          .attachments(slug, id)
-          .then((d) => setAttachments(d.items ?? []))
-          .catch(() => setAttachments([]));
-      }
     }
   }
 
@@ -62,6 +53,22 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
     return () => setRecord(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, id]);
+
+  useEffect(() => {
+    if (!slug || !id || !row) return;
+    if (tab === "activity") {
+      api
+        .activity(slug, id)
+        .then((d) => setActivity(d.items ?? []))
+        .catch(() => setActivity([]));
+    }
+    if (tab === "files" && meta?.attachments) {
+      api
+        .attachments(slug, id)
+        .then((d) => setAttachments(d.items ?? []))
+        .catch(() => setAttachments([]));
+    }
+  }, [tab, slug, id, row, meta?.attachments]);
 
   useRealtime({ entity: meta?.entity, recordId: id }, () => {
     load().catch(() => undefined);
@@ -227,7 +234,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
           row={row}
           fields={visible}
           entities={entities}
-          sections={meta.views?.detail?.sections}
+          sections={meta.views?.detail?.sections ?? meta.views?.form?.sections}
         />
       ) : null}
       {childTables.map((field) =>
@@ -314,32 +321,37 @@ function Overview({
   row: Record<string, unknown>;
   fields: UiEntity["fields"];
   entities: UiEntity[];
-  sections?: Array<{ title: string; fields?: string[] }>;
+  sections?: Array<{
+    title: string;
+    fields?: string[];
+    columns?: Array<{ fields?: string[] }>;
+    visible_when?: { field: string; equals: unknown };
+    tab?: string;
+  }>;
 }) {
-  const sections =
-    spec && spec.length
-      ? spec
-          .map((s) => [s.title, fields.filter((f) => (s.fields ?? []).includes(f.name))] as const)
-          .filter(([, fs]) => fs.length)
-      : group(fields);
-  if (fields.length === 0) return <EmptyState title="Nothing to show" />;
+  const layout = resolveLayout(fields, spec, row);
+  if (fields.length === 0 && layout.sections.length === 0) return <EmptyState title="Nothing to show" />;
   return (
     <>
-      {sections.map(([section, sectionFields]) => (
-        <section key={section || "default"} className="section-block">
-          {section ? <SectionHeader title={section} /> : <SectionHeader title="Details" />}
-          <table className="dl">
-            <tbody>
-              {sectionFields.map((f) => (
-                <tr key={f.name}>
-                  <th>{f.label}</th>
-                  <td>
-                    <FieldValue row={row} field={f} entities={entities} linkRelations relativeDates={false} compact={false} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {layout.sections.map((section) => (
+        <section key={`${section.tab}-${section.title || "default"}`} className="section-block">
+          {section.title ? <SectionHeader title={section.title} /> : <SectionHeader title="Details" />}
+          <div className={section.columns.length > 1 ? "form-columns" : undefined}>
+            {section.columns.map((col, i) => (
+              <table key={i} className="dl">
+                <tbody>
+                  {col.fields.map((f) => (
+                    <tr key={f.name}>
+                      <th>{f.label}</th>
+                      <td>
+                        <FieldValue row={row} field={f} entities={entities} linkRelations relativeDates={false} compact={false} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ))}
+          </div>
         </section>
       ))}
     </>
@@ -357,9 +369,13 @@ function ChildPanel({
 }) {
   const items = (Array.isArray(row[field.name]) ? row[field.name] : []) as Record<string, unknown>[];
   const child = entities.find((e) => e.entity === (field.child_entity || field.relation));
-  const cols = (child?.fields ?? []).filter(
+  const named = field.widget_options?.column_fields;
+  const allCols = (child?.fields ?? []).filter(
     (f) => !f.hidden && f.list !== false && f.relation_kind !== "one_to_many",
   );
+  const cols = named?.length
+    ? named.map((n) => allCols.find((c) => c.name === n)).filter((c): c is NonNullable<typeof c> => Boolean(c))
+    : allCols;
   const standalone = child?.standalone !== false;
   return (
     <div className="panel">
@@ -410,8 +426,24 @@ function RelatedPanel({
   meta,
   entities,
 }: {
-  links: Array<{ label: string; slug: string; relation: string; total: number }>;
-  related: Record<string, { slug: string; items: Record<string, unknown>[]; total: number; label?: string }>;
+  links: Array<{
+    label: string;
+    slug: string;
+    relation: string;
+    total: number;
+    columns?: string[];
+    filters?: Array<{ field: string; value: string }>;
+  }>;
+  related: Record<
+    string,
+    {
+      slug: string;
+      items: Record<string, unknown>[];
+      total: number;
+      label?: string;
+      columns?: string[];
+    }
+  >;
   id: string;
   meta: UiEntity;
   entities: UiEntity[];
@@ -460,6 +492,37 @@ function RelatedPanel({
             </div>
             {rel.items.length === 0 ? (
               <EmptyState title="No related records." />
+            ) : rel.columns && rel.columns.length > 0 ? (
+              <div className="table-wrap">
+                <table className="data">
+                  <thead>
+                    <tr>
+                      {rel.columns.map((col) => (
+                        <th key={col}>{col.replace(/_/g, " ")}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rel.items.map((item) => (
+                      <tr key={String(item.id)}>
+                        {rel.columns!.map((col, colIdx) => (
+                          <td key={col}>
+                            {colIdx === 0 ? (
+                              <Link to={`/${rel.slug}/${item.id}`}>
+                                {String(item[col] ?? item.name ?? item.title ?? item.code ?? item.doc_no ?? item.id)}
+                              </Link>
+                            ) : col === "status" ? (
+                              <StatusBadge value={item.status} />
+                            ) : (
+                              String(item[col] ?? "")
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ) : (
               <div className="table-wrap">
                 <table className="data">
@@ -468,7 +531,7 @@ function RelatedPanel({
                       <tr key={String(item.id)}>
                         <td>
                           <Link to={`/${rel.slug}/${item.id}`}>
-                            {String(item.name ?? item.title ?? item.code ?? item.id)}
+                            {String(item.name ?? item.title ?? item.code ?? item.doc_no ?? item.id)}
                           </Link>
                         </td>
                         {item.status != null && item.status !== "" ? (

@@ -483,6 +483,61 @@ impl EntityDef {
         for field in self.stored_fields() {
             field.validate_name()?;
         }
+        self.validate_ui_layout()?;
+        Ok(())
+    }
+
+    /// Reject unknown fields, duplicates, and invalid conditions in view metadata.
+    pub fn validate_ui_layout(&self) -> QefroResult<()> {
+        let Some(views) = &self.views else {
+            return Ok(());
+        };
+        if let Some(form) = &views.form {
+            validate_layout_sections(self, "form", &form.sections)?;
+        }
+        if let Some(detail) = &views.detail {
+            validate_layout_sections(self, "detail", &detail.sections)?;
+        }
+        if let Some(list) = &views.list {
+            for col in &list.columns {
+                ensure_known_field(self, &col.field, "list")?;
+            }
+        }
+        if let Some(card) = &views.card {
+            if let Some(title) = &card.title {
+                ensure_known_field(self, title, "card")?;
+            }
+            if let Some(subtitle) = &card.subtitle {
+                ensure_known_field(self, subtitle, "card")?;
+            }
+            if let Some(image) = &card.image {
+                ensure_known_field(self, image, "card")?;
+            }
+            for field in &card.fields {
+                ensure_known_field(self, field, "card")?;
+            }
+        }
+        if let Some(kanban) = &views.kanban {
+            if let Some(group) = &kanban.group_by {
+                ensure_known_field(self, group, "kanban")?;
+            }
+        }
+        for field in &self.fields {
+            if let Some(when) = &field.ui.visible_when {
+                ensure_condition_field(self, when, &field.name, "visible_when")?;
+            }
+            if let Some(when) = &field.ui.readonly_when {
+                ensure_condition_field(self, when, &field.name, "readonly_when")?;
+            }
+            if let Some(width) = &field.ui.width {
+                if !matches!(width.as_str(), "full" | "half" | "third") {
+                    return Err(crate::error::QefroError::bad_request(format!(
+                        "field '{}.{}' has invalid width '{width}' (use full, half, or third)",
+                        self.name, field.name
+                    )));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -599,6 +654,7 @@ impl EntityDef {
                     readonly: f.ui.readonly || f.computed,
                     visible_when: f.ui.visible_when.clone(),
                     readonly_when: f.ui.readonly_when.clone(),
+                    default: f.default.clone(),
                     default_from: f.default_from.clone(),
                     computed: f.computed,
                     formula: f.formula.clone(),
@@ -708,6 +764,75 @@ impl EntityDef {
             Self::from_yaml(&text)
         }
     }
+}
+
+fn ensure_known_field(entity: &EntityDef, name: &str, surface: &str) -> QefroResult<()> {
+    if name.is_empty() {
+        return Ok(());
+    }
+    if entity.get_field(name).is_some() || entity.has_column(name) {
+        return Ok(());
+    }
+    Err(QefroError::bad_request(format!(
+        "{surface} on '{}' references unknown field '{name}'",
+        entity.name
+    )))
+}
+
+fn ensure_condition_field(
+    entity: &EntityDef,
+    when: &crate::ui::UiWhen,
+    field: &str,
+    kind: &str,
+) -> QefroResult<()> {
+    if entity.get_field(&when.field).is_some() || entity.has_column(&when.field) {
+        return Ok(());
+    }
+    Err(QefroError::bad_request(format!(
+        "{kind} on '{}.{}' references unknown field '{}'",
+        entity.name, field, when.field
+    )))
+}
+
+fn validate_layout_sections(
+    entity: &EntityDef,
+    surface: &str,
+    sections: &[crate::ui::ViewSectionSpec],
+) -> QefroResult<()> {
+    let mut seen = std::collections::HashSet::new();
+    for section in sections {
+        if section.title.trim().is_empty() {
+            return Err(QefroError::bad_request(format!(
+                "{surface} layout on '{}' has a section with no title",
+                entity.name
+            )));
+        }
+        if section.columns.is_empty() && section.fields.is_empty() {
+            return Err(QefroError::bad_request(format!(
+                "{surface} section '{}' on '{}' has no fields",
+                section.title, entity.name
+            )));
+        }
+        if !section.columns.is_empty() && section.columns.iter().all(|c| c.fields.is_empty()) {
+            return Err(QefroError::bad_request(format!(
+                "{surface} section '{}' on '{}' has empty columns",
+                section.title, entity.name
+            )));
+        }
+        if let Some(when) = &section.visible_when {
+            ensure_condition_field(entity, when, &section.title, &format!("{surface} section"))?;
+        }
+        for name in section.field_names() {
+            ensure_known_field(entity, name, surface)?;
+            if !seen.insert(name.to_string()) {
+                return Err(QefroError::bad_request(format!(
+                    "{surface} layout on '{}' lists field '{name}' more than once",
+                    entity.name
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -842,5 +967,63 @@ fields:
             "name": "Ahmed Khan"
         }));
         assert_eq!(label, "Ahmed Khan");
+    }
+
+    #[test]
+    fn form_layout_rejects_unknown_and_duplicate_fields() {
+        use crate::ui::{FormViewSpec, ViewSectionSpec};
+        let unknown = EntityDef::new("Customer")
+            .field(FieldDef::string("name"))
+            .views(crate::ui::EntityViews {
+                form: Some(FormViewSpec::sections(vec![
+                    ViewSectionSpec::new("Contact").fields(&["name", "missing"]),
+                ])),
+                ..Default::default()
+            })
+            .build();
+        let err = unknown.validate_ui_layout().unwrap_err();
+        assert!(err.to_string().contains("unknown field 'missing'"), "{err}");
+
+        let dup = EntityDef::new("Customer")
+            .field(FieldDef::string("name"))
+            .field(FieldDef::string("email"))
+            .views(crate::ui::EntityViews {
+                form: Some(FormViewSpec::sections(vec![
+                    ViewSectionSpec::new("A").fields(&["name"]),
+                    ViewSectionSpec::new("B").fields(&["name"]),
+                ])),
+                ..Default::default()
+            })
+            .build();
+        let err = dup.validate_ui_layout().unwrap_err();
+        assert!(err.to_string().contains("more than once"), "{err}");
+    }
+
+    #[test]
+    fn form_layout_rejects_invalid_width_and_conditions() {
+        use crate::ui::{FormViewSpec, ViewSectionSpec};
+        let width = EntityDef::new("Customer")
+            .field(FieldDef::string("name").width("wide"))
+            .build();
+        let err = width.validate_ui_layout().unwrap_err();
+        assert!(err.to_string().contains("invalid width"), "{err}");
+
+        let when = EntityDef::new("Customer")
+            .field(FieldDef::string("name").visible_when("missing", serde_json::json!("x")))
+            .build();
+        let err = when.validate_ui_layout().unwrap_err();
+        assert!(err.to_string().contains("visible_when"), "{err}");
+
+        let section = EntityDef::new("Customer")
+            .field(FieldDef::string("name"))
+            .views(crate::ui::EntityViews {
+                form: Some(FormViewSpec::sections(vec![ViewSectionSpec::new("Org")
+                    .fields(&["name"])
+                    .visible_when("party_type", serde_json::json!("Organization"))])),
+                ..Default::default()
+            })
+            .build();
+        let err = section.validate_ui_layout().unwrap_err();
+        assert!(err.to_string().contains("unknown field 'party_type'"), "{err}");
     }
 }

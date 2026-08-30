@@ -97,4 +97,81 @@ describe("FormLayout", () => {
     );
     expect(screen.getByLabelText("Password")).toHaveAttribute("type", "password");
   });
+
+  it("renders metadata columns and tab error indicators", async () => {
+    const layoutFields: UiField[] = [
+      { ...fields[0], name: "name", label: "Name", width: "half" },
+      { ...fields[0], name: "email", label: "Email", required: false, section: undefined },
+      {
+        ...fields[0],
+        name: "status",
+        label: "Status",
+        required: false,
+        readonly: false,
+        readonly_when: { field: "status", equals: "Completed" },
+        section: undefined,
+      },
+    ];
+    render(
+      <FormLayout
+        fields={layoutFields}
+        values={{ name: "", email: "", status: "Completed" }}
+        entities={[]}
+        fieldErrors={{ email: "Invalid email" }}
+        layout={[
+          {
+            title: "Customer Information",
+            tab: "Details",
+            columns: [{ fields: ["name"] }, { fields: ["email"] }],
+          },
+          { title: "Advanced", tab: "Advanced", fields: ["status"] },
+        ]}
+        onChange={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: /Details/ })).toHaveClass("has-error");
+    expect(screen.getByLabelText(/Name/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Email/)).toBeInTheDocument();
+    await screen.getByRole("tab", { name: "Advanced" }).click();
+    expect(screen.getByLabelText(/Status/)).toBeDisabled();
+  });
+
+  it("reveals a collapsed section when focusing an invalid field", async () => {
+    render(
+      <FormLayout
+        fields={fields}
+        values={{ name: "" }}
+        entities={[]}
+        fieldErrors={{ name: "Name is required" }}
+        layout={[{ title: "Customer", collapsed: true, fields: ["name"] }]}
+        focusField="name"
+        onChange={() => undefined}
+      />,
+    );
+    expect(await screen.findByLabelText(/Name/)).toBeInTheDocument();
+    expect(document.activeElement).toHaveAttribute("id", "field-name");
+  });
+
+  it("renders a two-column form grid from layout metadata", () => {
+    const { container } = render(
+      <FormLayout
+        fields={[
+          { ...fields[0], name: "name" },
+          { ...fields[0], name: "email", label: "Email", required: false },
+        ]}
+        values={{}}
+        entities={[]}
+        fieldErrors={{}}
+        layout={[
+          {
+            title: "Customer Information",
+            columns: [{ fields: ["name"] }, { fields: ["email"] }],
+          },
+        ]}
+        onChange={() => undefined}
+      />,
+    );
+    expect(container.querySelector(".form-columns")).toBeTruthy();
+    expect(container.querySelectorAll(".form-column")).toHaveLength(2);
+  });
 });

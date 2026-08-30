@@ -4,6 +4,12 @@ import { publishAndReload } from "../StudioApp";
 
 type Field = Record<string, unknown>;
 
+function whenFrom(field: unknown, equals: unknown): { field: string; equals: unknown } | undefined {
+  const name = String(field ?? "").trim();
+  if (!name) return undefined;
+  return { field: name, equals };
+}
+
 export default function FieldEditor({
   entity,
   fields,
@@ -50,6 +56,8 @@ export default function FieldEditor({
       },
       permission_level: draft.permission_level ?? field?.permission_level ?? 0,
       allow_on_submit: draft.allow_on_submit ?? field?.allow_on_submit ?? false,
+      visible_when: whenFrom(draft.visible_when_field ?? (ui.visible_when as { field?: string } | undefined)?.field, draft.visible_when_equals ?? (ui.visible_when as { equals?: unknown } | undefined)?.equals),
+      readonly_when: whenFrom(draft.readonly_when_field ?? (ui.readonly_when as { field?: string } | undefined)?.field, draft.readonly_when_equals ?? (ui.readonly_when as { equals?: unknown } | undefined)?.equals),
     };
   }
 
@@ -221,6 +229,36 @@ export default function FieldEditor({
               onChange={(e) => setDraft({ ...draft, allow_on_submit: e.target.checked })}
             />
             Allow on submit (editable in lock states)
+          </label>
+          <label>
+            Visible when field
+            <input
+              value={String(draft.visible_when_field ?? (ui.visible_when as { field?: string } | undefined)?.field ?? "")}
+              onChange={(e) => setDraft({ ...draft, visible_when_field: e.target.value })}
+              placeholder="party_type"
+            />
+          </label>
+          <label>
+            Visible when equals
+            <input
+              value={String(draft.visible_when_equals ?? (ui.visible_when as { equals?: unknown } | undefined)?.equals ?? "")}
+              onChange={(e) => setDraft({ ...draft, visible_when_equals: e.target.value })}
+              placeholder="Organization"
+            />
+          </label>
+          <label>
+            Read-only when field
+            <input
+              value={String(draft.readonly_when_field ?? (ui.readonly_when as { field?: string } | undefined)?.field ?? "")}
+              onChange={(e) => setDraft({ ...draft, readonly_when_field: e.target.value })}
+            />
+          </label>
+          <label>
+            Read-only when equals
+            <input
+              value={String(draft.readonly_when_equals ?? (ui.readonly_when as { equals?: unknown } | undefined)?.equals ?? "")}
+              onChange={(e) => setDraft({ ...draft, readonly_when_equals: e.target.value })}
+            />
           </label>
           {preview ? (
             <div className="card">
