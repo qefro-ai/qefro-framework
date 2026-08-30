@@ -38,7 +38,22 @@ function cardClass(card: Card) {
 }
 
 function itemLabel(item: Record<string, unknown>) {
-  return String(item.name ?? item.title ?? item.code ?? item.message ?? item.doc_no ?? item.id);
+  const expanded = item._expanded as Record<string, { label?: unknown }> | undefined;
+  const related = expanded
+    ? Object.values(expanded)
+        .map((rel) => (rel && typeof rel.label === "string" ? rel.label : ""))
+        .find((s) => s)
+    : "";
+  return String(
+    item.name ??
+      item.title ??
+      item.guest_name ??
+      item.code ??
+      item.message ??
+      item.doc_no ??
+      related ??
+      item.id,
+  );
 }
 
 export default function Dashboard({

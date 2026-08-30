@@ -48,6 +48,14 @@ describe("Dashboard widgets", () => {
           value: 1,
           items: [{ id: "1", message: "Order #1042 → Ready", created_at: "2026-08-30T10:42:00Z" }],
         },
+        {
+          title: "Upcoming reservations",
+          entity: "Reservation",
+          metric: "count",
+          kind: "list",
+          value: 1,
+          items: [{ id: "r1", guest_name: "Ahmed Khan", created_at: "2026-08-30T19:30:00Z" }],
+        },
       ],
     });
     render(
@@ -61,6 +69,7 @@ describe("Dashboard widgets", () => {
     expect(screen.getByText("Orders by status")).toBeInTheDocument();
     expect(screen.getByText("Recent activity")).toBeInTheDocument();
     expect(screen.getByText(/Order #1042/)).toBeInTheDocument();
+    expect(screen.getByText("Ahmed Khan")).toBeInTheDocument();
   });
 
   it("shows empty state when no dashboard is configured", async () => {
