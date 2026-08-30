@@ -24,7 +24,6 @@ function a11y(field: WidgetProps["field"], id?: string, invalid?: boolean) {
     .join(" ");
   return {
     id,
-    required: field.required,
     readOnly: field.readonly,
     "aria-required": field.required || undefined,
     "aria-invalid": invalid || undefined,
