@@ -5,8 +5,10 @@
 //! runtime.
 
 pub mod app;
+pub mod automation;
 pub mod bundle;
 pub mod catalog;
+pub mod condition;
 pub mod context;
 pub mod document;
 pub mod entitlement;
@@ -26,6 +28,7 @@ pub mod platform;
 pub mod rate_limit;
 pub mod registry;
 pub mod sanitize;
+pub mod schedule;
 pub mod seed;
 pub mod storage;
 pub mod studio;
@@ -36,12 +39,18 @@ pub mod validation;
 pub mod version;
 
 pub use app::{AppManifest, AppModule, AppModuleBuilder, NavItem};
+pub use automation::{
+    AssignAction, AutomationAction, AutomationDef, AutomationTrigger, ActivityAction,
+    CommentAction, CreateEntityAction, NotifyAction, TransitionAction, UpdateEntityAction,
+    WebhookAction,
+};
 pub use bundle::AppBundle;
 pub use catalog::{
     app_root_candidates, disable_app, discover_apps, enable_app, find_app_root, install_app,
     load_installed, load_yaml_docs, load_yaml_entities, mark_installed, parse_app_toml, remove_app,
     store_dir, AppFileManifest, DiscoveredApp, InstalledRecord, InstalledSet,
 };
+pub use condition::Condition;
 pub use context::{OpContext, ROLE_PUBLIC, ROLE_WORKER};
 pub use document::{DocumentConfig, NamingConfig, PrintFormat, ReportDef};
 pub use entitlement::{Entitlements, Plan};
@@ -49,7 +58,8 @@ pub use entity::EntityDef;
 pub use error::{FieldError, QefroError, QefroResult};
 pub use field::{ChildTableDef, FieldDef, FieldType, RelationDef, RelationKind};
 pub use formula::{
-    apply_computed_fields, detect_cycles, eval_formula, parse_formula, FormulaContext,
+    apply_computed_fields, detect_cycles, eval_formula, eval_value, parse_formula, FormulaContext,
+    FormulaValue,
 };
 pub use hook::{EntityHook, HookRegistry, NoopHook};
 pub use ident::{quote_ident, slugify, snake_case, suggest_similar, to_plural_slug};
@@ -74,6 +84,7 @@ pub use platform::{
 pub use rate_limit::{MemoryRateLimiter, RateLimiter};
 pub use registry::EntityRegistry;
 pub use sanitize::sanitize_html;
+pub use schedule::{next_run_after, parse_cron, parse_timezone, schedule_slot_key, CronExpr};
 pub use seed::SeedBatch;
 pub use storage::{BlobStore, LocalBlobStore};
 pub use studio::{
@@ -93,7 +104,10 @@ pub use ui::{
 pub use validate::{
     destructive_field_removals, validate_bundle, InstalledAppRef, ValidationReport,
 };
-pub use validation::{validate_record, ValidationRules};
+pub use validation::{
+    apply_entity_rules, existence_rules, validate_record, CompareClause, ValidationRule,
+    ValidationRules, WhenClause,
+};
 pub use version::{
     is_framework_dep, API_VERSION, APP_API_VERSION, FRAMEWORK_COMPAT_REQ, FRAMEWORK_VERSION,
     METADATA_SCHEMA_VERSION, MIGRATION_FORMAT_VERSION,
@@ -104,6 +118,6 @@ pub mod prelude {
         AppModule, AppModuleBuilder, ChildTableDef, DocumentConfig, EntityActionDef, EntityDef,
         EntityRegistry, FieldDef, FieldType, LinkDef, NamingConfig, NotificationDef, OpContext,
         PrintFormat, PublicFormDef, QefroError, QefroResult, RelationDef, RelationKind, ReportDef,
-        UiConfig, ValidationRules, WebhookDef,
+        UiConfig, ValidationRule, ValidationRules, WebhookDef, AutomationDef,
     };
 }

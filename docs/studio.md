@@ -38,7 +38,7 @@ Staff and Customer have no Studio access.
 
 Live reload uses an overlay on the existing registries. `GET /api/v1/meta/ui` and `EntityService` both see the overlay. There is no second frontend renderer: form preview reuses `FormLayout` / the widget registry, and the Views tab reuses the production view registry (`ListView`, `KanbanView`, `CalendarView`).
 
-Studio inspects V0.9 primitives on the same entity page: singleton flag, field permission levels, allow-on-submit, actions, links, public forms, plus dedicated Notifications / Webhooks / Public Forms lists. Secrets are never shown. Field permission_level and allow_on_submit publish through the existing `entity.field.ui` change path.
+Studio inspects V0.9 primitives on the same entity page: singleton flag, field permission levels, allow-on-submit, actions, links, public forms, plus dedicated Notifications / Webhooks / Public Forms / Automations lists. Secrets are never shown. Field permission_level and allow_on_submit publish through the existing `entity.field.ui` change path.
 
 ## Platform vs tenant
 

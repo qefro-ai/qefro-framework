@@ -5,7 +5,10 @@ mod permissions;
 mod workflows;
 
 use qefro_api::InstalledApp;
-use qefro_core::{AppModule, NavItem, NotificationDef, ReportDef, WebhookDef};
+use qefro_core::{
+    AppModule, AutomationAction, AutomationDef, AutomationTrigger, Condition, NavItem,
+    NotificationDef, ReportDef, WebhookDef,
+};
 use qefro_permissions::PermissionGrant;
 use qefro_workflow::WorkflowDef;
 
@@ -72,7 +75,7 @@ pub fn module() -> AppModule {
                 .module("restaurant"),
         )
         .notification(
-            NotificationDef::new("order_ready", "order.ready")
+            NotificationDef::new("order_ready", "")
                 .channels(&["in_app"])
                 .recipients(&["Admin", "Staff", "Manager", "owner"])
                 .title("Order is ready")
@@ -86,6 +89,50 @@ pub fn module() -> AppModule {
                     .unwrap_or_else(|_| "test://reservation".into()),
             )
             .module("restaurant"),
+        )
+        .webhook(
+            WebhookDef::new(
+                "order-ready",
+                "",
+                std::env::var("QEFRO_RESTAURANT_ORDER_WEBHOOK_URL")
+                    .unwrap_or_else(|_| "test://order-ready".into()),
+            )
+            .module("restaurant"),
+        )
+        .automation(
+            AutomationDef::new(
+                "order_ready_notification",
+                AutomationTrigger::event("workflow.transitioned"),
+            )
+            .description("Notify restaurant staff when an order becomes Ready")
+            .conditions(Condition::all(vec![
+                Condition::field_equals("entity", "Order"),
+                Condition::field_equals("to_state", "Ready"),
+            ]))
+            .action(AutomationAction::Notify {
+                notify: qefro_core::NotifyAction {
+                    notification: Some("order_ready".into()),
+                    role: Some("Staff".into()),
+                    ..Default::default()
+                },
+            })
+            .action(AutomationAction::SendWebhook {
+                send_webhook: qefro_core::WebhookAction {
+                    webhook: Some("order-ready".into()),
+                    name: None,
+                },
+            }),
+        )
+        .automation(
+            AutomationDef::new(
+                "order_confirmed_activity",
+                AutomationTrigger::event("workflow.transitioned"),
+            )
+            .conditions(Condition::all(vec![
+                Condition::field_equals("entity", "Order"),
+                Condition::field_equals("to_state", "Confirmed"),
+            ]))
+            .action(AutomationAction::create_activity("Kitchen: order confirmed")),
         )
         .build()
 }
@@ -223,5 +270,7 @@ mod tests {
             .collect();
         assert!(names.contains(&"order_confirmed"), "{names:?}");
         assert!(names.contains(&"order_ready"), "{names:?}");
+        let autos: Vec<_> = module.automations.iter().map(|a| a.name.as_str()).collect();
+        assert!(autos.contains(&"order_ready_notification"), "{autos:?}");
     }
 }

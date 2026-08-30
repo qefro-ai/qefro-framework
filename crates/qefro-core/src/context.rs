@@ -88,6 +88,10 @@ impl OpContext {
             || self.source.eq_ignore_ascii_case("worker")
     }
 
+    pub fn is_automation(&self) -> bool {
+        self.source.eq_ignore_ascii_case("automation")
+    }
+
     pub fn is_agent(&self) -> bool {
         self.source.eq_ignore_ascii_case("agent")
     }
@@ -96,6 +100,9 @@ impl OpContext {
     pub fn activity_actor_name(&self) -> String {
         if self.is_agent() {
             return "Qefro Agent".into();
+        }
+        if self.is_automation() {
+            return "Automation".into();
         }
         if self.is_worker() || self.source.eq_ignore_ascii_case("system") {
             return "System".into();

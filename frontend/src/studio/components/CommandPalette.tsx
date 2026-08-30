@@ -41,6 +41,7 @@ export default function CommandPalette({ caps }: { caps: string[] }) {
         { label: "Open Permissions", path: "/studio/permissions" },
         { label: "Open Notifications", path: "/studio/notifications" },
         { label: "Open Webhooks", path: "/studio/webhooks" },
+        { label: "Open Automations", path: "/studio/automations" },
         { label: "Open Public Forms", path: "/studio/public-forms" },
         { label: "Open Reports", path: "/studio/reports" },
         { label: "Open Tenant settings", path: "/studio/system" },

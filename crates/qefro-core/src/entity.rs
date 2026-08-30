@@ -75,6 +75,9 @@ pub struct EntityDef {
     /// Presentation-only. Does not affect permissions, workflow, or validation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub views: Option<crate::ui::EntityViews>,
+    /// Server-side declarative rules. Complements per-field ValidationRules.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validation: Vec<crate::validation::ValidationRule>,
     /// Schema is owned elsewhere (auth `users` table). EntityService still
     /// exposes this entity; `apply_schema` does not emit DDL for it.
     #[serde(default)]
@@ -120,6 +123,7 @@ impl EntityDef {
             links: Vec::new(),
             public_form: None,
             views: None,
+            validation: Vec::new(),
             skip_ddl: false,
         }
     }
@@ -263,6 +267,16 @@ impl EntityDef {
     /// Presentation-only view metadata. Omitted entities use automatic defaults.
     pub fn views(mut self, views: crate::ui::EntityViews) -> Self {
         self.views = Some(views);
+        self
+    }
+
+    pub fn validation_rule(mut self, rule: crate::validation::ValidationRule) -> Self {
+        self.validation.push(rule);
+        self
+    }
+
+    pub fn validation(mut self, rules: Vec<crate::validation::ValidationRule>) -> Self {
+        self.validation = rules;
         self
     }
 

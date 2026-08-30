@@ -43,6 +43,8 @@ pub fn router() -> Router<AppState> {
         .route("/tenant", get(tenant_studio))
         .route("/notifications", get(list_notifications))
         .route("/webhooks", get(list_webhooks))
+        .route("/automations", get(list_automations))
+        .route("/automations/{name}", get(get_automation))
         .route("/public-forms", get(list_public_forms))
         .route("/drafts", get(list_drafts).post(create_draft))
         .route("/drafts/{id}", get(get_draft))
@@ -114,6 +116,7 @@ async fn overview(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json
         "reports": state.reports_live().len(),
         "dashboards": state.dashboards_live().len(),
         "print_formats": state.print_formats_live().len(),
+        "automations": state.automation.defs().len(),
         "apps": apps,
         "warnings": warnings,
         "recent_changes": recent,
@@ -625,6 +628,39 @@ async fn list_webhooks(
     Ok(Json(json!({ "webhooks": hooks })))
 }
 
+async fn list_automations(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let items: Vec<_> = state
+        .automation
+        .defs()
+        .iter()
+        .map(|d| d.to_studio_json())
+        .collect();
+    Ok(Json(json!({ "automations": items })))
+}
+
+async fn get_automation(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let def = state
+        .automation
+        .defs()
+        .iter()
+        .find(|d| d.name == name || d.id_key() == name)
+        .ok_or_else(|| QefroError::not_found(format!("automation '{name}' not found")))?;
+    Ok(Json(json!({
+        "automation": def.to_studio_json(),
+        "json": serde_json::to_string_pretty(def).unwrap_or_default(),
+        "yaml": to_yaml(def)?,
+    })))
+}
+
 async fn list_public_forms(
     State(state): State<AppState>,
     Auth(ctx): Auth,
@@ -709,6 +745,24 @@ async fn search(
     for pf in state.print_formats_live() {
         if pf.name.to_lowercase().contains(&q) {
             results.push(json!({ "kind": "print_format", "name": pf.name, "entity": pf.entity }));
+        }
+    }
+    for def in state.automation.defs() {
+        if def.name.to_lowercase().contains(&q)
+            || def.description.to_lowercase().contains(&q)
+            || def
+                .trigger
+                .event
+                .as_deref()
+                .map(|e| e.to_lowercase().contains(&q))
+                .unwrap_or(false)
+        {
+            results.push(json!({
+                "kind": "automation",
+                "name": def.name,
+                "label": def.description,
+                "module": def.module,
+            }));
         }
     }
     for grant in state.entities.permissions().grants() {

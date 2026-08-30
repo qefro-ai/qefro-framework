@@ -195,6 +195,8 @@ impl QefroError {
             Self::Conflict { .. } => "conflict",
             Self::BadRequest { .. } => "bad_request",
             Self::Workflow { .. } => "invalid_transition",
+            Self::Business { code, .. } if code == "automation_failed" => "automation_failed",
+            Self::Business { code, .. } if code == "job_failed" => "job_failed",
             Self::Business { .. } => "business_rule_failed",
             Self::RateLimited { .. } => "rate_limited",
             Self::Locked { .. } => "locked",

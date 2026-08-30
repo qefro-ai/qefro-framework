@@ -31,6 +31,7 @@ pub struct AppModule {
     pub print_formats: Vec<PrintFormat>,
     pub notifications: Vec<NotificationDef>,
     pub webhooks: Vec<WebhookDef>,
+    pub automations: Vec<crate::automation::AutomationDef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -147,6 +148,7 @@ impl AppModule {
                 print_formats: Vec::new(),
                 notifications: Vec::new(),
                 webhooks: Vec::new(),
+                automations: Vec::new(),
             },
         }
     }
@@ -323,6 +325,14 @@ impl AppModuleBuilder {
 
     pub fn webhook(mut self, def: WebhookDef) -> Self {
         self.module.webhooks.push(def);
+        self
+    }
+
+    pub fn automation(mut self, mut def: crate::automation::AutomationDef) -> Self {
+        if def.module.is_none() {
+            def.module = Some(self.module.name.clone());
+        }
+        self.module.automations.push(def);
         self
     }
 
