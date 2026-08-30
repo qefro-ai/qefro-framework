@@ -122,9 +122,9 @@ function renderUserForm(path: string) {
       {
         element: shell(<Outlet />),
         children: [
-          { path: "/users", element: <div>User list</div> },
-          { path: "/users/new", element: <EntityForm entities={[userEntity]} /> },
-          { path: "/users/:id", element: <div>User detail</div> },
+          { path: "/:slug", element: <div>User list</div> },
+          { path: "/:slug/new", element: <EntityForm entities={[userEntity]} /> },
+          { path: "/:slug/:id", element: <div>User detail</div> },
         ],
       },
     ],

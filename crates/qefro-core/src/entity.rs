@@ -489,37 +489,36 @@ impl EntityDef {
 
     /// Reject unknown fields, duplicates, and invalid conditions in view metadata.
     pub fn validate_ui_layout(&self) -> QefroResult<()> {
-        let Some(views) = &self.views else {
-            return Ok(());
-        };
-        if let Some(form) = &views.form {
-            validate_layout_sections(self, "form", &form.sections)?;
-        }
-        if let Some(detail) = &views.detail {
-            validate_layout_sections(self, "detail", &detail.sections)?;
-        }
-        if let Some(list) = &views.list {
-            for col in &list.columns {
-                ensure_known_field(self, &col.field, "list")?;
+        if let Some(views) = &self.views {
+            if let Some(form) = &views.form {
+                validate_layout_sections(self, "form", &form.sections)?;
             }
-        }
-        if let Some(card) = &views.card {
-            if let Some(title) = &card.title {
-                ensure_known_field(self, title, "card")?;
+            if let Some(detail) = &views.detail {
+                validate_layout_sections(self, "detail", &detail.sections)?;
             }
-            if let Some(subtitle) = &card.subtitle {
-                ensure_known_field(self, subtitle, "card")?;
+            if let Some(list) = &views.list {
+                for col in &list.columns {
+                    ensure_known_field(self, &col.field, "list")?;
+                }
             }
-            if let Some(image) = &card.image {
-                ensure_known_field(self, image, "card")?;
+            if let Some(card) = &views.card {
+                if let Some(title) = &card.title {
+                    ensure_known_field(self, title, "card")?;
+                }
+                if let Some(subtitle) = &card.subtitle {
+                    ensure_known_field(self, subtitle, "card")?;
+                }
+                if let Some(image) = &card.image {
+                    ensure_known_field(self, image, "card")?;
+                }
+                for field in &card.fields {
+                    ensure_known_field(self, field, "card")?;
+                }
             }
-            for field in &card.fields {
-                ensure_known_field(self, field, "card")?;
-            }
-        }
-        if let Some(kanban) = &views.kanban {
-            if let Some(group) = &kanban.group_by {
-                ensure_known_field(self, group, "kanban")?;
+            if let Some(kanban) = &views.kanban {
+                if let Some(group) = &kanban.group_by {
+                    ensure_known_field(self, group, "kanban")?;
+                }
             }
         }
         for field in &self.fields {
@@ -1002,9 +1001,9 @@ fields:
     #[test]
     fn form_layout_rejects_invalid_width_and_conditions() {
         use crate::ui::{FormViewSpec, ViewSectionSpec};
-        let width = EntityDef::new("Customer")
-            .field(FieldDef::string("name").width("wide"))
-            .build();
+        let named = FieldDef::string("name").width("wide");
+        assert_eq!(named.ui.width.as_deref(), Some("wide"));
+        let width = EntityDef::new("Customer").field(named).build();
         let err = width.validate_ui_layout().unwrap_err();
         assert!(err.to_string().contains("invalid width"), "{err}");
 

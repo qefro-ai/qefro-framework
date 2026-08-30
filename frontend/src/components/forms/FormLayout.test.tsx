@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { FormLayout } from "./FormLayout";
 import "../../widgets";
 import type { UiField } from "../../metadata/types";
@@ -149,7 +149,7 @@ describe("FormLayout", () => {
       />,
     );
     expect(await screen.findByLabelText(/Name/)).toBeInTheDocument();
-    expect(document.activeElement).toHaveAttribute("id", "field-name");
+    await waitFor(() => expect(document.activeElement).toHaveAttribute("id", "field-name"));
   });
 
   it("renders a two-column form grid from layout metadata", () => {

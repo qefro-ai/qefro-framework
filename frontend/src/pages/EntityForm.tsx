@@ -62,6 +62,7 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
   const [saved, setSaved] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [focusField, setFocusField] = useState<string | null>(null);
+  const [focusSeq, setFocusSeq] = useState(0);
   const { setRecord } = useBreadcrumbRecord();
   const returnTo = safeReturnPath(searchParams.get("return"));
   const returnField = searchParams.get("return_field");
@@ -78,6 +79,11 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
   }, [baseFields, meta, values.status]);
 
   const layout = meta?.views?.form?.sections ?? meta?.views?.detail?.sections;
+
+  function revealField(name: string) {
+    setFocusField(name);
+    setFocusSeq((n) => n + 1);
+  }
 
   useEffect(() => {
     if (id && slug) {
@@ -192,7 +198,7 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
         for (const fe of err.fields) next[fe.field] = fe.message;
         setFieldErrors(next);
         const first = err.fields[0]?.field;
-        if (first) setFocusField(first);
+        if (first) revealField(first);
       } else {
         setError("Unable to save.");
       }
@@ -216,7 +222,7 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
       <form className="form form-wide" onSubmit={onSubmit}>
         {errorEntries.length > 0 ? (
           <div className="form-error-summary" role="alert">
-            <button type="button" className="ghost" onClick={() => setFocusField(errorEntries[0][0])}>
+            <button type="button" className="ghost" onClick={() => revealField(errorEntries[0][0])}>
               {errorEntries.length} {errorEntries.length === 1 ? "error" : "errors"}
             </button>
             <ul>
@@ -224,7 +230,7 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
                 const label = fields.find((f) => f.name === name)?.label || name;
                 return (
                   <li key={name}>
-                    <button type="button" className="ghost" onClick={() => setFocusField(name)}>
+                    <button type="button" className="ghost" onClick={() => revealField(name)}>
                       {label}: {message}
                     </button>
                   </li>
@@ -240,6 +246,7 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
           fieldErrors={fieldErrors}
           layout={layout}
           focusField={focusField}
+          focusSeq={focusSeq}
           onChange={(name, value) => {
             setDirty(true);
             setSaved(false);

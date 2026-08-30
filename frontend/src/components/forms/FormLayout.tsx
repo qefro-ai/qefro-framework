@@ -13,6 +13,7 @@ export function FormLayout({
   onChange,
   layout,
   focusField,
+  focusSeq,
 }: {
   fields: UiField[];
   values: Record<string, unknown>;
@@ -21,6 +22,7 @@ export function FormLayout({
   onChange: (name: string, value: unknown) => void;
   layout?: ViewSection[];
   focusField?: string | null;
+  focusSeq?: number;
 }) {
   const resolved = resolveLayout(fields, layout, values);
   const tabs = resolved.tabs.filter(Boolean);
@@ -33,13 +35,19 @@ export function FormLayout({
     if (tab) setActive(tab);
     const section = fieldSectionTitle(resolved, focusField);
     if (section) setForcedOpen(section);
-    const el = document.getElementById(`field-${focusField}`) || document.querySelector(`[data-field="${focusField}"]`);
-    el?.scrollIntoView({ behavior: "smooth", block: "center" });
-    if (el instanceof HTMLElement) {
-      const input = el.matches("input, textarea, select, button") ? el : el.querySelector("input, textarea, select, button");
-      if (input instanceof HTMLElement) input.focus();
-    }
   }, [focusField, resolved]);
+
+  useEffect(() => {
+    if (!focusField) return;
+    const el =
+      document.getElementById(`field-${focusField}`) || document.querySelector(`[data-field="${focusField}"]`);
+    if (!(el instanceof HTMLElement)) return;
+    el.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    const input = el.matches("input, textarea, select, button")
+      ? el
+      : el.querySelector("input, textarea, select, button");
+    if (input instanceof HTMLElement) input.focus();
+  }, [focusField, resolved, forcedOpen, active, focusSeq]);
 
   const namedTabs = tabs.length ? tabs : [""];
   const showTabs = tabs.length > 1;
@@ -193,21 +201,22 @@ function Section({
   useEffect(() => {
     if (forceOpen) setCollapsed(false);
   }, [forceOpen]);
+  const hidden = collapsed && !forceOpen;
   return (
-    <fieldset className={collapsed ? "is-collapsed" : ""}>
+    <fieldset className={hidden ? "is-collapsed" : ""}>
       {title ? (
         <legend>
           <button
             type="button"
             className="section-toggle"
-            aria-expanded={!collapsed}
+            aria-expanded={!hidden}
             onClick={() => setCollapsed((v) => !v)}
           >
             {title}
           </button>
         </legend>
       ) : null}
-      {collapsed ? null : children}
+      {hidden ? null : children}
     </fieldset>
   );
 }
