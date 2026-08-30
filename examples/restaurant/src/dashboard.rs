@@ -1,7 +1,7 @@
 use qefro_core::{DashboardCard, DashboardDef};
 
 pub fn ops() -> DashboardDef {
-    DashboardDef::new("restaurant-ops", "Restaurant operations")
+    DashboardDef::new("restaurant-ops", "Floor operations")
         .module("restaurant")
         .card(
             DashboardCard::kpi("Today's reservations", "Reservation")
@@ -13,19 +13,20 @@ pub fn ops() -> DashboardDef {
                 .filter("status", "Confirmed")
                 .size("sm"),
         )
-        .card(
-            DashboardCard::kpi("Reservations", "Reservation")
-                .filter("reservation_date", "today")
-                .size("sm"),
-        )
         .card(DashboardCard::count("Available tables", "DiningTable").filter("status", "available"))
         .card(DashboardCard::count("Occupied tables", "DiningTable").filter("status", "occupied"))
         .card(DashboardCard::count("Draft orders", "Order").filter("status", "Draft"))
+        .card(DashboardCard::count("Upcoming pickups", "Order").filter("status", "Scheduled"))
         .card(DashboardCard::count("Orders preparing", "Order").filter("status", "Preparing"))
         .card(
             DashboardCard::kpi("Ready orders", "Order")
                 .filter("status", "Ready")
                 .size("sm"),
+        )
+        .card(
+            DashboardCard::count("Ready for pickup", "Order")
+                .filter("status", "Ready")
+                .filter("order_type", "Takeaway"),
         )
         .card(
             DashboardCard::sum("Today's sales", "Payment", "amount")
@@ -45,11 +46,17 @@ pub fn ops() -> DashboardDef {
             "Reservation",
             "status",
         ))
+        .card(DashboardCard::status_breakdown(
+            "Orders by status",
+            "Order",
+            "status",
+        ))
         .card(DashboardCard::activity("Recent order events", "Order", 8).size("lg"))
         .card(DashboardCard::recent(
             "Upcoming reservations",
             "Reservation",
             8,
         ))
+        .card(DashboardCard::recent("Recent orders", "Order", 8))
         .card(DashboardCard::audit("Changes today").roles(&["Admin"]))
 }

@@ -128,7 +128,7 @@ export default function Settings({
             title="Setup"
             description="Configuration and setup records. Day-to-day work stays in the main menu."
           />
-          <div className="cards">
+          <div className="setup-grid cards">
             {singletons.map((entity) => (
               <Link key={entity.slug} className="card" to={`/${entity.slug}`}>
                 <div className="muted">Configuration</div>

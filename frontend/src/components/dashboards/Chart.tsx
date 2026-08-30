@@ -93,6 +93,13 @@ function arc(cx: number, cy: number, r: number, start: number, end: number) {
 }
 
 function color(i: number) {
-  const palette = ["#2563eb", "#059669", "#d97706", "#dc2626", "#7c3aed", "#0891b2"];
+  const palette = [
+    "var(--accent)",
+    "var(--success)",
+    "var(--warning)",
+    "var(--danger)",
+    "#7c3aed",
+    "#0891b2",
+  ];
   return palette[i % palette.length];
 }

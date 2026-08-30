@@ -7,16 +7,32 @@ mod workflows;
 use qefro_api::InstalledApp;
 use qefro_core::{
     AppModule, AutomationAction, AutomationDef, AutomationTrigger, Condition, NavItem,
-    NotificationDef, ReportDef, WebhookDef,
+    NotificationDef, ReportDef, TenantBranding, WebhookDef,
 };
 use qefro_permissions::PermissionGrant;
 use qefro_workflow::WorkflowDef;
+
+/// Warm hospitality palette. Applied when the tenant has not set branding yet.
+const MARK: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%239a3412'/%3E%3Ccircle cx='16' cy='19' r='7.25' fill='none' stroke='%23f4f1ea' stroke-width='1.8'/%3E%3Cpath fill='%23f4f1ea' d='M11.2 6.4h1.9v10.2h-1.9zm7.4 0h1.45v10.2H18.6zm1.9 0H21.9v10.2h-1.4z'/%3E%3C/svg%3E";
+
+pub fn branding() -> TenantBranding {
+    TenantBranding {
+        logo: Some(MARK.into()),
+        favicon: Some(MARK.into()),
+        primary_color: Some("#9a3412".into()),
+        secondary_color: Some("#f4f1ea".into()),
+        accent_color: Some("#c2410c".into()),
+        company_name: None,
+        app_name: Some("Qefro Kitchen".into()),
+    }
+}
 
 pub fn module() -> AppModule {
     AppModule::new("restaurant")
         .version("1.0.0")
         .label("Restaurant")
-        .description("Tables, reservations, menus, orders, and payments")
+        .description("Tables, reservations, menus, dine-in and takeaway orders, and payments")
+        .branding(branding())
         .nav(NavItem::new("Orders", "Order"))
         .nav(NavItem::new("Reservations", "Reservation"))
         .nav(
@@ -221,6 +237,106 @@ mod tests {
         }
         assert!(!hidden.iter().any(|s| s == "reservations"));
         assert!(!hidden.iter().any(|s| s == "order-items"));
+    }
+
+    #[test]
+    fn module_contributes_hospitality_branding_defaults() {
+        let branding = crate::module().branding;
+        assert_eq!(branding.primary_color.as_deref(), Some("#9a3412"));
+        assert_eq!(branding.accent_color.as_deref(), Some("#c2410c"));
+        assert_eq!(branding.secondary_color.as_deref(), Some("#f4f1ea"));
+        assert_eq!(branding.app_name.as_deref(), Some("Qefro Kitchen"));
+        assert!(branding
+            .logo
+            .as_ref()
+            .is_some_and(|s| s.starts_with("data:image/svg+xml")));
+        assert_eq!(branding.logo, branding.favicon);
+        assert!(branding.company_name.is_none());
+    }
+
+    #[test]
+    fn ops_dashboard_is_an_operations_home() {
+        let dash = crate::dashboard::ops();
+        assert_eq!(dash.name, "restaurant-ops");
+        assert_eq!(dash.label, "Floor operations");
+        let titles: Vec<_> = dash.cards.iter().map(|c| c.title.as_str()).collect();
+        assert!(titles.contains(&"Reservations today"));
+        assert!(titles.contains(&"Tables free"));
+        assert!(titles.contains(&"Sales today"));
+        assert!(titles.contains(&"Orders by status"));
+        assert!(titles.contains(&"Recent orders"));
+        assert_eq!(dash.cards.iter().filter(|c| c.kind == "metric").count(), 9);
+        assert!(titles.contains(&"Upcoming pickups"));
+        assert!(titles.contains(&"Ready for pickup"));
+    }
+
+    #[test]
+    fn order_models_dine_in_and_takeaway() {
+        let order = crate::entities::order();
+        let ui = order.to_ui_meta();
+        assert_eq!(ui.schema_version, "1");
+        let order_type = order.get_field("order_type").unwrap();
+        assert_eq!(order_type.default, Some(serde_json::json!("Dine-in")));
+        assert!(order_type.required);
+        assert_eq!(order_type.ui.widget, "radio");
+        assert!(order_type.ui.filter);
+        let pickup = order.get_field("pickup_at").unwrap();
+        assert!(!pickup.required);
+        assert_eq!(
+            pickup
+                .ui
+                .visible_when
+                .as_ref()
+                .map(|w| (w.field.as_str(), &w.equals)),
+            Some(("order_type", &serde_json::json!("Takeaway")))
+        );
+        let table = order.get_field("table_id").unwrap();
+        assert_eq!(
+            table.ui.visible_when.as_ref().map(|w| w.field.as_str()),
+            Some("order_type")
+        );
+        assert_eq!(
+            table.ui.visible_when.as_ref().map(|w| &w.equals),
+            Some(&serde_json::json!("Dine-in"))
+        );
+        let status = order.get_field("status").unwrap();
+        match &status.field_type {
+            qefro_core::FieldType::Enum { values } => {
+                assert!(values.contains(&"Scheduled".into()));
+                assert_eq!(values[0], "Draft");
+                assert_eq!(values[1], "Scheduled");
+            }
+            other => panic!("expected enum, got {other:?}"),
+        }
+        let views = order.views.as_ref().unwrap();
+        let columns: Vec<_> = views
+            .list
+            .as_ref()
+            .unwrap()
+            .columns
+            .iter()
+            .map(|c| c.field.as_str())
+            .collect();
+        assert!(columns.contains(&"order_type"));
+        assert!(columns.contains(&"pickup_at"));
+        assert_eq!(
+            views.kanban.as_ref().unwrap().group_by.as_deref(),
+            Some("status")
+        );
+        let wf = crate::workflows::order();
+        assert!(wf.states.iter().any(|s| s.name == "Scheduled"));
+        assert!(wf
+            .transitions
+            .iter()
+            .any(|t| t.name == "schedule" && t.to == "Scheduled"));
+        assert!(wf
+            .transitions
+            .iter()
+            .any(|t| t.name == "confirm" && t.from == "Scheduled" && t.to == "Confirmed"));
+        assert!(wf
+            .transitions
+            .iter()
+            .any(|t| t.name == "cancel_scheduled" && t.from == "Scheduled"));
     }
 
     #[test]

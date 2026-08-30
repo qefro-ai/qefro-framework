@@ -4,6 +4,7 @@ import { api, ApiError, formVisible, type UiEntity, type UiField } from "../sdk/
 import { FormLayout } from "../components/forms/FormLayout";
 import { ErrorState, Skeleton } from "../components/ui/EmptyState";
 import { PageHeader } from "../components/ui/PageHeader";
+import { showSnackbar } from "../components/ui/Snackbar";
 import { friendlyError } from "../friendlyError";
 import { previewFormula } from "../metadata/formula";
 import { displayValue } from "../metadata/views";
@@ -96,14 +97,17 @@ export default function EntityForm({ entities }: { entities: UiEntity[] }) {
         if (isSingleton) await api.saveSettings(entitySlug, body);
         else await api.update(entitySlug, id, body);
         setDirty(false);
+        showSnackbar("Saved");
         navigate(`/${entitySlug}/${id}`);
       } else if (isSingleton) {
         const saved = await api.saveSettings(entitySlug, body);
         setDirty(false);
+        showSnackbar("Saved");
         navigate(`/${entitySlug}/${saved.id ?? ""}`);
       } else {
         const created = await api.create(entitySlug, body);
         setDirty(false);
+        showSnackbar("Created");
         navigate(`/${entitySlug}/${created.id}`);
       }
     } catch (err) {

@@ -1,4 +1,4 @@
-import { FormEvent, Fragment, useEffect, useMemo, useState } from "react";
+import { FormEvent, Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   api,
@@ -12,11 +12,12 @@ import {
   type WorkflowAction,
 } from "../sdk/client";
 import { ActionBar } from "../components/actions/ActionBar";
-import { FilterBar } from "../components/filters/FilterBar";
+import { FilterBar, SavedViewsMenu } from "../components/filters/FilterBar";
 import { FormLayout } from "../components/forms/FormLayout";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
 import { PageHeader } from "../components/ui/PageHeader";
 import { ActionMenu } from "../components/ui/ActionMenu";
+import { showSnackbar } from "../components/ui/Snackbar";
 import { FieldValue } from "../components/fields/FieldValue";
 import { ViewSelector } from "../components/views/ViewSelector";
 import { renderView } from "../views/registry";
@@ -56,7 +57,6 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [importOpen, setImportOpen] = useState(false);
-  const [colsOpen, setColsOpen] = useState(false);
   const [searchInput, setSearchInput] = useState(search);
   const [tick, setTick] = useState(0);
   const theme = useTenantTheme();
@@ -206,6 +206,7 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
     try {
       for (const id of selected) await api.remove(meta.slug, id);
       setSelected(new Set());
+      showSnackbar(`Deleted ${selected.size} records`);
       setTick((n) => n + 1);
     } catch (e) {
       setError(friendlyError(e));
@@ -260,17 +261,15 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
         }
       />
       {importOpen ? <ImportPanel slug={meta.slug} onDone={() => setTick((n) => n + 1)} /> : null}
-      <div className="view-toolbar toolbar">
-        <ViewSelector
-          views={views}
-          current={currentView}
-          onChange={(next) => {
-            setParam("view", next);
-            if (slug) prefs?.setTablePrefs(slug, { view: next });
-          }}
-        />
+      <div className="list-toolbar view-toolbar toolbar">
         {meta.searchable && (
           <div className="search-field">
+            <svg className="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14"
+              />
+            </svg>
             <input
               placeholder={`Search ${meta.label_plural.toLowerCase()}`}
               value={searchInput}
@@ -298,67 +297,51 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
             ) : null}
           </div>
         )}
-        {currentView === "list" ? (
-          <>
-            <button type="button" className="ghost" onClick={() => setColsOpen((v) => !v)}>
-              Columns
-            </button>
-            <label className="page-size">
-              Page size
-              <select
-                value={String(pageSize)}
-                onChange={(e) => {
-                  const n = Number(e.target.value);
-                  setPageSize(n);
-                  if (slug) prefs?.setTablePrefs(slug, { pageSize: n });
-                  setParam("page", "1");
-                }}
-              >
-                {[10, 25, 50, 100].map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </>
+        {filterable.length > 0 ? (
+          <FilterBar
+            entity={meta.entity}
+            fields={filterable}
+            entities={entities}
+            params={params}
+            onChange={setParam}
+            onReplace={setParams}
+          />
         ) : null}
-        {loading ? (
-          <span className="muted toolbar-status" aria-live="polite">
-            Loading…
-          </span>
-        ) : null}
-      </div>
-      {colsOpen ? (
-        <div className="column-picker panel">
-          {allCols.map((c) => {
-            const visible = cols.some((x) => x.name === c.name);
-            return (
-              <label key={c.name} className="inline-check">
-                <input
-                  type="checkbox"
-                  checked={visible}
-                  onChange={() => {
-                    const names = (visible ? cols.filter((x) => x.name !== c.name) : [...cols, c]).map((x) => x.name);
-                    if (slug) prefs?.setTablePrefs(slug, { columns: names });
-                  }}
-                />
-                {c.label}
-              </label>
-            );
-          })}
+        <div className="list-toolbar-end">
+          {loading ? (
+            <span className="muted toolbar-status" aria-live="polite">
+              Loading…
+            </span>
+          ) : null}
+          <ViewSelector
+            views={views}
+            current={currentView}
+            onChange={(next) => {
+              setParam("view", next);
+              if (slug) prefs?.setTablePrefs(slug, { view: next });
+            }}
+          />
+          <ListOptions
+            entity={meta.entity}
+            currentView={currentView}
+            allCols={allCols}
+            cols={cols}
+            pageSize={pageSize}
+            canSaveView={queryActive}
+            params={params}
+            onChangeParam={setParam}
+            onReplaceParams={setParams}
+            onPageSize={(n) => {
+              setPageSize(n);
+              if (slug) prefs?.setTablePrefs(slug, { pageSize: n });
+              setParam("page", "1");
+            }}
+            onColumns={(names) => {
+              if (slug) prefs?.setTablePrefs(slug, { columns: names });
+            }}
+          />
         </div>
-      ) : null}
-      {filterable.length > 0 && (
-        <FilterBar
-          entity={meta.entity}
-          fields={filterable}
-          entities={entities}
-          params={params}
-          onChange={setParam}
-          onReplace={setParams}
-        />
-      )}
+      </div>
       {error && (
         <ErrorState
           message={`Unable to load ${meta.label_plural.toLowerCase()}. ${error}`}
@@ -564,6 +547,111 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
   );
 }
 
+function ListOptions({
+  entity,
+  currentView,
+  allCols,
+  cols,
+  pageSize,
+  canSaveView,
+  params,
+  onChangeParam,
+  onReplaceParams,
+  onPageSize,
+  onColumns,
+}: {
+  entity: string;
+  currentView: ViewKind;
+  allCols: UiField[];
+  cols: UiField[];
+  pageSize: number;
+  canSaveView: boolean;
+  params: URLSearchParams;
+  onChangeParam: (key: string, value: string) => void;
+  onReplaceParams: (next: URLSearchParams) => void;
+  onPageSize: (n: number) => void;
+  onColumns: (names: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const menuId = useId();
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointer(event: MouseEvent) {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="list-options" ref={root}>
+          <button type="button" className="ghost" aria-expanded={open} aria-haspopup="dialog" aria-controls={menuId} aria-label="List options" onClick={() => setOpen((value) => !value)}>
+            Options
+          </button>
+      {open ? (
+        <div id={menuId} className="list-options-panel" role="dialog" aria-label="List options">
+          {currentView === "list" ? (
+            <>
+              <div className="list-options-section">
+                <div className="palette-heading">Columns</div>
+                <div className="column-picker">
+                  {allCols.map((c) => {
+                    const visible = cols.some((x) => x.name === c.name);
+                    return (
+                      <label key={c.name} className="inline-check">
+                        <input
+                          type="checkbox"
+                          checked={visible}
+                          onChange={() => {
+                            const names = (visible ? cols.filter((x) => x.name !== c.name) : [...cols, c]).map(
+                              (x) => x.name,
+                            );
+                            onColumns(names);
+                          }}
+                        />
+                        {c.label}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+              <label className="page-size">
+                Page size
+                <select
+                  value={String(pageSize)}
+                  onChange={(e) => onPageSize(Number(e.target.value))}
+                >
+                  {[10, 25, 50, 100].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </>
+          ) : null}
+          <SavedViewsMenu
+            entity={entity}
+            params={params}
+            canSave={canSaveView}
+            onChange={onChangeParam}
+            onReplace={onReplaceParams}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function isNumeric(field: UiField) {
   return (
     field.widget === "currency" ||
@@ -637,6 +725,7 @@ function SingletonSettings({ meta, entities }: { meta: UiEntity; entities: UiEnt
       setSaving(true);
       setError("");
       await api.saveSettings(meta.slug, body);
+      showSnackbar("Saved");
     } catch (err) {
       setError(err instanceof ApiError ? friendlyError(err) : "Unable to save.");
     } finally {

@@ -994,6 +994,72 @@ impl TenantBranding {
     pub fn display_name(&self) -> Option<&str> {
         self.company_name.as_deref().or(self.app_name.as_deref())
     }
+
+    fn blank(value: &Option<String>) -> bool {
+        value
+            .as_ref()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        Self::blank(&self.logo)
+            && Self::blank(&self.favicon)
+            && Self::blank(&self.primary_color)
+            && Self::blank(&self.secondary_color)
+            && Self::blank(&self.accent_color)
+            && Self::blank(&self.company_name)
+            && Self::blank(&self.app_name)
+    }
+
+    /// Fill empty fields from app or other defaults. Stored tenant values win.
+    pub fn fill_from(&mut self, other: &Self) {
+        if Self::blank(&self.logo) {
+            self.logo = other.logo.clone();
+        }
+        if Self::blank(&self.favicon) {
+            self.favicon = other.favicon.clone();
+        }
+        if Self::blank(&self.primary_color) {
+            self.primary_color = other.primary_color.clone();
+        }
+        if Self::blank(&self.secondary_color) {
+            self.secondary_color = other.secondary_color.clone();
+        }
+        if Self::blank(&self.accent_color) {
+            self.accent_color = other.accent_color.clone();
+        }
+        if Self::blank(&self.company_name) {
+            self.company_name = other.company_name.clone();
+        }
+        if Self::blank(&self.app_name) {
+            self.app_name = other.app_name.clone();
+        }
+    }
+
+    pub fn apply_tenant_name(&mut self, name: Option<&str>) {
+        if Self::blank(&self.company_name) {
+            if let Some(name) = name.map(str::trim).filter(|s| !s.is_empty()) {
+                self.company_name = Some(name.to_string());
+            }
+        }
+    }
+
+    /// Overlay enabled-app defaults, then the tenant display name, onto stored branding.
+    pub fn resolve(
+        stored: &Self,
+        app_defaults: impl IntoIterator<Item = Self>,
+        tenant_name: Option<&str>,
+    ) -> Self {
+        let mut defaults = Self::default();
+        for other in app_defaults {
+            defaults.fill_from(&other);
+        }
+        let mut branding = stored.clone();
+        branding.fill_from(&defaults);
+        branding.apply_tenant_name(tenant_name);
+        branding
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1094,6 +1160,32 @@ mod tests {
         assert_eq!(meta.widget, "table-status");
         let json = serde_json::to_value(&meta).unwrap();
         assert_eq!(json["widget"], "table-status");
+    }
+
+    #[test]
+    fn branding_overlay_prefers_stored_then_app_then_tenant_name() {
+        let stored = TenantBranding {
+            company_name: Some("Seeni Bhai".into()),
+            ..Default::default()
+        };
+        let app = TenantBranding {
+            company_name: Some("Qefro Kitchen".into()),
+            app_name: Some("Restaurant".into()),
+            primary_color: Some("#9a3412".into()),
+            accent_color: Some("#c2410c".into()),
+            secondary_color: Some("#f4f1ea".into()),
+            logo: Some("data:image/svg+xml,app".into()),
+            favicon: Some("data:image/svg+xml,app".into()),
+            ..Default::default()
+        };
+        let resolved = TenantBranding::resolve(&stored, [app], Some("Ignored Name"));
+        assert_eq!(resolved.company_name.as_deref(), Some("Seeni Bhai"));
+        assert_eq!(resolved.app_name.as_deref(), Some("Restaurant"));
+        assert_eq!(resolved.primary_color.as_deref(), Some("#9a3412"));
+        assert_eq!(resolved.accent_color.as_deref(), Some("#c2410c"));
+        let empty = TenantBranding::resolve(&TenantBranding::default(), [], Some("Demo Kitchen"));
+        assert_eq!(empty.company_name.as_deref(), Some("Demo Kitchen"));
+        assert!(TenantBranding::default().is_empty());
     }
 
     #[test]

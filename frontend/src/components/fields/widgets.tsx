@@ -45,87 +45,81 @@ export function TextInput({ field, value, onChange, disabled, id, invalid }: Wid
   );
 }
 
-export function Textarea({ field, value, onChange, disabled, id }: WidgetProps) {
+export function Textarea({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   return (
     <textarea
-      id={id}
       rows={4}
       placeholder={field.placeholder ?? ""}
       value={value == null ? "" : String(value)}
       disabled={disabled}
-      readOnly={field.readonly}
-      required={field.required}
+      {...a11y(field, id, invalid)}
       onChange={(e) => onChange(e.target.value)}
     />
   );
 }
 
-export function EmailInput({ field, value, onChange, disabled, id }: WidgetProps) {
+export function EmailInput({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   return (
     <input
-      id={id}
       type="email"
       inputMode="email"
       autoComplete="email"
       placeholder={field.placeholder ?? "name@example.com"}
       value={value == null ? "" : String(value)}
       disabled={disabled}
-      required={field.required}
+      {...a11y(field, id, invalid)}
       onChange={(e) => onChange(e.target.value)}
     />
   );
 }
 
-export function PhoneInput({ field, value, onChange, disabled, id }: WidgetProps) {
+export function PhoneInput({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   return (
     <input
-      id={id}
       type="tel"
       inputMode="tel"
       autoComplete="tel"
       placeholder={field.placeholder ?? "+91 98765 43210"}
       value={value == null ? "" : String(value)}
       disabled={disabled}
-      required={field.required}
+      {...a11y(field, id, invalid)}
       onChange={(e) => onChange(e.target.value)}
     />
   );
 }
 
-export function UrlInput({ field, value, onChange, disabled, id }: WidgetProps) {
+export function UrlInput({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   return (
     <input
-      id={id}
       type="url"
       inputMode="url"
       placeholder={field.placeholder ?? "https://"}
       value={value == null ? "" : String(value)}
       disabled={disabled}
-      required={field.required}
+      {...a11y(field, id, invalid)}
       onChange={(e) => onChange(e.target.value)}
     />
   );
 }
 
-export function NumberInput({ field, value, onChange, disabled, id }: WidgetProps) {
+export function NumberInput({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   const options = opt(field);
   const integer = field.type === "integer";
   return (
     <input
-      id={id}
       type="number"
       step={options.step ?? (integer ? 1 : 0.01)}
       min={options.min as number | undefined}
       max={options.max as number | undefined}
       value={value == null || value === "" ? "" : String(value)}
       disabled={disabled}
-      required={field.required}
+      {...a11y(field, id, invalid)}
       onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
     />
   );
 }
 
-export function CurrencyInput({ field, value, onChange, disabled, id }: WidgetProps) {
+export function CurrencyInput({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   const theme = useTenantTheme();
   const options = opt(field);
   const currency = options.currency || theme.currency || "USD";
@@ -136,14 +130,13 @@ export function CurrencyInput({ field, value, onChange, disabled, id }: WidgetPr
         {currency}
       </span>
       <input
-        id={id}
         type="number"
         step={1 / 10 ** precision}
         min={options.min as number | undefined}
         max={options.max as number | undefined}
         value={value == null || value === "" ? "" : String(value)}
         disabled={disabled}
-        required={field.required}
+        {...a11y(field, id, invalid)}
         aria-label={`${field.label} (${currency})`}
         onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
       />
@@ -154,20 +147,19 @@ export function CurrencyInput({ field, value, onChange, disabled, id }: WidgetPr
   );
 }
 
-export function PercentageInput({ field, value, onChange, disabled, id }: WidgetProps) {
+export function PercentageInput({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   const options = opt(field);
   const precision = options.precision ?? 2;
   return (
     <div className="widget-affix">
       <input
-        id={id}
         type="number"
         min={0}
         max={100}
         step={1 / 10 ** precision}
         value={value == null || value === "" ? "" : String(value)}
         disabled={disabled}
-        required={field.required}
+        {...a11y(field, id, invalid)}
         onChange={(e) => onChange(e.target.value === "" ? "" : Number(e.target.value))}
       />
       <span className="affix" aria-hidden>
@@ -177,46 +169,44 @@ export function PercentageInput({ field, value, onChange, disabled, id }: Widget
   );
 }
 
-export function DatePicker({ field, value, onChange, disabled, id }: WidgetProps) {
+export function DatePicker({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   const options = opt(field);
   const min = options.min != null ? String(options.min).slice(0, 10) : undefined;
   const max = options.max != null ? String(options.max).slice(0, 10) : undefined;
   return (
     <input
-      id={id}
       type="date"
       value={value == null ? "" : String(value).slice(0, 10)}
       min={min}
       max={max}
       disabled={disabled}
-      required={field.required}
+      {...a11y(field, id, invalid)}
       onChange={(e) => onChange(e.target.value || null)}
     />
   );
 }
 
-export function TimePicker({ field, value, onChange, disabled, id }: WidgetProps) {
+export function TimePicker({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   const theme = useTenantTheme();
   const options = opt(field);
   const step = (options.minute_step ?? 1) * 60;
   const raw = value == null ? "" : String(value).slice(0, 5);
   return (
     <input
-      id={id}
       type="time"
       step={step}
       value={raw}
       min={options.min != null ? String(options.min) : undefined}
       max={options.max != null ? String(options.max) : undefined}
       disabled={disabled}
-      required={field.required}
+      {...a11y(field, id, invalid)}
       aria-label={`${field.label} (${theme.hour12 ? "12-hour" : "24-hour"})`}
       onChange={(e) => onChange(e.target.value || null)}
     />
   );
 }
 
-export function DateTimePicker({ field, value, onChange, disabled, id }: WidgetProps) {
+export function DateTimePicker({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   const theme = useTenantTheme();
   const options = opt(field);
   const tz =
@@ -230,11 +220,10 @@ export function DateTimePicker({ field, value, onChange, disabled, id }: WidgetP
   return (
     <div className="widget-datetime">
       <input
-        id={id}
         type="date"
         value={parts.date}
         disabled={disabled}
-        required={field.required}
+        {...a11y(field, id, invalid)}
         aria-label={`${field.label} date`}
         onChange={(e) => emit(e.target.value, parts.time || "00:00")}
       />
@@ -243,6 +232,7 @@ export function DateTimePicker({ field, value, onChange, disabled, id }: WidgetP
         value={parts.time}
         disabled={disabled}
         required={field.required}
+        aria-invalid={invalid || undefined}
         aria-label={`${field.label} time (${tz})`}
         onChange={(e) => emit(parts.date, e.target.value)}
       />
@@ -251,12 +241,11 @@ export function DateTimePicker({ field, value, onChange, disabled, id }: WidgetP
   );
 }
 
-export function ColorPicker({ field, value, onChange, disabled, id }: WidgetProps) {
+export function ColorPicker({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   const hex = normalizeHex(value);
   return (
     <div className="widget-color">
       <input
-        id={id}
         type="color"
         value={hex || "#2563eb"}
         disabled={disabled}
@@ -268,7 +257,7 @@ export function ColorPicker({ field, value, onChange, disabled, id }: WidgetProp
         placeholder="#2563eb"
         value={value == null ? "" : String(value)}
         disabled={disabled}
-        required={field.required}
+        {...a11y(field, id, invalid)}
         pattern="^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$|^rgb"
         onChange={(e) => onChange(e.target.value)}
       />
@@ -285,14 +274,13 @@ function normalizeHex(value: unknown): string {
   return "";
 }
 
-export function Select({ field, value, onChange, disabled, id }: WidgetProps) {
+export function Select({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   const options = field.enum_values ?? [];
   return (
     <select
-      id={id}
       value={value == null ? "" : String(value)}
       disabled={disabled}
-      required={field.required}
+      {...a11y(field, id, invalid)}
       onChange={(e) => onChange(e.target.value || null)}
     >
       <option value="">{field.placeholder ?? "Select"}</option>
@@ -351,14 +339,14 @@ export function MultiSelect({ field, value, onChange, disabled, id }: WidgetProp
   );
 }
 
-export function Checkbox({ field, value, onChange, disabled, id }: WidgetProps) {
+export function Checkbox({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   return (
     <label className="inline-check">
       <input
-        id={id}
         type="checkbox"
         checked={Boolean(value)}
         disabled={disabled}
+        {...a11y(field, id, invalid)}
         onChange={(e) => onChange(e.target.checked)}
       />
       <span>{field.label}</span>
@@ -366,16 +354,17 @@ export function Checkbox({ field, value, onChange, disabled, id }: WidgetProps) 
   );
 }
 
-export function Switch({ field, value, onChange, disabled, id }: WidgetProps) {
+export function Switch({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   return (
     <button
-      id={id}
       type="button"
       role="switch"
       aria-checked={Boolean(value)}
       aria-label={field.label}
+      aria-invalid={invalid || undefined}
       className={`switch ${value ? "on" : ""}`}
       disabled={disabled}
+      id={id}
       onClick={() => onChange(!value)}
     >
       <span className="knob" />
@@ -383,9 +372,9 @@ export function Switch({ field, value, onChange, disabled, id }: WidgetProps) {
   );
 }
 
-export function Radio({ field, value, onChange, disabled }: WidgetProps) {
+export function Radio({ field, value, onChange, disabled, invalid }: WidgetProps) {
   return (
-    <div role="radiogroup" aria-label={field.label} className="radio-group">
+    <div role="radiogroup" aria-label={field.label} aria-invalid={invalid || undefined} className="radio-group">
       {(field.enum_values ?? []).map((v) => (
         <label key={v} className="inline-check">
           <input
@@ -403,7 +392,7 @@ export function Radio({ field, value, onChange, disabled }: WidgetProps) {
   );
 }
 
-export function TagsInput({ field, value, onChange, disabled, id }: WidgetProps) {
+export function TagsInput({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   const tags = Array.isArray(value) ? value.map(String) : [];
   const [draft, setDraft] = useState("");
   function add(raw: string) {
@@ -441,13 +430,14 @@ export function TagsInput({ field, value, onChange, disabled, id }: WidgetProps)
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={onKey}
         onBlur={() => add(draft)}
+        {...a11y(field, undefined, invalid)}
         aria-label={field.label}
       />
     </div>
   );
 }
 
-export function JsonEditor({ field, value, onChange, disabled, id }: WidgetProps) {
+export function JsonEditor({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   const text =
     typeof value === "string" ? value : value == null ? "" : JSON.stringify(value, null, 2);
   const [error, setError] = useState("");
@@ -468,12 +458,11 @@ export function JsonEditor({ field, value, onChange, disabled, id }: WidgetProps
   return (
     <div>
       <textarea
-        id={id}
         rows={8}
         className="mono"
         value={text}
         disabled={disabled}
-        required={field.required}
+        {...a11y(field, id, invalid)}
         onChange={(e) => apply(e.target.value)}
       />
       <button
@@ -500,7 +489,7 @@ export function JsonEditor({ field, value, onChange, disabled, id }: WidgetProps
   );
 }
 
-export function RichText({ field, value, onChange, disabled, id }: WidgetProps) {
+export function RichText({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (ref.current && ref.current.innerHTML !== String(value ?? "")) {
@@ -555,17 +544,20 @@ export function RichText({ field, value, onChange, disabled, id }: WidgetProps) 
         id={id}
         ref={ref}
         className="rich-surface"
-        contentEditable={!disabled}
+        contentEditable={!disabled && !field.readonly}
         role="textbox"
         aria-multiline
         aria-label={field.label}
+        aria-required={field.required || undefined}
+        aria-invalid={invalid || undefined}
+        aria-readonly={field.readonly || undefined}
         onInput={() => onChange(ref.current?.innerHTML ?? "")}
       />
     </div>
   );
 }
 
-function FileWidget({ field, value, onChange, disabled, id, image }: WidgetProps & { image?: boolean }) {
+function FileWidget({ field, value, onChange, disabled, id, invalid, image }: WidgetProps & { image?: boolean }) {
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState("");
   const key = value == null ? "" : String(value);
@@ -591,13 +583,14 @@ function FileWidget({ field, value, onChange, disabled, id, image }: WidgetProps
   }
 
   return (
-    <div className="file-widget" id={id}>
+    <div className="file-widget">
       {image && url ? <img src={url} alt="" className="image-preview" /> : null}
       {key && !image ? <p className="muted">File attached</p> : null}
       <input
         type="file"
         accept={accept || undefined}
         disabled={disabled}
+        {...a11y(field, id, invalid)}
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) void upload(file);

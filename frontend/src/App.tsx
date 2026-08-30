@@ -17,6 +17,7 @@ import Settings from "./pages/Settings";
 import AuditLog from "./pages/AuditLog";
 import Reports from "./pages/Reports";
 import PublicForm from "./pages/PublicForm";
+import { SnackbarHost } from "./components/ui/Snackbar";
 
 export default function App() {
   const [authed, setAuthed] = useState(hasToken());
@@ -25,14 +26,22 @@ export default function App() {
 
   if (!authed) {
     return (
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/p/:tenant/:form" element={<PublicForm />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+      <>
+        <SnackbarHost />
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/p/:tenant/:form" element={<PublicForm />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </>
     );
   }
-  return <Shell />;
+  return (
+    <>
+      <SnackbarHost />
+      <Shell />
+    </>
+  );
 }
 
 function Shell() {
@@ -118,6 +127,7 @@ function Shell() {
     const accent = config?.branding.accent_color || primary;
     if (accent) root.style.setProperty("--accent", accent);
     if (primary) root.style.setProperty("--primary", primary);
+    else if (accent) root.style.setProperty("--primary", accent);
     const secondary = config?.branding.secondary_color;
     if (secondary) root.style.setProperty("--secondary", secondary);
     const name = config?.branding.company_name || config?.branding.app_name || "Workspace";

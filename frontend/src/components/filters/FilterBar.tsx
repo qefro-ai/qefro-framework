@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, type UiField } from "../../api";
 import { datePresetRange } from "../../format";
 import { renderWidget } from "../../metadata/registry";
@@ -60,8 +60,58 @@ function readDrafts(fields: UiField[], params: URLSearchParams): Draft[] {
   return drafts;
 }
 
+function draftIsComplete(draft: Draft) {
+  return Boolean(draft.value || draft.op === "empty" || draft.op === "not_empty" || draft.preset);
+}
+
+function writeFilters(
+  params: URLSearchParams,
+  fields: UiField[],
+  drafts: Draft[],
+): URLSearchParams {
+  const next = new URLSearchParams(params);
+  for (const field of fields) {
+    next.delete(field.name);
+    next.delete(`${field.name}.op`);
+    next.delete(`${field.name}.preset`);
+    for (const op of OPS[field.type] ?? []) next.delete(`${field.name}.${op}`);
+  }
+  for (const draft of drafts) {
+    const field = fields.find((f) => f.name === draft.field);
+    if (!field) continue;
+    if (draft.preset && (field.type === "date" || field.type === "datetime")) {
+      const range = datePresetRange(draft.preset);
+      if (range) {
+        next.set(`${field.name}.between`, `${range.from},${range.to}`);
+        next.set(`${field.name}.preset`, draft.preset);
+      }
+      continue;
+    }
+    if (draft.op === "empty" || draft.op === "not_empty") {
+      next.set(`${field.name}.${draft.op}`, "1");
+      next.set(`${field.name}.op`, draft.op);
+      continue;
+    }
+    const value = draft.op === "between" ? `${draft.value},${draft.value2 ?? ""}` : draft.value;
+    if (!value) continue;
+    next.set(draft.op === "eq" ? field.name : `${field.name}.${draft.op}`, value);
+    next.set(`${field.name}.op`, draft.op);
+  }
+  next.set("page", "1");
+  return next;
+}
+
+function chipLabel(field: UiField, draft: Draft) {
+  if (draft.preset) {
+    return `${field.label}: ${DATE_PRESETS.find(([id]) => id === draft.preset)?.[1] ?? draft.preset}`;
+  }
+  if (draft.op === "empty" || draft.op === "not_empty") {
+    return `${field.label}: ${OP_LABEL[draft.op]}`;
+  }
+  return `${field.label}${draft.value ? `: ${draft.value}` : ""}`;
+}
+
 export function FilterBar({
-  entity,
   fields,
   entities,
   params,
@@ -75,57 +125,47 @@ export function FilterBar({
   onChange: (key: string, value: string) => void;
   onReplace?: (next: URLSearchParams) => void;
 }) {
-  const [saved, setSaved] = useState<Array<{ id: string; name: string }>>([]);
-  const [saveName, setSaveName] = useState("");
   const [drafts, setDrafts] = useState<Draft[]>(() => readDrafts(fields, params));
-  const [open, setOpen] = useState(false);
-  const applied = drafts.filter((d) => d.value || d.op === "empty" || d.op === "not_empty" || d.preset);
-
-  useEffect(() => {
-    api.savedFilters(entity).then((d) => setSaved(d.items)).catch(() => setSaved([]));
-  }, [entity]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [editing, setEditing] = useState<Draft | null>(null);
+  const popover = useRef<HTMLDivElement>(null);
+  const popoverId = useId();
+  const applied = drafts.filter(draftIsComplete);
+  const popoverOpen = pickerOpen || Boolean(editing);
 
   useEffect(() => {
     setDrafts(readDrafts(fields, params));
   }, [fields, params]);
+
+  useEffect(() => {
+    if (!popoverOpen) return;
+    function onPointer(event: MouseEvent) {
+      if (!popover.current?.contains(event.target as Node)) closePopover();
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") closePopover();
+    }
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [popoverOpen]);
 
   const enumFields = useMemo(
     () => fields.filter((f) => f.enum_values && f.enum_values.length > 0),
     [fields],
   );
 
+  function closePopover() {
+    setPickerOpen(false);
+    setEditing(null);
+  }
+
   function apply(nextDrafts = drafts) {
     if (onReplace) {
-      const next = new URLSearchParams(params);
-      for (const field of fields) {
-        next.delete(field.name);
-        next.delete(`${field.name}.op`);
-        next.delete(`${field.name}.preset`);
-        for (const op of OPS[field.type] ?? []) next.delete(`${field.name}.${op}`);
-      }
-      for (const draft of nextDrafts) {
-        const field = fields.find((f) => f.name === draft.field);
-        if (!field) continue;
-        if (draft.preset && (field.type === "date" || field.type === "datetime")) {
-          const range = datePresetRange(draft.preset);
-          if (range) {
-            next.set(`${field.name}.between`, `${range.from},${range.to}`);
-            next.set(`${field.name}.preset`, draft.preset);
-          }
-          continue;
-        }
-        if (draft.op === "empty" || draft.op === "not_empty") {
-          next.set(`${field.name}.${draft.op}`, "1");
-          next.set(`${field.name}.op`, draft.op);
-          continue;
-        }
-        const value = draft.op === "between" ? `${draft.value},${draft.value2 ?? ""}` : draft.value;
-        if (!value) continue;
-        next.set(draft.op === "eq" ? field.name : `${field.name}.${draft.op}`, value);
-        next.set(`${field.name}.op`, draft.op);
-      }
-      next.set("page", "1");
-      onReplace(next);
+      onReplace(writeFilters(params, fields, nextDrafts));
       return;
     }
     for (const draft of nextDrafts) {
@@ -141,18 +181,19 @@ export function FilterBar({
     }
   }
 
+  function commit(draft: Draft, close = true) {
+    const next = drafts.filter((d) => d.field !== draft.field);
+    if (draftIsComplete(draft)) next.push(draft);
+    setDrafts(next);
+    apply(next);
+    if (close) closePopover();
+  }
+
   function reset() {
     setDrafts([]);
+    closePopover();
     if (onReplace) {
-      const next = new URLSearchParams(params);
-      for (const field of fields) {
-        next.delete(field.name);
-        next.delete(`${field.name}.op`);
-        next.delete(`${field.name}.preset`);
-        for (const op of OPS[field.type] ?? []) next.delete(`${field.name}.${op}`);
-      }
-      next.set("page", "1");
-      onReplace(next);
+      onReplace(writeFilters(params, fields, []));
     } else {
       for (const field of fields) {
         onChange(field.name, "");
@@ -163,11 +204,288 @@ export function FilterBar({
     }
   }
 
-  function removeApplied(i: number) {
-    const next = drafts.filter((_, idx) => idx !== i);
+  function removeApplied(fieldName: string) {
+    const next = drafts.filter((d) => d.field !== fieldName);
     setDrafts(next);
     apply(next);
   }
+
+  function startField(field: UiField) {
+    const existing = drafts.find((d) => d.field === field.name);
+    setEditing(existing ?? { field: field.name, op: (OPS[field.type] ?? ["eq"])[0], value: "" });
+    setPickerOpen(false);
+  }
+
+  return (
+    <div className={`filters list-filters${applied.length ? " has-filters" : ""}`}>
+      {applied.length > 0 ? (
+        <div className="chip-row filter-chips" aria-label="Active filters">
+          {applied.map((draft) => {
+            const field = fields.find((f) => f.name === draft.field);
+            if (!field) return null;
+            return (
+              <span key={`${draft.field}-${draft.op}-${draft.value}-${draft.preset ?? ""}`} className="chip is-active">
+                <button
+                  type="button"
+                  className="chip-action"
+                  onClick={() => startField(field)}
+                >
+                  {chipLabel(field, draft)}
+                </button>
+                <button
+                  type="button"
+                  className="chip-remove"
+                  aria-label={`Clear ${field.label} filter`}
+                  onClick={() => removeApplied(draft.field)}
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
+          <button type="button" className="ghost filter-reset" onClick={reset}>
+            Reset
+          </button>
+        </div>
+      ) : null}
+      <div className="filter-popover add-filter" ref={popover}>
+        <button
+          type="button"
+          className={applied.length || popoverOpen ? "tonal is-active" : "ghost"}
+          aria-expanded={popoverOpen}
+          aria-controls={popoverId}
+          aria-haspopup="dialog"
+          onClick={() => {
+            if (popoverOpen) closePopover();
+            else {
+              setEditing(null);
+              setPickerOpen(true);
+            }
+          }}
+        >
+          + Add filter
+        </button>
+        {popoverOpen ? (
+          <div id={popoverId} className="filter-popover-panel" role="dialog" aria-label="Add filter">
+            {editing ? (
+              <FilterEditor
+                fields={fields}
+                entities={entities}
+                draft={editing}
+                onChange={setEditing}
+                onApply={() => commit(editing)}
+                onBack={() => {
+                  setEditing(null);
+                  setPickerOpen(true);
+                }}
+                onImplicit={(next) => {
+                  setEditing(next);
+                  if (draftIsComplete(next)) commit(next);
+                }}
+              />
+            ) : (
+              <div className="filter-picker">
+                {enumFields.length > 0 ? (
+                  <div className="quick-filters" aria-label="Quick filters">
+                    {enumFields.slice(0, 2).map((field) => (
+                      <div key={field.name} className="chip-row">
+                        <span className="muted">{field.label}</span>
+                        {(field.enum_values ?? []).map((v) => {
+                          const active = params.get(field.name) === v;
+                          return (
+                            <button
+                              key={v}
+                              type="button"
+                              className={active ? "chip is-active" : "chip chip-quiet"}
+                              aria-pressed={active}
+                              onClick={() => {
+                                onChange(field.name, active ? "" : v);
+                                closePopover();
+                              }}
+                            >
+                              {v}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                <ul className="option-list" role="listbox">
+                  {fields.map((field) => (
+                    <li key={field.name}>
+                      <button type="button" className="ghost" onClick={() => startField(field)}>
+                        {field.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function FilterEditor({
+  fields,
+  entities,
+  draft,
+  onChange,
+  onApply,
+  onBack,
+  onImplicit,
+}: {
+  fields: UiField[];
+  entities: UiEntity[];
+  draft: Draft;
+  onChange: (next: Draft) => void;
+  onApply: () => void;
+  onBack: () => void;
+  onImplicit: (next: Draft) => void;
+}) {
+  const field = fields.find((f) => f.name === draft.field);
+  if (!field) return null;
+  const ops = OPS[field.type] ?? ["eq", "contains"];
+  const isDate = field.type === "date" || field.type === "datetime";
+  const skipValue = draft.op === "empty" || draft.op === "not_empty" || Boolean(draft.preset);
+
+  function patch(partial: Partial<Draft>, implicit = false) {
+    const next = { ...draft, ...partial };
+    if (implicit) onImplicit(next);
+    else onChange(next);
+  }
+
+  return (
+    <div className="filter-editor">
+      <div className="filter-editor-head">
+        <strong>{field.label}</strong>
+        <button type="button" className="ghost filter-editor-back" onClick={onBack}>
+          Back
+        </button>
+      </div>
+      <label>
+        Condition
+        <select
+          value={draft.op}
+          aria-label={`${field.label} operator`}
+          onChange={(e) => {
+            const op = e.target.value;
+            const next = { ...draft, op, preset: op === "empty" || op === "not_empty" ? "" : draft.preset };
+            if (op === "empty" || op === "not_empty") onImplicit(next);
+            else onChange(next);
+          }}
+        >
+          {ops.map((o) => (
+            <option key={o} value={o}>
+              {OP_LABEL[o] ?? o}
+            </option>
+          ))}
+        </select>
+      </label>
+      {isDate ? (
+        <label>
+          Preset
+          <select
+            aria-label={`${field.label} preset`}
+            value={draft.preset ?? ""}
+            onChange={(e) => {
+              const preset = e.target.value;
+              onImplicit({ ...draft, preset, op: preset ? "between" : draft.op === "between" ? "eq" : draft.op });
+            }}
+          >
+            <option value="">Custom</option>
+            {DATE_PRESETS.map(([id, label]) => (
+              <option key={id} value={id}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      {skipValue ? null : field.enum_values ? (
+        <label>
+          Value
+          <select
+            value={draft.value}
+            onChange={(e) => patch({ value: e.target.value }, Boolean(e.target.value))}
+          >
+            <option value="">Any</option>
+            {field.enum_values.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : field.relation ? (
+        renderWidget({
+          field: { ...field, widget: "relation", required: false },
+          value: draft.value,
+          entities,
+          onChange: (v) => patch({ value: v == null ? "" : String(v) }, v != null && v !== ""),
+        })
+      ) : (
+        <span className="filter-values">
+          <input
+            type={
+              field.type === "date"
+                ? "date"
+                : field.type === "integer" || field.type === "decimal"
+                  ? "number"
+                  : "text"
+            }
+            value={draft.value}
+            aria-label={`${field.label} value`}
+            onChange={(e) => onChange({ ...draft, value: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onApply();
+              }
+            }}
+          />
+          {draft.op === "between" ? (
+            <input
+              type={field.type === "date" ? "date" : field.type === "integer" || field.type === "decimal" ? "number" : "text"}
+              value={draft.value2 ?? ""}
+              aria-label={`${field.label} value to`}
+              onChange={(e) => onChange({ ...draft, value2: e.target.value })}
+            />
+          ) : null}
+        </span>
+      )}
+      <div className="filter-editor-ops">
+        <button type="button" onClick={onApply}>
+          Apply
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function SavedViewsMenu({
+  entity,
+  params,
+  canSave,
+  onChange,
+  onReplace,
+}: {
+  entity: string;
+  params: URLSearchParams;
+  canSave: boolean;
+  onChange: (key: string, value: string) => void;
+  onReplace?: (next: URLSearchParams) => void;
+}) {
+  const [saved, setSaved] = useState<Array<{ id: string; name: string; query?: Record<string, unknown> }>>([]);
+  const [saveName, setSaveName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.savedFilters(entity).then((d) => setSaved(d.items)).catch(() => setSaved([]));
+  }, [entity]);
 
   async function save() {
     if (!saveName.trim()) return;
@@ -175,251 +493,71 @@ export function FilterBar({
     params.forEach((v, k) => {
       if (k !== "page" && !k.endsWith(".op") && !k.endsWith(".preset")) query[k] = v;
     });
-    await api.saveFilter(entity, saveName.trim(), query);
-    setSaveName("");
-    const next = await api.savedFilters(entity);
-    setSaved(next.items);
+    setBusy(true);
+    try {
+      await api.saveFilter(entity, saveName.trim(), query);
+      setSaveName("");
+      const next = await api.savedFilters(entity);
+      setSaved(next.items);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function load(id: string) {
+    const item = saved.find((s) => s.id === id);
+    if (!item) return;
+    api.savedFilters(entity).then((d) => {
+      const full = d.items.find((s) => s.id === item.id);
+      const query = (full?.query ?? item.query ?? {}) as Record<string, string>;
+      if (onReplace) {
+        const next = new URLSearchParams();
+        for (const [k, v] of Object.entries(query)) next.set(k, String(v ?? ""));
+        next.set("page", "1");
+        onReplace(next);
+        return;
+      }
+      for (const [k, v] of Object.entries(query)) onChange(k, String(v ?? ""));
+    });
   }
 
   return (
-    <div className={`filters${applied.length ? " has-filters" : ""}`}>
-      {applied.length > 0 ? (
-        <div className="chip-row filter-chips" aria-label="Active filters">
-          {applied.map((draft) => {
-            const field = fields.find((f) => f.name === draft.field);
-            if (!field) return null;
-            const text = draft.preset
-              ? `${field.label}: ${DATE_PRESETS.find(([id]) => id === draft.preset)?.[1] ?? draft.preset}`
-              : draft.op === "empty" || draft.op === "not_empty"
-                ? `${field.label}: ${OP_LABEL[draft.op]}`
-                : `${field.label}${draft.value ? `: ${draft.value}` : ""}`;
-            return (
-              <button
-                key={`${draft.field}-${draft.op}-${draft.value}`}
-                type="button"
-                className="chip"
-                aria-label={`Clear ${field.label} filter`}
-                onClick={() => {
-                  const idx = drafts.indexOf(draft);
-                  if (idx >= 0) removeApplied(idx);
-                }}
-              >
-                {text} ×
-              </button>
-            );
-          })}
-          <button type="button" className="ghost" onClick={reset}>
-            Reset
-          </button>
-        </div>
-      ) : null}
-      {enumFields.length > 0 ? (
-        <div className="quick-filters" aria-label="Quick filters">
-          {enumFields.slice(0, 2).map((field) => (
-            <div key={field.name} className="chip-row">
-              <span className="muted">{field.label}</span>
-              {(field.enum_values ?? []).map((v) => {
-                const active = params.get(field.name) === v;
-                return (
-                  <button
-                    key={v}
-                    type="button"
-                    className={active ? "is-active" : "ghost"}
-                    aria-pressed={active}
-                    onClick={() => onChange(field.name, active ? "" : v)}
-                  >
-                    {v}
-                  </button>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {drafts.map((draft, i) => {
-        const field = fields.find((f) => f.name === draft.field);
-        if (!field) return null;
-        const ops = OPS[field.type] ?? ["eq", "contains"];
-        const isDate = field.type === "date" || field.type === "datetime";
-        return (
-          <label key={`${draft.field}-${i}`}>
-            {field.label}
-            <select
-              value={draft.op}
-              aria-label={`${field.label} operator`}
-              onChange={(e) => {
-                const next = drafts.slice();
-                next[i] = { ...draft, op: e.target.value };
-                setDrafts(next);
-              }}
-            >
-              {ops.map((o) => (
-                <option key={o} value={o}>
-                  {OP_LABEL[o] ?? o}
-                </option>
-              ))}
-            </select>
-            {isDate ? (
-              <select
-                aria-label={`${field.label} preset`}
-                value={draft.preset ?? ""}
-                onChange={(e) => {
-                  const next = drafts.slice();
-                  next[i] = { ...draft, preset: e.target.value, op: "between" };
-                  setDrafts(next);
-                }}
-              >
-                <option value="">Custom</option>
-                {DATE_PRESETS.map(([id, label]) => (
-                  <option key={id} value={id}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-            {draft.op === "empty" || draft.op === "not_empty" || draft.preset ? null : field.enum_values ? (
-              <select
-                value={draft.value}
-                onChange={(e) => {
-                  const next = drafts.slice();
-                  next[i] = { ...draft, value: e.target.value };
-                  setDrafts(next);
-                }}
-              >
-                <option value="">Any</option>
-                {field.enum_values.map((v) => (
-                  <option key={v} value={v}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            ) : field.relation ? (
-              renderWidget({
-                field: { ...field, widget: "relation", required: false },
-                value: draft.value,
-                entities,
-                onChange: (v) => {
-                  const next = drafts.slice();
-                  next[i] = { ...draft, value: v == null ? "" : String(v) };
-                  setDrafts(next);
-                },
-              })
-            ) : (
-              <span className="filter-values">
-                <input
-                  type={
-                    field.type === "date"
-                      ? "date"
-                      : field.type === "integer" || field.type === "decimal"
-                        ? "number"
-                        : "text"
-                  }
-                  value={draft.value}
-                  onChange={(e) => {
-                    const next = drafts.slice();
-                    next[i] = { ...draft, value: e.target.value };
-                    setDrafts(next);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      apply();
-                    }
-                  }}
-                />
-                {draft.op === "between" ? (
-                  <input
-                    type={field.type === "date" ? "date" : field.type === "integer" || field.type === "decimal" ? "number" : "text"}
-                    value={draft.value2 ?? ""}
-                    onChange={(e) => {
-                      const next = drafts.slice();
-                      next[i] = { ...draft, value2: e.target.value };
-                      setDrafts(next);
-                    }}
-                  />
-                ) : null}
-              </span>
-            )}
-            <button
-              type="button"
-              className="ghost"
-              aria-label={`Remove ${field.label} filter`}
-              onClick={() => removeApplied(i)}
-            >
-              ×
-            </button>
-          </label>
-        );
-      })}
-      <div className="filter-ops">
-        <div className="add-filter">
-          <button
-            type="button"
-            className={applied.length ? "is-active" : "ghost"}
-            aria-expanded={open}
-            onClick={() => setOpen((v) => !v)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setOpen(false);
-            }}
-          >
-            + Add filter
-          </button>
-          {open ? (
-            <ul className="option-list" role="listbox">
-              {fields.map((field) => (
-                <li key={field.name}>
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => {
-                      setDrafts([...drafts, { field: field.name, op: (OPS[field.type] ?? ["eq"])[0], value: "" }]);
-                      setOpen(false);
-                    }}
-                  >
-                    {field.label}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-        <button type="button" onClick={() => apply()}>
-          Apply
-        </button>
-        <div className="saved-filters">
-          <select
-            aria-label="Saved filters"
-            value=""
-            onChange={(e) => {
-              const item = saved.find((s) => s.id === e.target.value);
-              if (!item) return;
-              api.savedFilters(entity).then((d) => {
-                const full = d.items.find((s) => s.id === item.id);
-                const query = (full?.query ?? {}) as Record<string, string>;
-                if (onReplace) {
-                  const next = new URLSearchParams();
-                  for (const [k, v] of Object.entries(query)) next.set(k, String(v ?? ""));
-                  next.set("page", "1");
-                  onReplace(next);
-                  return;
-                }
-                for (const [k, v] of Object.entries(query)) onChange(k, String(v ?? ""));
-              });
-            }}
-          >
-            <option value="">Saved views</option>
-            {saved.map((s) => (
-              <option key={s.id} value={s.id}>
+    <div className="saved-views-menu">
+      <div className="palette-heading">Saved views</div>
+      {saved.length === 0 ? (
+        <p className="muted saved-views-empty">No saved views</p>
+      ) : (
+        <ul className="saved-views-list">
+          {saved.map((s) => (
+            <li key={s.id}>
+              <button type="button" className="ghost" onClick={() => load(s.id)}>
                 {s.name}
-              </option>
-            ))}
-          </select>
-          <input placeholder="Save as…" value={saveName} onChange={(e) => setSaveName(e.target.value)} />
-          <button type="button" className="ghost" onClick={() => void save()}>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {canSave ? (
+        <div className="saved-views-save">
+          <input
+            placeholder="Save as…"
+            value={saveName}
+            aria-label="Save view as"
+            onChange={(e) => setSaveName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void save();
+              }
+            }}
+          />
+          <button type="button" className="ghost" disabled={busy || !saveName.trim()} onClick={() => void save()}>
             Save
           </button>
         </div>
-      </div>
+      ) : (
+        <p className="muted saved-views-hint">Apply a search or filter to save a view.</p>
+      )}
     </div>
   );
 }

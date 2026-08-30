@@ -261,6 +261,7 @@ export default function Dashboard({
       <PageHeader
         kicker="Overview"
         title={label}
+        description="Live counts and recent work for this workspace."
         actions={
           quick.length > 0 ? (
             <>

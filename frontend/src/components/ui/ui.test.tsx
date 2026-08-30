@@ -1,9 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StatusBadge } from "./StatusBadge";
 import { EmptyState, ErrorState, Skeleton } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { SectionHeader } from "./SectionHeader";
+import { SnackbarHost, showSnackbar } from "./Snackbar";
+import { buttonClass } from "../../theme/tokens";
 
 describe("StatusBadge", () => {
   it("uses metadata indicators", () => {
@@ -44,9 +46,9 @@ describe("empty loading error", () => {
   });
 
   it("renders a consistent page header", () => {
-    render(<PageHeader kicker="Note" title="Notes" actions={<button>New Note</button>} />);
-    expect(screen.getByText("Note")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Notes" })).toBeInTheDocument();
+    render(<PageHeader kicker="Overview" title="Today" actions={<button>New Note</button>} />);
+    expect(screen.getByText("Overview")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Today" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New Note" })).toBeInTheDocument();
   });
 
@@ -54,5 +56,44 @@ describe("empty loading error", () => {
     render(<SectionHeader title="Details" actions={<a href="/x">View all</a>} />);
     expect(screen.getByRole("heading", { name: "Details" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View all" })).toBeInTheDocument();
+  });
+
+  it("hides a kicker that only repeats the title", () => {
+    render(<PageHeader kicker="Customer" title="Customers" />);
+    expect(screen.queryByText("Customer")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Customers" })).toBeInTheDocument();
+  });
+});
+
+describe("M3 buttons and snackbar", () => {
+  it("renders filled, tonal, outlined, text, icon, and destructive buttons", () => {
+    render(
+      <>
+        <button className={buttonClass("filled")}>Save</button>
+        <button className={buttonClass("tonal")}>Tonal</button>
+        <button className={buttonClass("outlined")}>Outlined</button>
+        <button className={buttonClass("text")}>Text</button>
+        <button className={buttonClass("icon")} aria-label="More">
+          ⋮
+        </button>
+        <button className={buttonClass("destructive")}>Delete</button>
+      </>,
+    );
+    expect(screen.getByRole("button", { name: "Save" })).toHaveClass("btn");
+    expect(screen.getByRole("button", { name: "Tonal" })).toHaveClass("tonal");
+    expect(screen.getByRole("button", { name: "Outlined" })).toHaveClass("ghost");
+    expect(screen.getByRole("button", { name: "Text" })).toHaveClass("text");
+    expect(screen.getByRole("button", { name: "More" })).toHaveClass("icon-btn");
+    expect(screen.getByRole("button", { name: "Delete" })).toHaveClass("danger");
+  });
+
+  it("announces snackbar messages", async () => {
+    render(<SnackbarHost />);
+    await act(async () => {
+      showSnackbar("Saved");
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent("Saved");
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });

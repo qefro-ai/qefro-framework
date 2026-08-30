@@ -369,6 +369,7 @@ mod tests {
                 dependencies: BTreeMap::new(),
                 navigation: Vec::new(),
                 depends_on: Vec::new(),
+                branding: Default::default(),
             },
             entities: vec![EntityDef::new("Customer")
                 .field(FieldDef::string("name").required())

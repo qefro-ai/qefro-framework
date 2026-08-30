@@ -93,6 +93,9 @@ impl AppBundle {
             .api_version(&self.manifest.api_version)
             .framework_version(&self.manifest.framework_version)
             .source(&self.manifest.source);
+        if !self.manifest.branding.is_empty() {
+            builder = builder.branding(self.manifest.branding);
+        }
         for (name, req) in &self.manifest.dependencies {
             builder = builder.dependency(name, req);
         }

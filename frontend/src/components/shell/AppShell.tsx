@@ -82,7 +82,13 @@ export function AppShell({
           ☰
         </button>
         <div className="topbar-brand">
-          {logo ? <img src={logo} alt="" className="logo" /> : null}
+          {logo ? (
+            <img src={logo} alt="" className="logo" />
+          ) : (
+            <span className="brand-mark" aria-hidden>
+              {(appName.trim().charAt(0) || "Q").toUpperCase()}
+            </span>
+          )}
           <strong>{appName}</strong>
         </div>
         <button type="button" className="ghost search-trigger" onClick={() => setPalette(true)}>

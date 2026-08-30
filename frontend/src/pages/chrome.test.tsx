@@ -148,4 +148,45 @@ describe("permission chrome", () => {
     expect(screen.getByRole("button", { name: /Clear filters/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /New Note/ })).not.toBeInTheDocument();
   });
+
+  it("uses a compact list toolbar without a redundant kicker", async () => {
+    vi.spyOn(api, "savedFilters").mockResolvedValue({ items: [] });
+    const customer: UiEntity = {
+      entity: "Customer",
+      label: "Customer",
+      label_plural: "Customers",
+      slug: "customers",
+      searchable: true,
+      display_field: "name",
+      standalone: true,
+      views: { card: { enabled: true } },
+      permissions: { list: true, create: true, read: true, update: true, delete: true },
+      fields: [
+        field({ name: "name", label: "Name" }),
+        field({
+          name: "status",
+          label: "Status",
+          type: "enum",
+          widget: "status",
+          filter: true,
+          enum_values: ["Active", "Inactive"],
+        }),
+      ],
+    };
+    wrap(<EntityList entities={[customer]} />, "/customers");
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Customers" })).toBeInTheDocument());
+    expect(document.querySelector(".page-header .badge")).toBeNull();
+    expect(screen.getByLabelText("Search Customers")).toBeInTheDocument();
+    expect(document.querySelector(".search-icon")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "+ Add filter" })).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "Views" })).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Save as…")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Saved filters")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Columns" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "List options" }));
+    expect(screen.getByText("Columns")).toBeInTheDocument();
+    expect(screen.getByText("Page size")).toBeInTheDocument();
+    expect(screen.getByText("Saved views")).toBeInTheDocument();
+    expect(screen.getByText(/Apply a search or filter to save a view/i)).toBeInTheDocument();
+  });
 });

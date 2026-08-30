@@ -2,7 +2,7 @@ use qefro_agent::ToolRegistry;
 use qefro_auth::AuthService;
 use qefro_core::{
     AppManifest, BlobStore, DashboardDef, Entitlements, MemoryRateLimiter, NotificationDef,
-    PrintFormat, ReportDef, StudioCatalog, WebhookDef,
+    OpContext, PrintFormat, ReportDef, StudioCatalog, TenantBranding, TenantConfig, WebhookDef,
 };
 use qefro_db::{
     AttachmentStore, AutomationEngine, BlobMetaStore, EntityService, MetadataChangeService,
@@ -58,5 +58,22 @@ impl AppState {
 
     pub fn print_formats_live(&self) -> Vec<PrintFormat> {
         self.catalog.merge_print_formats(&self.print_formats)
+    }
+
+    /// Tenant branding wins; empty fields take enabled-app defaults, then tenant name.
+    pub fn resolve_branding(
+        &self,
+        ctx: &OpContext,
+        config: &TenantConfig,
+        tenant_name: Option<&str>,
+    ) -> TenantBranding {
+        let defaults = self.modules.iter().filter_map(|module| {
+            if ctx.allows_app(Some(module.name.as_str())) && !module.branding.is_empty() {
+                Some(module.branding.clone())
+            } else {
+                None
+            }
+        });
+        TenantBranding::resolve(&config.branding, defaults, tenant_name)
     }
 }

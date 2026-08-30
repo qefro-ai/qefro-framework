@@ -66,6 +66,22 @@ describe("widgets", () => {
     expect(onChange).toHaveBeenCalled();
   });
 
+  it("marks invalid and readonly fields for assistive tech", () => {
+    wrap(
+      <TextInput
+        field={field({ name: "name", widget: "text", required: true, readonly: true })}
+        value="Ada"
+        invalid
+        onChange={() => undefined}
+        entities={[]}
+      />,
+    );
+    const input = screen.getByRole("textbox");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveAttribute("aria-required", "true");
+    expect(input).toHaveAttribute("readonly");
+  });
+
   it("number", async () => {
     const onChange = vi.fn();
     wrap(

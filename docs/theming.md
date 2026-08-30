@@ -1,6 +1,6 @@
 # Theming
 
-Tenant branding (logo, favicon, accent / primary / secondary) comes from tenant settings. The renderer sets CSS variables (`--accent`, `--primary`). **Arbitrary tenant CSS or JavaScript is rejected** — there is no injection surface.
+Tenant branding (logo, favicon, accent / primary / secondary) comes from tenant settings. Empty fields are filled from the enabled app’s default branding (`AppModule` / `[branding]` in `app.toml`), then the tenant name. The renderer sets CSS variables (`--accent`, `--primary`, `--secondary`). **Arbitrary tenant CSS or JavaScript is rejected** — there is no injection surface.
 
 User appearance (this device, scoped to tenant + user):
 

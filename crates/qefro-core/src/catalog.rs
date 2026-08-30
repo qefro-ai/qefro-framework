@@ -40,6 +40,8 @@ pub struct AppFileManifest {
     /// Legacy list of names. Merged into `dependencies` on parse.
     #[serde(default)]
     pub depends_on: Vec<String>,
+    #[serde(default)]
+    pub branding: crate::ui::TenantBranding,
 }
 
 fn default_version() -> String {
@@ -93,6 +95,7 @@ impl From<AppFileManifest> for AppManifest {
             dependencies: value.dependencies,
             navigation: value.navigation,
             depends_on: value.depends_on,
+            branding: value.branding,
         }
     }
 }
@@ -423,5 +426,25 @@ entity = "Order"
         .unwrap();
         assert_eq!(m.dependencies.get("inventory").unwrap(), ">=1.0,<2.0");
         assert_eq!(m.navigation[0].entity, "Order");
+    }
+
+    #[test]
+    fn parses_branding_table() {
+        let m = parse_app_toml(
+            r##"
+name = "restaurant"
+version = "1.0.0"
+
+[branding]
+app_name = "Restaurant"
+primary_color = "#9a3412"
+accent_color = "#c2410c"
+secondary_color = "#f4f1ea"
+"##,
+        )
+        .unwrap();
+        assert_eq!(m.branding.app_name.as_deref(), Some("Restaurant"));
+        assert_eq!(m.branding.primary_color.as_deref(), Some("#9a3412"));
+        assert_eq!(m.branding.accent_color.as_deref(), Some("#c2410c"));
     }
 }

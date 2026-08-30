@@ -14,6 +14,7 @@ import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
 import { ActionMenu } from "../components/ui/ActionMenu";
+import { showSnackbar } from "../components/ui/Snackbar";
 import { FieldValue } from "../components/fields/FieldValue";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { friendlyError } from "../friendlyError";
@@ -126,6 +127,8 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
       await api.action(slug, id, name);
       setError("");
       await load();
+      const action = actions.find((a) => a.name === name);
+      showSnackbar(action?.label ? `${action.label} done` : "Done");
     } catch (e) {
       setError(friendlyError(e));
     }
@@ -164,6 +167,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
                   setRow(next);
                   setError("");
                   await load();
+                  showSnackbar("Updated");
                 } catch (e) {
                   setError(friendlyError(e));
                 }
@@ -182,6 +186,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
                     if (!confirm("Delete this record?")) return;
                     try {
                       await api.remove(slug, id);
+                      showSnackbar("Deleted");
                       navigate(`/${slug}`);
                     } catch (e) {
                       setError(friendlyError(e));

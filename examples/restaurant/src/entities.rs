@@ -99,7 +99,7 @@ pub fn restaurant() -> EntityDef {
         .label("Restaurant")
         .label_plural("Restaurants")
         .table_name("restaurants")
-        .description("Locations, branding, and contact details")
+        .description("Locations, hours, and brand details for each restaurant")
         .field(FieldDef::string("name").required().searchable())
         .field(
             FieldDef::string("timezone")
@@ -135,7 +135,7 @@ pub fn restaurant_settings() -> EntityDef {
         .label_plural("Restaurant Settings")
         .table_name("restaurant_settings")
         .slug_name("restaurant-settings")
-        .description("Tax, currency, and timezone defaults")
+        .description("Tax, currency, and service defaults for this workspace")
         .field(FieldDef::string("restaurant_name").searchable().nullable())
         .field(
             FieldDef::string("timezone")
@@ -157,7 +157,7 @@ pub fn branch() -> EntityDef {
         .label_plural("Branches")
         .table_name("branches")
         .slug_name("branches")
-        .description("Addresses and dining rooms")
+        .description("Dining rooms and street addresses")
         .field(FieldDef::string("name").required().searchable())
         .field(
             FieldDef::many_to_one("restaurant_id", "Restaurant")
@@ -396,13 +396,64 @@ pub fn order() -> EntityDef {
         .table_name("orders")
         .icon("receipt")
         .workflow("order")
+        .action(EntityActionDef::new("schedule").label("Schedule Pickup"))
         .views(EntityViews {
             default: Some("kanban".into()),
+            list: Some(ListViewSpec {
+                columns: vec![
+                    ListColumnSpec {
+                        field: "doc_no".into(),
+                        width: None,
+                        widget: None,
+                    },
+                    ListColumnSpec {
+                        field: "order_type".into(),
+                        width: None,
+                        widget: None,
+                    },
+                    ListColumnSpec {
+                        field: "status".into(),
+                        width: None,
+                        widget: Some("status".into()),
+                    },
+                    ListColumnSpec {
+                        field: "customer_id".into(),
+                        width: None,
+                        widget: Some("relation".into()),
+                    },
+                    ListColumnSpec {
+                        field: "table_id".into(),
+                        width: None,
+                        widget: Some("relation".into()),
+                    },
+                    ListColumnSpec {
+                        field: "pickup_at".into(),
+                        width: None,
+                        widget: Some("datetime".into()),
+                    },
+                    ListColumnSpec {
+                        field: "order_date".into(),
+                        width: None,
+                        widget: Some("date".into()),
+                    },
+                    ListColumnSpec {
+                        field: "grand_total".into(),
+                        width: None,
+                        widget: Some("currency".into()),
+                    },
+                ],
+                default_sort: Some(SortSpec {
+                    field: "created_at".into(),
+                    direction: Some("desc".into()),
+                }),
+                ..Default::default()
+            }),
             kanban: Some(KanbanViewSpec {
                 group_by: Some("status".into()),
                 card: Some(KanbanCardSpec {
                     title: Some("doc_no".into()),
-                    subtitle: Some("status".into()),
+                    subtitle: Some("order_type".into()),
+                    fields: vec!["pickup_at".into(), "table_id".into()],
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -439,20 +490,48 @@ pub fn order() -> EntityDef {
                 .total_fields(&["subtotal", "tax", "discount", "grand_total"]),
         )
         .field(
+            FieldDef::enum_values("order_type", vec!["Dine-in", "Takeaway"])
+                .required()
+                .default_value(json!("Dine-in"))
+                .label("Type")
+                .ui(UiConfig::radio())
+                .help("Dine-in is served at a table. Takeaway is collected at the counter — walk-in or a scheduled pickup.")
+                .filterable()
+                .section("Details"),
+        )
+        .field(
             FieldDef::many_to_one("customer_id", "Customer")
                 .nullable()
                 .label("Customer")
-                .search_related(),
+                .search_related()
+                .section("Details"),
         )
         .field(
             FieldDef::many_to_one("table_id", "DiningTable")
                 .nullable()
-                .label("Table"),
+                .label("Table")
+                .help("Required when confirming a dine-in order.")
+                .visible_when("order_type", json!("Dine-in"))
+                .section("Details"),
         )
         .field(
             FieldDef::many_to_one("reservation_id", "Reservation")
                 .nullable()
-                .label("Reservation"),
+                .label("Reservation")
+                .list(false)
+                .visible_when("order_type", json!("Dine-in"))
+                .section("Details"),
+        )
+        .field(
+            FieldDef::datetime("pickup_at")
+                .nullable()
+                .label("Pickup at")
+                .ui(UiConfig::datetime().tenant_timezone())
+                .help("When the guest will collect. Required to schedule a prebooked takeaway; leave empty for walk-in.")
+                .filterable()
+                .sortable()
+                .visible_when("order_type", json!("Takeaway"))
+                .section("Takeaway"),
         )
         .field(
             FieldDef::date("order_date")
@@ -461,13 +540,15 @@ pub fn order() -> EntityDef {
                 .filterable()
                 .sortable()
                 .indexed()
-                .ui(UiConfig::date()),
+                .ui(UiConfig::date())
+                .section("Details"),
         )
         .field(
             FieldDef::enum_values(
                 "status",
                 vec![
                     "Draft",
+                    "Scheduled",
                     "Confirmed",
                     "Preparing",
                     "Ready",
@@ -477,7 +558,8 @@ pub fn order() -> EntityDef {
             )
             .required()
             .default_value(json!("Draft"))
-            .filterable(),
+            .filterable()
+            .section("Details"),
         )
         .child_table(ChildTableDef::new("items", "OrderItem").parent_field("order_id"))
         .field(
@@ -554,7 +636,7 @@ pub fn payment() -> EntityDef {
         .label("Payment")
         .label_plural("Payments")
         .table_name("payments")
-        .description("Tendered payments against orders")
+        .description("Captured, pending, and refunded tender")
         .field(
             FieldDef::many_to_one("order_id", "Order")
                 .required()

@@ -354,6 +354,7 @@ async fn order_ready_automation_notifies_and_webhooks() {
             token,
             json!({
                 "order_date": "2026-08-30",
+                "order_type": "Takeaway",
                 "items": [{
                     "menu_item_id": menu["id"],
                     "quantity": 1,
@@ -445,4 +446,332 @@ async fn order_ready_automation_notifies_and_webhooks() {
     assert_eq!(status, StatusCode::OK, "{deliveries}");
     let rows = deliveries["deliveries"].as_array().cloned().unwrap_or_default();
     assert!(!rows.is_empty(), "order-ready webhook: {deliveries}");
+}
+
+#[tokio::test]
+async fn empty_tenant_branding_picks_up_restaurant_defaults() {
+    let url = db_url();
+    let mut rt = QefroRuntime::new(Config {
+        database_url: url,
+        jwt_secret: "test-secret".into(),
+        bind: "127.0.0.1:0".into(),
+        ..Config::default()
+    });
+    rt.install(installed());
+    let (router, _) = rt.build().await.unwrap();
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let tenant_name = format!("Harbor Table {suffix}");
+
+    let (status, auth) = json(
+        clone_router(&router),
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/register")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "name": "Ada",
+                    "email": format!("brand-{suffix}@example.com"),
+                    "password": "password123",
+                    "tenant_name": tenant_name,
+                    "tenant_slug": format!("brand-{suffix}")
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{auth}");
+    let token = auth["access_token"].as_str().unwrap();
+
+    let (status, ui) = json(clone_router(&router), get("/api/v1/meta/ui", token)).await;
+    assert_eq!(status, StatusCode::OK, "{ui}");
+    assert_eq!(ui["schema_version"], "1");
+    assert_eq!(ui["branding"]["company_name"], tenant_name);
+    assert_eq!(ui["branding"]["app_name"], "Qefro Kitchen");
+    assert_eq!(ui["branding"]["primary_color"], "#9a3412");
+    assert_eq!(ui["branding"]["accent_color"], "#c2410c");
+    assert_eq!(ui["branding"]["secondary_color"], "#f4f1ea");
+    assert!(ui["branding"]["logo"]
+        .as_str()
+        .is_some_and(|s| s.starts_with("data:image/svg+xml")));
+    assert_eq!(ui["default_dashboard"], "restaurant-ops");
+    let nav: Vec<&str> = ui["navigation"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert_eq!(
+        nav,
+        vec!["orders", "reservations", "tables", "menu-items", "customers"]
+    );
+    let hidden: Vec<&str> = ui["hidden_entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(hidden.contains(&"people"));
+    assert!(hidden.contains(&"users"));
+}
+
+async fn register(router: &axum::Router, prefix: &str) -> String {
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let (status, auth) = json(
+        clone_router(router),
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/auth/register")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "name": "Ada",
+                    "email": format!("{prefix}-{suffix}@example.com"),
+                    "password": "password123",
+                    "tenant_name": format!("{prefix}-{suffix}"),
+                    "tenant_slug": format!("{prefix}-{suffix}")
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{auth}");
+    auth["access_token"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn takeaway_walk_in_and_scheduled_pickup() {
+    let url = db_url();
+    let mut rt = QefroRuntime::new(Config {
+        database_url: url,
+        jwt_secret: "test-secret".into(),
+        bind: "127.0.0.1:0".into(),
+        ..Config::default()
+    });
+    rt.install(installed());
+    let (router, _) = rt.build().await.unwrap();
+    let token = register(&router, "takeaway").await;
+
+    let restaurant = json(
+        clone_router(&router),
+        post(
+            "/api/v1/restaurants",
+            &token,
+            json!({ "name": "Demo", "timezone": "UTC" }),
+        ),
+    )
+    .await
+    .1;
+    let branch = json(
+        clone_router(&router),
+        post(
+            "/api/v1/branches",
+            &token,
+            json!({ "name": "Main", "restaurant_id": restaurant["id"] }),
+        ),
+    )
+    .await
+    .1;
+    let table = json(
+        clone_router(&router),
+        post(
+            "/api/v1/tables",
+            &token,
+            json!({
+                "code": format!("T-{}", &Uuid::new_v4().to_string()[..8]),
+                "branch_id": branch["id"],
+                "seats": 2
+            }),
+        ),
+    )
+    .await
+    .1;
+    let category = json(
+        clone_router(&router),
+        post(
+            "/api/v1/menu-categories",
+            &token,
+            json!({ "name": "Mains", "restaurant_id": restaurant["id"] }),
+        ),
+    )
+    .await
+    .1;
+    let menu = json(
+        clone_router(&router),
+        post(
+            "/api/v1/menu-items",
+            &token,
+            json!({
+                "name": "Burger",
+                "category_id": category["id"],
+                "price": 12
+            }),
+        ),
+    )
+    .await
+    .1;
+    let items = json!([{
+        "menu_item_id": menu["id"],
+        "quantity": 1,
+        "unit_price": 12
+    }]);
+
+    let dine_in = json(
+        clone_router(&router),
+        post("/api/v1/orders", &token, json!({ "items": items })),
+    )
+    .await
+    .1;
+    assert_eq!(dine_in["order_type"], "Dine-in");
+    assert_eq!(dine_in["status"], "Draft");
+    let dine_id = dine_in["id"].as_str().unwrap();
+    let (status, no_table) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/orders/{dine_id}/actions/confirm"),
+            &token,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{no_table}");
+
+    let (status, patched) = json(
+        clone_router(&router),
+        Request::builder()
+            .method("PATCH")
+            .uri(&format!("/api/v1/orders/{dine_id}"))
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::from(json!({ "table_id": table["id"] }).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{patched}");
+    let (status, confirmed_dine) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/orders/{dine_id}/actions/confirm"),
+            &token,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{confirmed_dine}");
+    assert_eq!(confirmed_dine["status"], "Confirmed");
+
+    let walk_in = json(
+        clone_router(&router),
+        post(
+            "/api/v1/orders",
+            &token,
+            json!({
+                "order_type": "Takeaway",
+                "items": items
+            }),
+        ),
+    )
+    .await
+    .1;
+    assert_eq!(walk_in["order_type"], "Takeaway");
+    let walk_id = walk_in["id"].as_str().unwrap();
+    let (status, too_soon) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/orders/{walk_id}/actions/schedule"),
+            &token,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{too_soon}");
+    let (status, confirmed_walk) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/orders/{walk_id}/actions/confirm"),
+            &token,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{confirmed_walk}");
+    assert_eq!(confirmed_walk["status"], "Confirmed");
+    assert!(confirmed_walk
+        .get("table_id")
+        .and_then(|v| v.as_str())
+        .is_none());
+
+    let booked = json(
+        clone_router(&router),
+        post(
+            "/api/v1/orders",
+            &token,
+            json!({
+                "order_type": "Takeaway",
+                "pickup_at": "2026-08-28T18:30:00Z",
+                "items": items
+            }),
+        ),
+    )
+    .await
+    .1;
+    let booked_id = booked["id"].as_str().unwrap();
+    let (status, scheduled) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/orders/{booked_id}/actions/schedule"),
+            &token,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{scheduled}");
+    assert_eq!(scheduled["status"], "Scheduled");
+    assert!(scheduled["pickup_at"].as_str().unwrap().contains("18:30"));
+
+    let (status, confirmed_booked) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/orders/{booked_id}/actions/confirm"),
+            &token,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{confirmed_booked}");
+    assert_eq!(confirmed_booked["status"], "Confirmed");
+    let (status, preparing) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/orders/{booked_id}/actions/start_preparation"),
+            &token,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preparing}");
+    let (status, ready) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/orders/{booked_id}/actions/mark_ready"),
+            &token,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ready}");
+    assert_eq!(ready["status"], "Ready");
+    let (status, completed) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/orders/{booked_id}/actions/complete"),
+            &token,
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{completed}");
+    assert_eq!(completed["status"], "Completed");
 }

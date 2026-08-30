@@ -301,6 +301,8 @@ async fn meta_entity(
 
 async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<Value>, ApiError> {
     let config = state.tenants.get_config(ctx.tenant_id).await?;
+    let tenant = state.tenants.get(ctx.tenant_id).await.ok();
+    let branding = state.resolve_branding(&ctx, &config, tenant.as_ref().map(|t| t.name.as_str()));
     let permissions = state.entities.permissions();
     let entities: Vec<_> = state
         .entities
@@ -348,7 +350,7 @@ async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<
     Ok(Json(json!({
         "schema_version": qefro_core::UI_SCHEMA_VERSION,
         "entities": entities,
-        "branding": config.branding,
+        "branding": branding,
         "enabled_apps": ctx.enabled_apps,
         "features": config.features.flags,
         "locale": config.business.locale,
@@ -991,7 +993,10 @@ async fn print_document(
         .print_document(&ctx, &slug, id, format_name)
         .await?;
     let entity = state.entities.registry().get(&slug)?;
-    let config = state.tenants.get_config(ctx.tenant_id).await?;
+    let mut config = state.tenants.get_config(ctx.tenant_id).await?;
+    let tenant = state.tenants.get(ctx.tenant_id).await.ok();
+    config.branding =
+        state.resolve_branding(&ctx, &config, tenant.as_ref().map(|t| t.name.as_str()));
     let html = qefro_db::print::render_html(&entity, &format, &record, &items, &config);
     Ok(axum::response::Html(html))
 }
@@ -1028,7 +1033,10 @@ async fn get_tenant_config(
     State(state): State<AppState>,
     Auth(ctx): Auth,
 ) -> Result<Json<Value>, ApiError> {
-    let config = state.tenants.get_config(ctx.tenant_id).await?;
+    let mut config = state.tenants.get_config(ctx.tenant_id).await?;
+    let tenant = state.tenants.get(ctx.tenant_id).await.ok();
+    config.branding =
+        state.resolve_branding(&ctx, &config, tenant.as_ref().map(|t| t.name.as_str()));
     Ok(Json(serde_json::to_value(config).unwrap_or(json!({}))))
 }
 
@@ -1058,12 +1066,13 @@ async fn get_tenant(
 ) -> Result<Json<Value>, ApiError> {
     let tenant = state.tenants.get(ctx.tenant_id).await?;
     let config = state.tenants.get_config(ctx.tenant_id).await?;
+    let branding = state.resolve_branding(&ctx, &config, Some(tenant.name.as_str()));
     Ok(Json(json!({
         "id": tenant.id,
         "name": tenant.name,
         "slug": tenant.slug,
         "created_at": tenant.created_at,
-        "branding": config.branding,
+        "branding": branding,
         "ui_config": config.ui_config,
         "enabled_apps": ctx.enabled_apps,
         "features": config.features.flags,
@@ -1089,8 +1098,10 @@ async fn get_branding(
     Auth(ctx): Auth,
 ) -> Result<Json<Value>, ApiError> {
     let config = state.tenants.get_config(ctx.tenant_id).await?;
+    let tenant = state.tenants.get(ctx.tenant_id).await.ok();
+    let branding = state.resolve_branding(&ctx, &config, tenant.as_ref().map(|t| t.name.as_str()));
     Ok(Json(
-        serde_json::to_value(config.branding).unwrap_or(json!({})),
+        serde_json::to_value(branding).unwrap_or(json!({})),
     ))
 }
 

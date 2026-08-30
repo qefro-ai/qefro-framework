@@ -4,6 +4,14 @@ label = "Restaurant"
 description = "Tables, reservations, menus, orders, and payments"
 depends_on = ["qefro-framework"]
 
+[branding]
+app_name = "Qefro Kitchen"
+primary_color = "#9a3412"
+accent_color = "#c2410c"
+secondary_color = "#f4f1ea"
+logo = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%239a3412'/%3E%3Ccircle cx='16' cy='19' r='7.25' fill='none' stroke='%23f4f1ea' stroke-width='1.8'/%3E%3Cpath fill='%23f4f1ea' d='M11.2 6.4h1.9v10.2h-1.9zm7.4 0h1.45v10.2H18.6zm1.9 0H21.9v10.2h-1.4z'/%3E%3C/svg%3E"
+favicon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%239a3412'/%3E%3Ccircle cx='16' cy='19' r='7.25' fill='none' stroke='%23f4f1ea' stroke-width='1.8'/%3E%3Cpath fill='%23f4f1ea' d='M11.2 6.4h1.9v10.2h-1.9zm7.4 0h1.45v10.2H18.6zm1.9 0H21.9v10.2h-1.4z'/%3E%3C/svg%3E"
+
 [[navigation]]
 label = "Reservations"
 entity = "Reservation"

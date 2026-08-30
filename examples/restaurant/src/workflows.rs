@@ -35,6 +35,7 @@ pub fn reservation() -> WorkflowDef {
 
 pub fn order() -> WorkflowDef {
     WorkflowDef::new("order", "Order", "Draft")
+        .state(StateDef::new("Scheduled"))
         .state(StateDef::new("Confirmed"))
         .state(StateDef::new("Preparing"))
         .state(StateDef::new("Ready"))
@@ -42,6 +43,16 @@ pub fn order() -> WorkflowDef {
         .state(StateDef::new("Cancelled").terminal())
         .transition(
             TransitionDef::new("confirm", "Draft", "Confirmed")
+                .roles(&["Manager", "Staff"])
+                .label("Confirm"),
+        )
+        .transition(
+            TransitionDef::new("schedule", "Draft", "Scheduled")
+                .roles(&["Manager", "Staff"])
+                .label("Schedule Pickup"),
+        )
+        .transition(
+            TransitionDef::new("confirm", "Scheduled", "Confirmed")
                 .roles(&["Manager", "Staff"])
                 .label("Confirm"),
         )
@@ -64,6 +75,9 @@ pub fn order() -> WorkflowDef {
             TransitionDef::new("cancel", "Draft", "Cancelled")
                 .label("Cancel")
                 .confirm("Cancel this order?"),
+        )
+        .transition(
+            TransitionDef::new("cancel_scheduled", "Scheduled", "Cancelled").label("Cancel"),
         )
         .transition(
             TransitionDef::new("cancel_confirmed", "Confirmed", "Cancelled")

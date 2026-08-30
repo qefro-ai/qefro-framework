@@ -10,6 +10,12 @@ source = "builtin"
 
 [dependencies]
 
+[branding]
+app_name = "Qefro Kitchen"
+primary_color = "#9a3412"
+accent_color = "#c2410c"
+secondary_color = "#f4f1ea"
+
 [[navigation]]
 label = "Reservations"
 entity = "Reservation"

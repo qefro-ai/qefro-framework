@@ -3,9 +3,10 @@
 Dashboard definitions stay in application metadata. The frontend does not embed SQL.
 
 ```rust
-DashboardDef::new("restaurant-ops", "Restaurant operations")
+DashboardDef::new("restaurant-ops", "Floor operations")
     .card(DashboardCard::kpi("Today's reservations", "Reservation").filter("reservation_date", "today"))
     .card(DashboardCard::sum("Today's sales", "Payment", "amount").filter("status", "captured").roles(&["Admin", "Manager"]))
+    .card(DashboardCard::count("Upcoming pickups", "Order").filter("status", "Scheduled"))
     .card(DashboardCard::workflow("Kitchen status", "Order"))
     .card(DashboardCard::chart("Sales trend", "Order", "area", "order_date").metric_name("sum").measure_field("grand_total"))
     .card(DashboardCard::activity("Recent order events", "Order", 8))

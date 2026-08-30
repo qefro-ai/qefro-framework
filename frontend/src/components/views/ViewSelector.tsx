@@ -20,14 +20,14 @@ export function ViewSelector({
 }) {
   if (views.length <= 1) return null;
   return (
-    <div className="view-selector" role="tablist" aria-label="Views">
+    <div className="view-selector view-selector-compact" role="tablist" aria-label="Views">
       {views.map((view) => (
         <button
           key={view}
           type="button"
           role="tab"
           aria-selected={current === view}
-          className={current === view ? "is-active" : "ghost"}
+          className={current === view ? "is-active" : undefined}
           onClick={() => onChange(view)}
         >
           {LABELS[view] || view}

@@ -35,5 +35,6 @@ describe("Settings setup", () => {
     );
     expect(screen.getByRole("link", { name: /Restaurants/ })).toHaveAttribute("href", "/restaurants");
     expect(screen.getByText("Workspace settings")).toBeInTheDocument();
+    expect(document.querySelector(".setup-grid")).not.toBeNull();
   });
 });

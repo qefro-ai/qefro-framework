@@ -49,13 +49,23 @@ pub fn register(app: InstalledApp) -> InstalledApp {
     .operation(
         OperationDef::new("confirm", "Order")
             .label("Confirm")
-            .description("Confirm a draft order after validating items")
+            .description("Confirm a draft or scheduled order after validating items")
             .permission("order.confirm")
             .roles(&["Manager", "Staff"])
             .transition("confirm")
             .event("order.confirmed")
             .job("notify_order_confirmed"),
         order::ConfirmOrder,
+    )
+    .operation(
+        OperationDef::new("schedule", "Order")
+            .label("Schedule Pickup")
+            .description("Hold a takeaway order for a booked pickup time")
+            .permission("order.schedule")
+            .roles(&["Manager", "Staff"])
+            .transition("schedule")
+            .event("order.scheduled"),
+        order::SchedulePickup,
     )
     .operation(
         OperationDef::new("start_preparation", "Order")

@@ -32,6 +32,8 @@ pub struct AppModule {
     pub notifications: Vec<NotificationDef>,
     pub webhooks: Vec<WebhookDef>,
     pub automations: Vec<crate::automation::AutomationDef>,
+    /// Default tenant chrome when the tenant has not set branding yet.
+    pub branding: crate::ui::TenantBranding,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -92,6 +94,8 @@ pub struct AppManifest {
     /// Legacy alias. Prefer `[dependencies]`.
     #[serde(default)]
     pub depends_on: Vec<String>,
+    #[serde(default, skip_serializing_if = "crate::ui::TenantBranding::is_empty")]
+    pub branding: crate::ui::TenantBranding,
 }
 
 fn default_api_version() -> String {
@@ -122,6 +126,7 @@ impl AppManifest {
             dependencies: module.dependencies.clone(),
             navigation: module.navigation.clone(),
             depends_on,
+            branding: module.branding.clone(),
         }
     }
 }
@@ -149,6 +154,7 @@ impl AppModule {
                 notifications: Vec::new(),
                 webhooks: Vec::new(),
                 automations: Vec::new(),
+                branding: crate::ui::TenantBranding::default(),
             },
         }
     }
@@ -333,6 +339,11 @@ impl AppModuleBuilder {
             def.module = Some(self.module.name.clone());
         }
         self.module.automations.push(def);
+        self
+    }
+
+    pub fn branding(mut self, branding: crate::ui::TenantBranding) -> Self {
+        self.module.branding = branding;
         self
     }
 

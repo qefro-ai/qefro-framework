@@ -15,6 +15,7 @@ describe("ViewSelector", () => {
         <ViewSelector views={["list", "card", "kanban", "calendar"]} current="kanban" onChange={onChange} />
       </MemoryRouter>,
     );
+    expect(screen.getByRole("tablist", { name: "Views" })).toHaveClass("view-selector", "view-selector-compact");
     expect(screen.getByRole("tab", { name: "Kanban" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Kanban" })).toHaveClass("is-active");
     expect(screen.getByRole("tab", { name: "Cards" })).toBeInTheDocument();
