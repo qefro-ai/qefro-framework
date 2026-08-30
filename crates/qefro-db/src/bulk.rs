@@ -46,6 +46,20 @@ impl EntityService {
                     return Err(QefroError::not_found(format!("{} not found", entity.name)));
                 }
             }
+            Some(RowPolicy::AssignedToOrCreatedBy) => {
+                let me = ctx.user_id.to_string();
+                let assigned = record
+                    .get("assigned_to")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let created = record
+                    .get("created_by")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if assigned != me && created != me {
+                    return Err(QefroError::not_found(format!("{} not found", entity.name)));
+                }
+            }
             None => {}
         }
         Ok(())
@@ -72,6 +86,22 @@ impl EntityService {
                     field: "created_by".into(),
                     value: json!(ctx.user_id.to_string()),
                 });
+            }
+            Some(RowPolicy::AssignedToOrCreatedBy) => {
+                // List uses assigned_to so the user sees their queue. Get still
+                // allows creator via enforce_row_policy. Saved views can filter
+                // created_by=current_user for "Created by me".
+                if entity.get_field("assigned_to").is_some() {
+                    query.filters.push(qefro_search::Filter::Eq {
+                        field: "assigned_to".into(),
+                        value: json!(ctx.user_id.to_string()),
+                    });
+                } else {
+                    query.filters.push(qefro_search::Filter::Eq {
+                        field: "created_by".into(),
+                        value: json!(ctx.user_id.to_string()),
+                    });
+                }
             }
             _ => {}
         }

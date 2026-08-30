@@ -121,6 +121,7 @@ pub fn customer() -> EntityDef {
                 .columns(&["guest_name", "reservation_date", "status"])
                 .limit(20),
         )
+        .with_tasks()
         .with_archive()
         .build()
 }
@@ -706,6 +707,7 @@ pub fn order() -> EntityDef {
                 .label("Delivery Note"),
         )
         .field(FieldDef::one_to_many("payments", "Payment", "order_id"))
+        .with_tasks()
         .build()
 }
 

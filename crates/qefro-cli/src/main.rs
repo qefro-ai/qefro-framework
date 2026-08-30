@@ -663,7 +663,7 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
 fn cmd_validate(app: &str) -> Result<()> {
     let runtime = runtime_for(app)?;
     let mut registry = qefro_core::EntityRegistry::new();
-    for identity in qefro_core::identity_entities() {
+    for identity in qefro_core::platform_entities() {
         let _ = registry.register(identity);
     }
     let mut errors = Vec::new();

@@ -251,6 +251,22 @@ pub async fn recipient_users(
             }
         }
     }
+    if def
+        .recipients
+        .iter()
+        .any(|r| r.eq_ignore_ascii_case("assignee") || r.eq_ignore_ascii_case("assigned"))
+    {
+        if let Some(assignee) = event
+            .payload
+            .get("assigned_to")
+            .and_then(|v| v.as_str())
+            .and_then(|s| Uuid::parse_str(s).ok())
+        {
+            if !users.contains(&assignee) {
+                users.push(assignee);
+            }
+        }
+    }
     Ok(users)
 }
 

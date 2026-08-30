@@ -4,6 +4,11 @@ pub fn ops() -> DashboardDef {
     DashboardDef::new("crm-ops", "CRM operations")
         .module("crm")
         .card(DashboardCard::kpi("Customers", "CrmCustomer").size("sm"))
+        .card(
+            DashboardCard::count("Open tasks", "Task")
+                .filter("status.neq", "Completed")
+                .filter("status.neq", "Cancelled"),
+        )
         .card(DashboardCard::count("New leads", "Lead").filter("status", "New"))
         .card(DashboardCard::count("Open opportunities", "Opportunity").filter("status", "Open"))
         .card(

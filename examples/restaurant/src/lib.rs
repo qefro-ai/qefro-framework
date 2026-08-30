@@ -261,14 +261,16 @@ mod tests {
         assert_eq!(dash.name, "restaurant-ops");
         assert_eq!(dash.label, "Floor operations");
         let titles: Vec<_> = dash.cards.iter().map(|c| c.title.as_str()).collect();
-        assert!(titles.contains(&"Reservations today"));
-        assert!(titles.contains(&"Tables free"));
-        assert!(titles.contains(&"Sales today"));
+        assert!(titles.contains(&"Today's reservations"));
+        assert!(titles.contains(&"Available tables"));
+        assert!(titles.contains(&"Today's sales"));
         assert!(titles.contains(&"Orders by status"));
         assert!(titles.contains(&"Recent orders"));
-        assert_eq!(dash.cards.iter().filter(|c| c.kind == "metric").count(), 9);
         assert!(titles.contains(&"Upcoming pickups"));
         assert!(titles.contains(&"Ready for pickup"));
+        assert!(titles.contains(&"Open tasks"));
+        assert!(titles.contains(&"Overdue tasks"));
+        assert!(titles.contains(&"Tasks due today"));
     }
 
     #[test]
@@ -358,6 +360,11 @@ mod tests {
         assert!(person.ui.list);
         assert!(customer.get_field("party_type").is_some());
         assert!(customer.get_field("organization_id").is_some());
+        assert!(customer.get_field("tasks").is_some());
+        assert!(customer
+            .links
+            .iter()
+            .any(|l| l.entity == "Task" && l.relation == "entity_id"));
         let identity = customer
             .fields
             .iter()

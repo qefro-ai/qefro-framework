@@ -88,15 +88,25 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const actions = (row._actions as EntityAction[] | undefined) ?? [];
   const related = (row._related ?? {}) as Record<
     string,
-    { slug: string; entity: string; label?: string; items: Record<string, unknown>[]; total: number }
+    {
+      slug: string;
+      entity: string;
+      label?: string;
+      items: Record<string, unknown>[];
+      total: number;
+      filters?: Array<{ field: string; value: string }>;
+    }
   >;
-  const links = ((row._links as Array<{
-    label: string;
-    entity: string;
-    slug: string;
-    relation: string;
-    total: number;
-  }>) ?? []).filter((l) => !related[l.relation]);
+  const links = (
+    (row._links as Array<{
+      label: string;
+      entity: string;
+      slug: string;
+      relation: string;
+      total: number;
+      filters?: Array<{ field: string; value: string }>;
+    }>) ?? []
+  ).filter((l) => !related[l.relation]);
   const visible = meta.fields.filter(
     (f) =>
       detailVisible(f) &&
@@ -477,6 +487,21 @@ function ChildPanel({
   );
 }
 
+function relatedCreateHref(
+  slug: string,
+  id: string,
+  relation?: string,
+  filters?: Array<{ field: string; value: string }>,
+) {
+  const params = new URLSearchParams();
+  if (relation) params.set(relation, id);
+  for (const filter of filters ?? []) {
+    if (filter.field && filter.value) params.set(filter.field, filter.value);
+  }
+  const qs = params.toString();
+  return qs ? `/${slug}/new?${qs}` : `/${slug}/new`;
+}
+
 function RelatedPanel({
   links,
   related,
@@ -500,6 +525,7 @@ function RelatedPanel({
       total: number;
       label?: string;
       columns?: string[];
+      filters?: Array<{ field: string; value: string }>;
     }
   >;
   id: string;
@@ -518,7 +544,7 @@ function RelatedPanel({
                   {link.label} ({link.total})
                 </Link>
                 {" · "}
-                <Link to={`/${link.slug}/new?${encodeURIComponent(link.relation)}=${id}`}>Add</Link>
+                <Link to={relatedCreateHref(link.slug, id, link.relation, link.filters)}>Add</Link>
               </li>
             ))}
           </ul>
@@ -532,6 +558,7 @@ function RelatedPanel({
             (f) => f.relation === meta.entity && f.relation_kind === "many_to_one",
           )?.name;
         const title = rel.label || fieldMeta?.label || name;
+        const filters = rel.filters;
         return (
           <div key={name} className="related panel">
             <div className="related-head">
@@ -541,7 +568,7 @@ function RelatedPanel({
                 {inverse ? (
                   <>
                     {" · "}
-                    <Link to={`/${rel.slug}/new?${encodeURIComponent(inverse)}=${id}`}>Add</Link>
+                    <Link to={relatedCreateHref(rel.slug, id, inverse, filters)}>Add</Link>
                   </>
                 ) : null}
                 {" · "}
