@@ -192,6 +192,7 @@ impl QefroRuntime {
         let mut grants = qefro_permissions::identity_grants();
         grants.extend(qefro_permissions::task_grants());
         grants.extend(qefro_permissions::accounting_grants());
+        grants.extend(qefro_permissions::commerce_grants());
         grants.extend(self.apps.iter().flat_map(|a| a.permissions.clone()));
         grants
     }
@@ -201,6 +202,12 @@ impl QefroRuntime {
             qefro_workflow::task_workflow(),
             qefro_workflow::journal_workflow(),
             qefro_workflow::period_workflow(),
+            qefro_workflow::quote_workflow(),
+            qefro_workflow::sales_order_workflow(),
+            qefro_workflow::shipment_workflow(),
+            qefro_workflow::invoice_workflow(),
+            qefro_workflow::sales_payment_workflow(),
+            qefro_workflow::sales_return_workflow(),
         ];
         wfs.extend(self.apps.iter().flat_map(|a| a.workflows.clone()));
         wfs
@@ -209,12 +216,14 @@ impl QefroRuntime {
     pub fn automations(&self) -> Vec<qefro_core::AutomationDef> {
         let mut autos = qefro_core::task_automations();
         autos.extend(qefro_core::accounting_automations());
+        autos.extend(qefro_core::commerce_automations());
         autos.extend(self.apps.iter().flat_map(|a| a.module.automations.clone()));
         autos
     }
 
     pub fn reports(&self) -> Vec<qefro_core::ReportDef> {
         let mut reports = qefro_core::accounting_reports();
+        reports.extend(qefro_core::commerce_reports());
         reports.extend(self.apps.iter().flat_map(|a| a.module.reports.clone()));
         reports
     }
@@ -227,6 +236,7 @@ impl QefroRuntime {
             .collect();
         cards.push(qefro_core::task_dashboard());
         cards.push(qefro_core::accounting_dashboard());
+        cards.push(qefro_core::commerce_dashboard());
         cards
     }
 
@@ -252,6 +262,9 @@ impl QefroRuntime {
         for def in qefro_db::accounting_operation_defs() {
             names.push(def.tool_name.clone());
         }
+        for def in qefro_db::commerce_operation_defs() {
+            names.push(def.tool_name.clone());
+        }
         for app in &self.apps {
             for (def, _) in &app.operations {
                 names.push(def.tool_name.clone());
@@ -267,6 +280,7 @@ impl QefroRuntime {
             defs.extend(qefro_db::crud_operation_defs(&entity));
         }
         defs.extend(qefro_db::accounting_operation_defs());
+        defs.extend(qefro_db::commerce_operation_defs());
         for entity in self.entities() {
             defs.extend(qefro_db::crud_operation_defs(entity));
         }
@@ -384,9 +398,18 @@ impl QefroRuntime {
         for grant in qefro_permissions::accounting_grants() {
             permissions.grant(grant);
         }
+        for grant in qefro_permissions::commerce_grants() {
+            permissions.grant(grant);
+        }
         workflows.register(qefro_workflow::task_workflow());
         workflows.register(qefro_workflow::journal_workflow());
         workflows.register(qefro_workflow::period_workflow());
+        workflows.register(qefro_workflow::quote_workflow());
+        workflows.register(qefro_workflow::sales_order_workflow());
+        workflows.register(qefro_workflow::shipment_workflow());
+        workflows.register(qefro_workflow::invoice_workflow());
+        workflows.register(qefro_workflow::sales_payment_workflow());
+        workflows.register(qefro_workflow::sales_return_workflow());
 
         for app in &self.apps {
             app.module.install_entities(&mut registry)?;
@@ -415,7 +438,9 @@ impl QefroRuntime {
         }
         dashboards.push(qefro_core::task_dashboard());
         dashboards.push(qefro_core::accounting_dashboard());
+        dashboards.push(qefro_core::commerce_dashboard());
         reports.extend(qefro_core::accounting_reports());
+        reports.extend(qefro_core::commerce_reports());
 
         registry.wire_identity_inverses()?;
 
@@ -495,9 +520,11 @@ impl QefroRuntime {
 
         let mut notification_defs = qefro_core::task_notifications();
         notification_defs.extend(qefro_core::accounting_notifications());
+        notification_defs.extend(qefro_core::commerce_notifications());
         let mut webhook_defs = Vec::new();
         let mut automation_defs = qefro_core::task_automations();
         automation_defs.extend(qefro_core::accounting_automations());
+        automation_defs.extend(qefro_core::commerce_automations());
         for app in &self.apps {
             notification_defs.extend(app.module.notifications.clone());
             webhook_defs.extend(app.module.webhooks.clone());
@@ -514,6 +541,7 @@ impl QefroRuntime {
         job_handlers.register("automation.schedule", automation.clone());
         qefro_db::register_document_operations(&mut operations, &registry);
         qefro_db::register_accounting_operations(&mut operations);
+        qefro_db::register_commerce_operations(&mut operations);
         let operations = Arc::new(operations);
         let job_handlers = Arc::new(job_handlers);
         let auth = Arc::new(AuthService::new(
@@ -579,6 +607,13 @@ impl QefroRuntime {
         default_navigation.push(qefro_core::ACCOUNT_SLUG.into());
         default_navigation.push(qefro_core::JOURNAL_SLUG.into());
         default_navigation.push(qefro_core::PERIOD_SLUG.into());
+        default_navigation.push(qefro_core::PRODUCT_SLUG.into());
+        default_navigation.push(qefro_core::QUOTE_SLUG.into());
+        default_navigation.push(qefro_core::SALES_ORDER_SLUG.into());
+        default_navigation.push(qefro_core::SHIPMENT_SLUG.into());
+        default_navigation.push(qefro_core::INVOICE_SLUG.into());
+        default_navigation.push(qefro_core::SALES_PAYMENT_SLUG.into());
+        default_navigation.push(qefro_core::SALES_RETURN_SLUG.into());
         let mut default_nav_items: Vec<qefro_core::WorkspaceNavItem> = self
             .apps
             .iter()
@@ -637,12 +672,80 @@ impl QefroRuntime {
             module: None,
             section: Some("Finance".into()),
         });
+        default_nav_items.push(qefro_core::WorkspaceNavItem {
+            label: "Products".into(),
+            entity: qefro_core::PRODUCT_ENTITY.into(),
+            slug: qefro_core::PRODUCT_SLUG.into(),
+            query: None,
+            view: None,
+            module: None,
+            section: Some("Sales".into()),
+        });
+        default_nav_items.push(qefro_core::WorkspaceNavItem {
+            label: "Quotes".into(),
+            entity: qefro_core::QUOTE_ENTITY.into(),
+            slug: qefro_core::QUOTE_SLUG.into(),
+            query: None,
+            view: None,
+            module: None,
+            section: Some("Sales".into()),
+        });
+        default_nav_items.push(qefro_core::WorkspaceNavItem {
+            label: "Sales Orders".into(),
+            entity: qefro_core::SALES_ORDER_ENTITY.into(),
+            slug: qefro_core::SALES_ORDER_SLUG.into(),
+            query: None,
+            view: None,
+            module: None,
+            section: Some("Sales".into()),
+        });
+        default_nav_items.push(qefro_core::WorkspaceNavItem {
+            label: "Shipments".into(),
+            entity: qefro_core::SHIPMENT_ENTITY.into(),
+            slug: qefro_core::SHIPMENT_SLUG.into(),
+            query: None,
+            view: None,
+            module: None,
+            section: Some("Sales".into()),
+        });
+        default_nav_items.push(qefro_core::WorkspaceNavItem {
+            label: "Invoices".into(),
+            entity: qefro_core::INVOICE_ENTITY.into(),
+            slug: qefro_core::INVOICE_SLUG.into(),
+            query: None,
+            view: None,
+            module: None,
+            section: Some("Sales".into()),
+        });
+        default_nav_items.push(qefro_core::WorkspaceNavItem {
+            label: "Payments".into(),
+            entity: qefro_core::SALES_PAYMENT_ENTITY.into(),
+            slug: qefro_core::SALES_PAYMENT_SLUG.into(),
+            query: None,
+            view: None,
+            module: None,
+            section: Some("Sales".into()),
+        });
+        default_nav_items.push(qefro_core::WorkspaceNavItem {
+            label: "Returns".into(),
+            entity: qefro_core::SALES_RETURN_ENTITY.into(),
+            slug: qefro_core::SALES_RETURN_SLUG.into(),
+            query: None,
+            view: None,
+            module: None,
+            section: Some("Sales".into()),
+        });
         let mut default_hidden_entities: Vec<String> = vec![
             qefro_core::PERSON_SLUG.into(),
             qefro_core::ORGANIZATION_SLUG.into(),
             qefro_core::USER_SLUG.into(),
             qefro_core::JOURNAL_LINE_SLUG.into(),
         ];
+        default_hidden_entities.extend(
+            qefro_core::commerce_child_slugs()
+                .into_iter()
+                .map(|s| s.to_string()),
+        );
         default_hidden_entities.extend(
             self.apps
                 .iter()

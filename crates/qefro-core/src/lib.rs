@@ -9,6 +9,7 @@ pub mod app;
 pub mod automation;
 pub mod bundle;
 pub mod catalog;
+pub mod commerce;
 pub mod condition;
 pub mod context;
 pub mod document;
@@ -64,6 +65,20 @@ pub use catalog::{
     load_installed, load_yaml_docs, load_yaml_entities, mark_installed, parse_app_toml, remove_app,
     store_dir, AppFileManifest, DiscoveredApp, InstalledRecord, InstalledSet,
 };
+pub use commerce::{
+    apply_commerce_links, commerce_automations, commerce_child_slugs, commerce_dashboard,
+    commerce_entities, commerce_nav_items, commerce_notifications, commerce_reports,
+    invoice_entity, is_commerce_entity, product_entity, quote_entity, sales_order_entity,
+    sales_payment_entity, sales_return_entity, shipment_entity, CUSTOMER_ID_FIELD,
+    CUSTOMER_TYPE_FIELD, FULFILL_FULFILLED, FULFILL_PARTIAL, FULFILL_UNFULFILLED, INVOICE_ENTITY,
+    INVOICE_ITEM_ENTITY, INVOICE_PAID, INVOICE_SLUG, INVOICE_WORKFLOW, ORDER_COMPLETED,
+    ORDER_CONFIRMED, ORDER_FULFILLED, PAYMENT_ALLOCATION_ENTITY, PAYMENT_WORKFLOW, PAY_RECEIVED,
+    PRODUCT_ENTITY, PRODUCT_SLUG, QUOTE_ENTITY, QUOTE_ITEM_ENTITY, QUOTE_SLUG, QUOTE_WORKFLOW,
+    RETURN_WORKFLOW, SALES_ORDER_ENTITY, SALES_ORDER_ITEM_ENTITY, SALES_ORDER_SLUG,
+    SALES_ORDER_WORKFLOW, SALES_PAYMENT_ENTITY, SALES_PAYMENT_SLUG, SALES_RETURN_ENTITY,
+    SALES_RETURN_ITEM_ENTITY, SALES_RETURN_SLUG, SHIPMENT_ENTITY, SHIPMENT_ITEM_ENTITY,
+    SHIPMENT_SLUG, SHIPMENT_WORKFLOW,
+};
 pub use condition::Condition;
 pub use context::{OpContext, ROLE_PUBLIC, ROLE_WORKER};
 pub use document::{DocumentConfig, NamingConfig, PrintFormat, ReportDef};
@@ -89,7 +104,9 @@ pub use identity::{
 pub use lifecycle::{lifecycle_event_name, LifecycleHookDef};
 pub use metering::MeteringEvent;
 pub use migration::{sql_is_destructive, AppMigration};
-pub use money::{assert_balanced, parse_money, round_money, sum_debit_credit, MONEY_SCALE};
+pub use money::{
+    assert_balanced, money_mul_qty, parse_money, round_money, sum_debit_credit, MONEY_SCALE,
+};
 pub use operation::{operation, OperationDef};
 pub use package::{extract_package, inspect_package, write_package, PackageMeta};
 pub use platform::{

@@ -111,6 +111,7 @@ pub fn customer() -> EntityDef {
             "customer_id",
         ))
         .field(FieldDef::one_to_many("orders", "Order", "customer_id"))
+        .with_commerce()
         .link(
             LinkDef::new("Orders", "Order", "customer_id")
                 .columns(&["doc_no", "status", "grand_total"])

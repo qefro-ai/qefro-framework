@@ -13,8 +13,9 @@ pub mod studio;
 
 pub use qefro_core::{operation, OperationDef};
 pub use qefro_db::{
-    post_ledger, JobHandler, JobQueue, JobRegistry, LogNotificationJob, NoopOperationHandler,
-    OperationCtx, OperationHandler, OperationRegistry,
+    inventory_consume, inventory_release, inventory_reserve, inventory_restore, post_ledger,
+    JobHandler, JobQueue, JobRegistry, LogNotificationJob, NoopOperationHandler, OperationCtx,
+    OperationHandler, OperationRegistry,
 };
 pub use runtime::{Config, InstalledApp, QefroRuntime};
 pub use state::AppState;
