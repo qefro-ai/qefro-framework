@@ -6,6 +6,7 @@ const LABELS: Record<ViewKind, string> = {
   card: "Cards",
   kanban: "Kanban",
   calendar: "Calendar",
+  chart: "Chart",
 };
 
 export function ViewSelector({

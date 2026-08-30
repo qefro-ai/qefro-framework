@@ -245,6 +245,16 @@ impl ReportDef {
         self
     }
 
+    pub fn min(mut self, field: impl Into<String>) -> Self {
+        self.aggregations.insert(field.into(), "MIN".into());
+        self
+    }
+
+    pub fn max(mut self, field: impl Into<String>) -> Self {
+        self.aggregations.insert(field.into(), "MAX".into());
+        self
+    }
+
     pub fn chart(mut self, kind: impl Into<String>) -> Self {
         self.chart = Some(kind.into());
         self

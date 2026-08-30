@@ -17,7 +17,7 @@ Example:
 }
 ```
 
-Operations: `create`, `get`, `find`, `update`, `delete`, `transition` when the entity has a workflow, `list_activity` / `comment` when activity is enabled, `list_attachments` when attachments are enabled, and every registered business operation. Tool JSON schemas are generated from `OperationDef`. Agents obey the same tenant, RBAC, entity permissions, and workflow rules as human users. There is no agent bypass.
+Operations: `create`, `get`, `find`, `update`, `delete`, `transition` when the entity has a workflow, `list_activity` / `comment` when activity is enabled, `list_attachments` when attachments are enabled, workspace tools `search` / `run_report` / `get_dashboard`, and every registered business operation. Tool JSON schemas are generated from `OperationDef`. Agents obey the same tenant, RBAC, entity permissions, and workflow rules as human users. There is no agent bypass.
 
 When an agent mutates a record, Activity shows **Qefro Agent** as the actor. Internal reasoning is never stored.
 

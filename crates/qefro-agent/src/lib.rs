@@ -100,6 +100,23 @@ pub trait EntityOps: Send + Sync {
         entity: &str,
         id: uuid::Uuid,
     ) -> impl std::future::Future<Output = QefroResult<Value>> + Send;
+    fn search(
+        &self,
+        ctx: &OpContext,
+        q: &str,
+        limit: usize,
+    ) -> impl std::future::Future<Output = QefroResult<Value>> + Send;
+    fn run_report(
+        &self,
+        ctx: &OpContext,
+        name: &str,
+        filters: Value,
+    ) -> impl std::future::Future<Output = QefroResult<Value>> + Send;
+    fn get_dashboard(
+        &self,
+        ctx: &OpContext,
+        name: &str,
+    ) -> impl std::future::Future<Output = QefroResult<Value>> + Send;
 }
 
 #[derive(Clone, Default)]
@@ -320,7 +337,64 @@ impl ToolRegistry {
         for entity in entities.list() {
             tools.register_entity(&entity, permissions);
         }
+        tools.register_workspace();
         tools
+    }
+
+    pub fn register_workspace(&mut self) {
+        self.register(ToolDef {
+            name: "search".into(),
+            description: "Search tenant-visible records across entities".into(),
+            entity: String::new(),
+            operation: "search".into(),
+            action: Action::List.as_str().into(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["q"],
+                "properties": {
+                    "q": { "type": "string" },
+                    "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+                }
+            }),
+            required_permissions: Vec::new(),
+            permissions: Vec::new(),
+            required_roles: Vec::new(),
+        });
+        self.register(ToolDef {
+            name: "run_report".into(),
+            description: "Run a metadata-defined report".into(),
+            entity: String::new(),
+            operation: "run_report".into(),
+            action: Action::List.as_str().into(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": { "type": "string" },
+                    "filters": { "type": "array" }
+                }
+            }),
+            required_permissions: Vec::new(),
+            permissions: Vec::new(),
+            required_roles: Vec::new(),
+        });
+        self.register(ToolDef {
+            name: "get_dashboard".into(),
+            description: "Load a metadata-defined dashboard".into(),
+            entity: String::new(),
+            operation: "get_dashboard".into(),
+            action: Action::List.as_str().into(),
+            input_schema: json!({
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                    "name": { "type": "string" }
+                }
+            }),
+            required_permissions: Vec::new(),
+            permissions: Vec::new(),
+            required_roles: Vec::new(),
+        });
     }
 
     pub fn get(&self, name: &str) -> QefroResult<&ToolDef> {
@@ -340,6 +414,11 @@ impl ToolRegistry {
         self.list()
             .into_iter()
             .filter(|tool| {
+                if tool.entity.is_empty() {
+                    return ctx.is_admin()
+                        || tool.required_roles.is_empty()
+                        || tool.required_roles.iter().any(|r| ctx.has_role(r));
+                }
                 let allowed = parse_action(&tool.action)
                     .map(|action| perms.allows(&ctx.roles, &tool.entity, action))
                     .unwrap_or(false);
@@ -418,6 +497,30 @@ impl ToolRegistry {
             "list_attachments" => {
                 let id = require_id(&input)?;
                 ops.list_attachments(ctx, &tool.entity, id).await?
+            }
+            "search" => {
+                let q = input
+                    .get("q")
+                    .or_else(|| input.get("search"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+                ops.search(ctx, q, limit).await?
+            }
+            "run_report" => {
+                let name = input
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| QefroError::bad_request("report name is required"))?;
+                let filters = input.get("filters").cloned().unwrap_or(json!([]));
+                ops.run_report(ctx, name, filters).await?
+            }
+            "get_dashboard" => {
+                let name = input
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| QefroError::bad_request("dashboard name is required"))?;
+                ops.get_dashboard(ctx, name).await?
             }
             _ if name.starts_with("transition_") => {
                 let id = require_id(&input)?;

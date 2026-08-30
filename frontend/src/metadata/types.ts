@@ -43,6 +43,8 @@ export type UiField = {
   filter: boolean;
   filterable?: boolean;
   searchable: boolean;
+  search_weight?: number;
+  search_exact?: boolean;
   sortable?: boolean;
   hidden?: boolean;
   disabled?: boolean;
@@ -134,9 +136,10 @@ export type RecordPermissions = {
   delete?: boolean;
 };
 
-export type ViewKind = "list" | "card" | "kanban" | "calendar";
+export type ViewKind = "list" | "card" | "kanban" | "calendar" | "chart";
 
 export type EntityViews = {
+  default?: string;
   list?: UiEntity["list"] & { group_by?: string };
   form?: { sections?: ViewSection[] };
   detail?: { sections?: ViewSection[] };
@@ -160,6 +163,21 @@ export type EntityViews = {
     title?: string;
     subtitle?: string;
   };
+  chart?: {
+    enabled?: boolean;
+    type?: string;
+    dimension?: string;
+    measure?: { field?: string; aggregation?: string };
+  };
+};
+
+export type WorkspaceNavItem = {
+  label: string;
+  entity: string;
+  slug: string;
+  query?: string | null;
+  view?: string | null;
+  module?: string | null;
 };
 
 export type ViewSection = {

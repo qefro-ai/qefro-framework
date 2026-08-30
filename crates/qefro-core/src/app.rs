@@ -37,6 +37,12 @@ pub struct AppModule {
 pub struct NavItem {
     pub label: String,
     pub entity: String,
+    /// Query string applied on the generic list, e.g. `status=Preparing`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    /// Preferred collection view (`list`, `kanban`, `card`, `calendar`, `chart`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<String>,
 }
 
 impl NavItem {
@@ -44,7 +50,19 @@ impl NavItem {
         Self {
             label: label.into(),
             entity: entity.into(),
+            query: None,
+            view: None,
         }
+    }
+
+    pub fn query(mut self, query: impl Into<String>) -> Self {
+        self.query = Some(query.into());
+        self
+    }
+
+    pub fn view(mut self, view: impl Into<String>) -> Self {
+        self.view = Some(view.into());
+        self
     }
 }
 
@@ -144,15 +162,21 @@ impl AppModule {
     }
 
     pub fn default_nav_slugs(&self) -> Vec<String> {
-        self.navigation
-            .iter()
-            .filter_map(|item| {
-                self.entities
-                    .iter()
-                    .find(|e| e.name == item.entity || e.slug == item.entity)
-                    .map(|e| e.slug.clone())
-            })
-            .collect()
+        let mut seen = std::collections::HashSet::new();
+        let mut slugs = Vec::new();
+        for item in &self.navigation {
+            if let Some(slug) = self
+                .entities
+                .iter()
+                .find(|e| e.name == item.entity || e.slug == item.entity)
+                .map(|e| e.slug.clone())
+            {
+                if seen.insert(slug.clone()) {
+                    slugs.push(slug);
+                }
+            }
+        }
+        slugs
     }
 
     /// Standalone entities omitted from this module's default navigation.

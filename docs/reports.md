@@ -24,7 +24,12 @@ ReportDef::new("sales-by-day", "Order")
 
 ## Aggregations
 
-`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`. `SUM`/`AVG`/`MIN`/`MAX` require a numeric field. `SUM(string)` is rejected.
+`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`. `SUM`/`AVG`/`MIN`/`MAX` require a numeric field. `SUM(string)` is rejected. Execution is server-side (`LIMIT 500` groups). The browser never totals large record sets.
+
+```http
+GET /api/v1/{slug}/aggregates?group_by=status&metric=sum&field=amount
+POST /api/v1/reports/{name}/run
+```
 
 ## Filters
 
@@ -34,6 +39,6 @@ ReportDef::new("sales-by-day", "Order")
 
 Reports honor tenant isolation, application entitlements, RBAC list permission, and hidden fields. A user cannot invent a field name to bypass visibility.
 
-## UI
+## UI and agents
 
-`GET /api/v1/meta/reports` lists definitions. `POST /api/v1/reports/{name}/run` returns `rows` plus `series` for the existing dashboard chart component (`bar`, `line`, `donut`).
+`GET /api/v1/meta/reports` lists definitions. `QefroClient.getReport()` / `runReport()` call the same routes. Agents use `EntityOps::run_report` (`run_report` tool). Charts are `bar`, `line`, `area`, `pie`, `donut` — the renderer does not branch on entity name.

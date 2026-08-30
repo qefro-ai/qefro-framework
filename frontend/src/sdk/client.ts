@@ -137,6 +137,17 @@ export class QefroClient {
       hidden_entities?: string[];
       terminology?: Record<string, string>;
       default_dashboard?: string | null;
+      workspace?: {
+        navigation?: Array<{
+          label: string;
+          entity: string;
+          slug: string;
+          query?: string | null;
+          view?: string | null;
+          module?: string | null;
+        }>;
+        default_dashboard?: string | null;
+      };
     }>("/api/v1/meta/ui");
   tenant = () => request<Record<string, unknown>>("/api/v1/tenant");
   tenantConfig = () => request<TenantConfig>("/api/v1/tenants/me/config");
@@ -166,9 +177,30 @@ export class QefroClient {
         series?: Array<{ label: string; value: number }>;
         items?: Record<string, unknown>[];
         total?: number;
+        size?: string | null;
+        saved_view?: string | null;
+        rows?: Array<Record<string, unknown>>;
+        message?: string;
+        created_at?: string;
+        activity_type?: string;
       }>;
     }>(`/api/v1/dashboards/${name}${q ? `?${q}` : ""}`);
   };
+  getDashboard = (name: string, extra?: URLSearchParams) => this.dashboard(name, extra);
+  workspace = () =>
+    request<{
+      navigation: Array<{
+        label: string;
+        entity: string;
+        slug: string;
+        query?: string | null;
+        view?: string | null;
+        module?: string | null;
+      }>;
+      default_dashboard?: string | null;
+      dashboards: Array<{ name: string; label: string; module?: string }>;
+      reports: Array<{ name: string; label: string; entity: string }>;
+    }>("/api/v1/meta/workspace");
   list = (slug: string, params: URLSearchParams) =>
     request<{ items: Record<string, unknown>[]; total: number; page: number; page_size: number }>(
       `/api/v1/${slug}?${params}`,
@@ -242,19 +274,23 @@ export class QefroClient {
     );
   savedFilters = (entity: string) =>
     request<{ items: Array<{ id: string; name: string; query: Record<string, unknown> }> }>(
-      `/api/v1/saved-filters?entity=${encodeURIComponent(entity)}`,
+      `/api/v1/saved-views?entity=${encodeURIComponent(entity)}`,
     );
+  getSavedViews = (entity: string) => this.savedFilters(entity);
   saveFilter = (entity: string, name: string, query: unknown) =>
-    request(`/api/v1/saved-filters`, {
+    request(`/api/v1/saved-views`, {
       method: "POST",
       body: JSON.stringify({ entity, name, query }),
     });
+  saveView = (entity: string, name: string, query: unknown) => this.saveFilter(entity, name, query);
   deleteSavedFilter = (id: string) =>
-    request<void>(`/api/v1/saved-filters/${id}`, { method: "DELETE" });
+    request<void>(`/api/v1/saved-views/${id}`, { method: "DELETE" });
+  deleteView = (id: string) => this.deleteSavedFilter(id);
   reports = () =>
     request<{ reports: Array<{ name: string; label: string; entity: string; group_by?: string[]; chart?: string }> }>(
       "/api/v1/meta/reports",
     );
+  getReport = (name: string) => request<Record<string, unknown>>(`/api/v1/reports/${name}`);
   runReport = (name: string, body: unknown) =>
     request<{
       name: string;
@@ -335,9 +371,22 @@ export class QefroClient {
     });
   studioTenant = () => request<Record<string, unknown>>("/api/v1/studio/tenant");
   search = (q: string) =>
-    request<{ results: Array<{ entity: string; slug: string; id: string; label: string; snippet: string }> }>(
-      `/api/v1/search?q=${encodeURIComponent(q)}`,
-    );
+    request<{
+      results: Array<{ entity: string; slug: string; id: string; label: string; snippet: string; score?: number }>;
+      groups?: Array<{
+        entity: string;
+        label: string;
+        hits: Array<{ entity: string; slug: string; id: string; label: string; snippet: string }>;
+      }>;
+    }>(`/api/v1/search?q=${encodeURIComponent(q)}`);
+  getSearch = (q: string) => this.search(q);
+  aggregates = (slug: string, params: URLSearchParams) =>
+    request<{
+      entity: string;
+      group_by: string;
+      metric: string;
+      series: Array<{ label: string; value: number }>;
+    }>(`/api/v1/${slug}/aggregates?${params}`);
   settings = (slug: string) => request<Record<string, unknown>>(`/api/v1/settings/${slug}`);
   saveSettings = (slug: string, body: unknown) =>
     request<Record<string, unknown>>(`/api/v1/settings/${slug}`, {

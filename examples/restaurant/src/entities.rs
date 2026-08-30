@@ -1,4 +1,4 @@
-use qefro_core::ui::{ListColumnSpec, SortSpec};
+use qefro_core::ui::{ChartMeasureSpec, ChartViewSpec, ListColumnSpec, SortSpec};
 use qefro_core::{
     CalendarViewSpec, ChildTableDef, DocumentConfig, EntityActionDef, EntityDef, EntityViews,
     FieldDef, KanbanCardSpec, KanbanViewSpec, LinkDef, ListViewSpec, NamingConfig, PrintFormat,
@@ -25,7 +25,7 @@ pub fn customer() -> EntityDef {
         .field(
             FieldDef::string("name")
                 .required()
-                .searchable()
+                .search_weight(10)
                 .max_length(200)
                 .filterable()
                 .section("Contact"),
@@ -268,6 +268,7 @@ pub fn reservation() -> EntityDef {
         .label_plural("Reservations")
         .table_name("reservations")
         .icon("calendar")
+        .display_field("guest_name")
         .workflow("reservation")
         .attachments()
         .action(EntityActionDef::new("confirm").label("Confirm"))
@@ -294,7 +295,8 @@ pub fn reservation() -> EntityDef {
                 .nullable()
                 .label("Customer")
                 .section("Booking Details")
-                .filterable(),
+                .filterable()
+                .search_related(),
         )
         .field(
             FieldDef::relation("table_id", "DiningTable")
@@ -328,7 +330,7 @@ pub fn reservation() -> EntityDef {
         .field(
             FieldDef::string("guest_name")
                 .nullable()
-                .searchable()
+                .search_weight(8)
                 .label("Name")
                 .section("Booking Details"),
         )
@@ -395,6 +397,7 @@ pub fn order() -> EntityDef {
         .icon("receipt")
         .workflow("order")
         .views(EntityViews {
+            default: Some("kanban".into()),
             kanban: Some(KanbanViewSpec {
                 group_by: Some("status".into()),
                 card: Some(KanbanCardSpec {
@@ -403,6 +406,15 @@ pub fn order() -> EntityDef {
                     ..Default::default()
                 }),
                 ..Default::default()
+            }),
+            chart: Some(ChartViewSpec {
+                enabled: true,
+                chart_type: Some("bar".into()),
+                dimension: Some("status".into()),
+                measure: Some(ChartMeasureSpec {
+                    field: Some("grand_total".into()),
+                    aggregation: Some("sum".into()),
+                }),
             }),
             ..Default::default()
         })
@@ -429,7 +441,8 @@ pub fn order() -> EntityDef {
         .field(
             FieldDef::many_to_one("customer_id", "Customer")
                 .nullable()
-                .label("Customer"),
+                .label("Customer")
+                .search_related(),
         )
         .field(
             FieldDef::many_to_one("table_id", "DiningTable")
@@ -447,6 +460,7 @@ pub fn order() -> EntityDef {
                 .default_from("current_date")
                 .filterable()
                 .sortable()
+                .indexed()
                 .ui(UiConfig::date()),
         )
         .field(

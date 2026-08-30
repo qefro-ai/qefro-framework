@@ -316,18 +316,11 @@ impl EntityDef {
         if self.label_plural.is_empty() {
             self.label_plural = format!("{}s", self.label);
         }
-        if self.display_field.is_empty() {
-            self.display_field = if self.fields.iter().any(|f| f.name == "name") {
-                "name".into()
-            } else if self.fields.iter().any(|f| f.name == "title") {
-                "title".into()
-            } else if self.fields.iter().any(|f| f.name == "code") {
-                "code".into()
-            } else if self.fields.iter().any(|f| f.name == "doc_no") {
-                "doc_no".into()
-            } else {
-                "id".into()
-            };
+        // `with_party()` calls normalize() before contact fields are added.
+        // Re-pick when still empty or still the id fallback so later `.field("name")`
+        // is not stuck on UUID labels.
+        if self.display_field.is_empty() || self.display_field == "id" {
+            self.display_field = Self::preferred_display_field(&self.fields);
         }
         if let Some(child_of) = &self.child_of {
             let parent = child_of.parent_entity.clone();
@@ -458,7 +451,17 @@ impl EntityDef {
     }
 
     pub fn searchable_fields(&self) -> Vec<&FieldDef> {
-        self.fields.iter().filter(|f| f.searchable).collect()
+        let mut fields: Vec<&FieldDef> = self
+            .fields
+            .iter()
+            .filter(|f| f.searchable && !f.secret)
+            .collect();
+        fields.sort_by(|a, b| {
+            b.search_weight
+                .cmp(&a.search_weight)
+                .then(a.name.cmp(&b.name))
+        });
+        fields
     }
 
     pub fn validate_idents(&self) -> QefroResult<()> {
@@ -469,18 +472,62 @@ impl EntityDef {
         Ok(())
     }
 
+    fn preferred_display_field(fields: &[crate::field::FieldDef]) -> String {
+        for name in ["name", "title", "code", "doc_no", "guest_name", "label"] {
+            if fields.iter().any(|f| f.name == name) {
+                return name.into();
+            }
+        }
+        "id".into()
+    }
+
+    fn json_label(value: Option<&serde_json::Value>) -> Option<String> {
+        let value = value?;
+        if let Some(s) = value.as_str() {
+            let t = s.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        }
+        if value.is_null() || value.is_object() || value.is_array() {
+            return None;
+        }
+        let t = value.to_string().trim_matches('"').trim().to_string();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t)
+        }
+    }
+
     pub fn display_label<'a>(&self, record: &'a serde_json::Value) -> String {
-        record
-            .get(&self.display_field)
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                record
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            })
-            .unwrap_or_default()
+        let id = Self::json_label(record.get("id")).unwrap_or_default();
+        let expanded_label = |field: &str| -> Option<String> {
+            record
+                .get("_expanded")
+                .and_then(|v| v.as_object())
+                .and_then(|m| m.get(field))
+                .and_then(|rel| Self::json_label(rel.get("label")))
+        };
+        let try_field = |field: &str| -> Option<String> {
+            expanded_label(field)
+                .or_else(|| Self::json_label(record.get(field)))
+                .filter(|s| !s.is_empty() && *s != id)
+        };
+        for key in [
+            self.display_field.as_str(),
+            "name",
+            "title",
+            "code",
+            "doc_no",
+            "guest_name",
+            "label",
+        ] {
+            if let Some(label) = try_field(key) {
+                return label;
+            }
+        }
+        id
     }
 
     pub fn to_ui_meta(&self) -> UiEntityMeta {
@@ -507,7 +554,9 @@ impl EntityDef {
                     detail_visible: f.ui.detail && !f.ui.hidden,
                     filter: f.ui.filter,
                     filterable: f.ui.filter,
-                    searchable: f.searchable,
+                    searchable: f.searchable && !f.secret,
+                    search_weight: f.search_weight,
+                    search_exact: f.search_exact,
                     sortable: f.ui.sortable
                         || matches!(f.name.as_str(), "created_at" | "updated_at" | "name"),
                     hidden: f.ui.hidden,
@@ -740,5 +789,44 @@ fields:
         let subtotal = ui.fields.iter().find(|f| f.name == "subtotal").unwrap();
         assert!(subtotal.computed);
         assert!(subtotal.readonly);
+    }
+
+    #[test]
+    fn searchable_fields_skip_secrets_and_rank_by_weight() {
+        let def = EntityDef::new("Account")
+            .field(FieldDef::string("email").searchable().search_weight(2))
+            .field(FieldDef::string("name").searchable().search_weight(10))
+            .field(FieldDef::string("password").searchable().secret())
+            .build();
+        let names: Vec<_> = def
+            .searchable_fields()
+            .into_iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["name", "email"]);
+        let ui = def.to_ui_meta();
+        let password = ui.fields.iter().find(|f| f.name == "password").unwrap();
+        assert!(!password.searchable);
+        let name = ui.fields.iter().find(|f| f.name == "name").unwrap();
+        assert_eq!(name.search_weight, 10);
+        assert_eq!(ui.schema_version, "1");
+    }
+
+    #[test]
+    fn with_party_then_name_uses_name_as_display_field() {
+        let def = EntityDef::new("Customer")
+            .with_party()
+            .field(
+                crate::field::FieldDef::string("name")
+                    .required()
+                    .searchable(),
+            )
+            .build();
+        assert_eq!(def.display_field, "name");
+        let label = def.display_label(&serde_json::json!({
+            "id": "8b3f900d-4ebc-4e46-9083-90b8ead44a83",
+            "name": "Ahmed Khan"
+        }));
+        assert_eq!(label, "Ahmed Khan");
     }
 }

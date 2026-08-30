@@ -4,21 +4,31 @@ Dashboard definitions stay in application metadata. The frontend does not embed 
 
 ```rust
 DashboardDef::new("restaurant-ops", "Restaurant operations")
-    .card(DashboardCard::count("Today's reservations", "Reservation").filter("reservation_date", "today"))
-    .card(DashboardCard::sum("Today's sales", "Payment", "amount").filter("status", "captured"))
-    .card(DashboardCard::status_breakdown("Reservations by status", "Reservation", "status"))
-    .card(DashboardCard::recent("Recent reservations", "Reservation", 8))
-    .card(DashboardCard::chart("Orders", "Order", "bar", "status"))
+    .card(DashboardCard::kpi("Today's reservations", "Reservation").filter("reservation_date", "today"))
+    .card(DashboardCard::sum("Today's sales", "Payment", "amount").filter("status", "captured").roles(&["Admin", "Manager"]))
+    .card(DashboardCard::workflow("Kitchen status", "Order"))
+    .card(DashboardCard::chart("Sales trend", "Order", "area", "order_date").metric_name("sum").measure_field("grand_total"))
+    .card(DashboardCard::activity("Recent order events", "Order", 8))
+    .card(DashboardCard::audit("Changes today").roles(&["Admin"]))
 ```
 
 Card kinds:
 
 | kind | API payload |
 | --- | --- |
-| `metric` | `{ value }` (`count` or `sum`) |
-| `chart` / `status_breakdown` | `{ series: [{ label, value }], chart: bar\|line\|pie\|donut }` |
-| `list` / `table` / `activity` | `{ items, total }` from the entity list API |
+| `metric` / `kpi` | `{ value }` (`count`, `sum`, `avg`, `min`, `max`) |
+| `chart` / `status_breakdown` / `workflow` | `{ series: [{ label, value }], chart: bar\|line\|area\|pie\|donut }` |
+| `list` / `table` / `saved_view` | `{ items, total }` from the entity list API |
+| `activity` | `{ items }` from `qefro_activity` (not a second timeline store) |
+| `report` | `{ rows, series }` from `run_report` |
+| `audit` | `{ value }` — Admin only |
 
-All queries run through `EntityService` with tenant, app entitlement, and `List` permission. Charts are simple SVG; there is no drag-and-drop dashboard builder.
+Unauthorized widgets are **skipped**, not 403 for the whole dashboard. `roles` on a card hides it from other roles; do not duplicate dashboards per role.
 
-Metric cards drill into the generic list using the card's existing filters. Chart segments set dashboard query parameters and refetch. See [dashboard-drilldown.md](dashboard-drilldown.md).
+All queries run through `EntityService` with tenant, app entitlement, and `List` permission. Charts are simple SVG; Studio edits metadata overlays (add / reorder / title / source / size / saved report or view), not custom React widgets.
+
+Activity widgets use `qefro_activity`. Workflow widgets group by existing status / `_workflow` data. Clicking a workflow segment opens the generic list with that filter.
+
+Metric cards drill into the generic list using the card's existing filters. See [dashboard-drilldown.md](dashboard-drilldown.md).
+
+`QefroClient.getDashboard()` loads cards. Agents use `EntityOps::get_dashboard`.

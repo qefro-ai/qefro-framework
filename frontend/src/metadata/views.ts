@@ -61,12 +61,27 @@ export function cardEnabled(entity: UiEntity): boolean {
   return spec.enabled !== false;
 }
 
+export function chartEnabled(entity: UiEntity): boolean {
+  const spec = entity.views?.chart;
+  if (!spec) return false;
+  if (spec.enabled === false) return false;
+  return Boolean(spec.dimension || groupingField(entity));
+}
+
 export function availableViews(entity: UiEntity): ViewKind[] {
   const views: ViewKind[] = ["list"];
   if (cardEnabled(entity)) views.push("card");
   if (kanbanEnabled(entity)) views.push("kanban");
   if (calendarEnabled(entity)) views.push("calendar");
+  if (chartEnabled(entity)) views.push("chart");
   return views;
+}
+
+export function defaultView(entity: UiEntity): ViewKind {
+  const named = entity.views?.default as ViewKind | undefined;
+  const available = availableViews(entity);
+  if (named && available.includes(named)) return named;
+  return "list";
 }
 
 export function listViewSpec(entity: UiEntity) {

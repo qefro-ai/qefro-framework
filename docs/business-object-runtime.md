@@ -53,7 +53,28 @@ EntityOps
 EntityService
 ```
 
-**Define the business object once.** Qefro provides the runtime, API, UI, workflow, identity, relationships, activity, audit, files, notifications, and agent access around it.
+**Define the business object once.** Qefro provides the runtime, API, UI, workflow, identity, relationships, activity, audit, files, notifications, search, reports, dashboards, workspaces, and agent access around it.
+
+```
+EntityDef
+  ↓
+EntityService
+  ├── CRUD
+  ├── Workflow
+  ├── Activity
+  ├── Audit
+  └── Business capabilities
+        ↓
+Reports / Search / Dashboards
+        ↓
+QefroClient
+        ↓
+Generic UI
+```
+
+Agents continue `EntityOps → EntityService`. There is no second query engine.
+
+See [Search](search.md), [Saved views](views.md), [Reports](reports.md), [Dashboards](dashboards.md), [Workspaces](workspaces.md).
 
 Capabilities are discovered from metadata (`EntityDef` → `capabilities` on `GET /meta/ui`) and record payloads (`_workflow`, `_actions`, `_related`). The generic UI never branches on `if entity === "Customer"`.
 
