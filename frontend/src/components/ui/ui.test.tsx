@@ -5,6 +5,7 @@ import { EmptyState, ErrorState, Skeleton } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { SectionHeader } from "./SectionHeader";
 import { SnackbarHost, showSnackbar } from "./Snackbar";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { buttonClass } from "../../theme/tokens";
 
 describe("StatusBadge", () => {
@@ -95,5 +96,26 @@ describe("M3 buttons and snackbar", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Saved");
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+});
+
+describe("ConfirmDialog", () => {
+  it("renders in-app copy and does not call confirm until accepted", async () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        open
+        title="Archive 1 customer?"
+        message="Archived records leave this list."
+        confirmLabel="Archive"
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />,
+    );
+    expect(screen.getByRole("dialog", { name: "Archive 1 customer?" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalled();
   });
 });
