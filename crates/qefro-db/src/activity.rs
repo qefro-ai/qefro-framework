@@ -307,6 +307,18 @@ impl EntityService {
         record_id: Uuid,
         message: &str,
     ) -> QefroResult<ActivityRecord> {
+        self.add_comment_with_attachment(ctx, entity_name, record_id, message, None)
+            .await
+    }
+
+    pub async fn add_comment_with_attachment(
+        &self,
+        ctx: &OpContext,
+        entity_name: &str,
+        record_id: Uuid,
+        message: &str,
+        attachment_id: Option<Uuid>,
+    ) -> QefroResult<ActivityRecord> {
         let entity = self.registry().get(entity_name)?;
         if !entity.comments {
             return Err(QefroError::bad_request("comments are not enabled"));
@@ -321,6 +333,20 @@ impl EntityService {
             return Err(QefroError::bad_request("comment is too long"));
         }
         let mentions = parse_mentions(message);
+        let mut metadata = json!({ "mentions": mentions });
+        if let Some(attachment_id) = attachment_id {
+            let store = crate::attachments::AttachmentStore::new(self.pool().clone());
+            let file = store.get(ctx.tenant_id, attachment_id).await?;
+            if file.entity != entity.name || file.record_id != record_id {
+                return Err(QefroError::bad_request(
+                    "attachment does not belong to this record",
+                ));
+            }
+            if let Some(obj) = metadata.as_object_mut() {
+                obj.insert("attachment_id".into(), json!(attachment_id));
+                obj.insert("filename".into(), json!(file.filename));
+            }
+        }
         let mut tx = self
             .pool()
             .begin()
@@ -335,7 +361,7 @@ impl EntityService {
                 record_id,
                 TYPE_COMMENT,
                 message,
-                json!({ "mentions": mentions }),
+                metadata.clone(),
             )
             .await?;
         let event = {
@@ -344,7 +370,11 @@ impl EntityService {
                 entity.name.clone(),
                 record_id,
                 ctx.tenant_id,
-                json!({ "message": message, "mentions": mentions }),
+                json!({
+                    "message": message,
+                    "mentions": mentions,
+                    "attachment_id": attachment_id,
+                }),
             );
             event.user_id = Some(ctx.user_id);
             event

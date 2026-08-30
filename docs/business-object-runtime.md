@@ -80,4 +80,4 @@ Capabilities are discovered from metadata (`EntityDef` → `capabilities` on `GE
 
 Entities that omit workflow, activity, attachments, or comments continue to work. `UI_SCHEMA_VERSION` remains `"1"`.
 
-See [Identity](identity.md), [Tasks](tasks.md), [Activity](activity.md), [Audit](audit.md), [Workflows](workflows.md), [Attachments](attachments.md), [Notifications](notifications.md), [Automation](automation.md), [Validation](validation.md).
+See [Identity](identity.md), [Tasks](tasks.md), [Files](files.md), [Activity](activity.md), [Audit](audit.md), [Workflows](workflows.md), [Attachments](attachments.md), [Notifications](notifications.md), [Automation](automation.md), [Validation](validation.md).

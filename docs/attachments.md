@@ -23,6 +23,6 @@ DELETE /api/v1/attachments/{id}
 
 List, download, upload, and delete all load the owning record through `EntityService` first. Tenant isolation uses the session tenant, never a client `tenant_id`.
 
-The generic detail page shows the attachment list and an upload control. No per-entity React page. Uploads emit `attachment.created` and an Activity row. `storage_key` is never serialized to clients. Guessing another tenant's attachment id returns 404.
+The generic detail page shows the attachment list and an upload control. No per-entity React page. Uploads emit `file.uploaded` (and `attachment.created`) plus an Activity row. `storage_key` is never serialized to clients. Guessing another tenant's attachment id returns 404.
 
-See [Business object runtime](business-object-runtime.md).
+See [Files](files.md) for the full file runtime (preview, replace, search, purge jobs, SDK). See [Business object runtime](business-object-runtime.md).

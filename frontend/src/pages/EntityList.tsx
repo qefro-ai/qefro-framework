@@ -181,6 +181,7 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
   const allowAssign = Boolean(meta.capabilities?.assignment) && allowUpdate;
   const allowBulk = meta.capabilities?.bulk !== false;
   const showRowActions = Boolean(meta.workflow || meta.capabilities?.workflow || meta.capabilities?.actions);
+  const showFiles = Boolean(meta.attachments || meta.capabilities?.attachments);
   const tableColSpan = cols.length + 1 + (showRowActions ? 1 : 0);
   const queryActive = isQueryActive(params, search);
   const initialLoad = loading && rows.length === 0 && !error;
@@ -496,6 +497,11 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
                           ) : (
                             <FieldValue row={row} field={c} />
                           )}
+                          {i === 0 && showFiles && Number(row._attachment_count ?? 0) > 0 ? (
+                            <Link className="file-count" to={`/${meta.slug}/${row.id}?tab=files`} title="Attachments">
+                              📎 {Number(row._attachment_count)}
+                            </Link>
+                          ) : null}
                         </td>
                       ))}
                       {showRowActions ? (

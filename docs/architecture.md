@@ -93,7 +93,7 @@ User and agent calls use user RBAC. Workers use `OpContext::worker` and may run 
 
 **Qefro 1.3 search, reports, dashboards, and saved views:** Global search, entity search weights, saved views, metadata reports, generic charts, dashboards, and workspaces sit on the same `EntityService`. See [Search](search.md), [Reports](reports.md), [Dashboards](dashboards.md), and [Workspaces](workspaces.md).
 
-**Qefro 1.2 business object runtime:** Identity (Person / Organization / User / business), workflow UI, activity, audit, attachments, and in-app notifications sit on `EntityService`. See [Business object runtime](business-object-runtime.md) and [Identity](identity.md). The framework Task primitive composes the same path — see [Tasks](tasks.md).
+**Qefro 1.2 business object runtime:** Identity (Person / Organization / User / business), workflow UI, activity, audit, attachments, and in-app notifications sit on `EntityService`. See [Business object runtime](business-object-runtime.md) and [Identity](identity.md). The framework Task primitive composes the same path — see [Tasks](tasks.md). Entity attachments (documents and files) are the same runtime — see [Files](files.md).
 
 `ctx.get` inside an operation transaction uses `SELECT … FOR UPDATE` so exclusive resources (a dining table, a room) cannot be acquired twice. HTTP 5xx responses use `QefroError::public_message`: SQL, credentials, and stack traces are not returned to clients.
 

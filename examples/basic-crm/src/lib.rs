@@ -87,6 +87,7 @@ mod tests {
         assert!(customer.get_field("party_type").is_some());
         assert!(customer.get_field("organization_id").is_some());
         assert!(customer.get_field("tasks").is_some());
+        assert!(customer.attachments);
         assert!(customer
             .links
             .iter()

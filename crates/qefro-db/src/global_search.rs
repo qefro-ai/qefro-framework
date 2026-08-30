@@ -303,16 +303,21 @@ impl EntityService {
                 });
             }
         }
+        self.search_attachments(ctx, q, &needle, per.min(5), &mut hits)
+            .await;
         hits.sort_by(|a, b| b.score.cmp(&a.score).then(a.label.cmp(&b.label)));
         hits.truncate(per.saturating_mul(4));
         let mut grouped: BTreeMap<String, SearchGroup> = BTreeMap::new();
         for hit in &hits {
             let entry = grouped.entry(hit.entity.clone()).or_insert_with(|| {
-                let label = self
-                    .registry()
-                    .try_get(&hit.entity)
-                    .map(|e| e.label_plural.clone())
-                    .unwrap_or_else(|| hit.entity.clone());
+                let label = if hit.entity == "_attachment" {
+                    "Attachments".into()
+                } else {
+                    self.registry()
+                        .try_get(&hit.entity)
+                        .map(|e| e.label_plural.clone())
+                        .unwrap_or_else(|| hit.entity.clone())
+                };
                 SearchGroup {
                     entity: hit.entity.clone(),
                     label,
@@ -326,6 +331,60 @@ impl EntityService {
             results: hits,
             groups,
         })
+    }
+
+    async fn search_attachments(
+        &self,
+        ctx: &OpContext,
+        q: &str,
+        needle: &str,
+        limit: usize,
+        hits: &mut Vec<SearchHit>,
+    ) {
+        let store = crate::attachments::AttachmentStore::new(self.pool().clone());
+        let Ok(rows) = store.search(ctx.tenant_id, q, limit as i64).await else {
+            return;
+        };
+        for row in rows {
+            let Some(entity) = self.registry().try_get(&row.entity) else {
+                continue;
+            };
+            if !entity.attachments {
+                continue;
+            }
+            if !ctx.allows_app(entity.module.as_deref()) {
+                continue;
+            }
+            if self
+                .permissions()
+                .check(ctx, &entity.name, Action::Read)
+                .is_err()
+            {
+                continue;
+            }
+            let Ok(record) = self.get(ctx, &entity.name, row.record_id).await else {
+                continue;
+            };
+            let parent_label = entity.display_label(&record);
+            let filename_score = rank_text(needle, &row.filename, 10);
+            let desc_score = row
+                .description
+                .as_deref()
+                .map(|d| rank_text(needle, d, 6))
+                .unwrap_or(0);
+            let score = filename_score.max(desc_score);
+            if score <= 0 {
+                continue;
+            }
+            hits.push(SearchHit {
+                entity: "_attachment".into(),
+                slug: entity.slug.clone(),
+                id: row.record_id.to_string(),
+                label: row.filename.clone(),
+                snippet: parent_label,
+                score,
+            });
+        }
     }
 
     fn strip_search_fields(

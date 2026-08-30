@@ -21,7 +21,7 @@ Typed methods cover UI metadata, records, workflow, search, reports, dashboards,
 - `list` / `get` / `create` / `update` / `remove`
 - `action` / `transition` / `workflow` / `getWorkflow`
 - `activity` / `getActivity` / `addComment`
-- `attachments` / `getAttachments` / `uploadAttachment`
+- `attachments` / `getAttachments` / `uploadAttachment` / `files.list` / `files.upload` / `files.download` / `files.delete`
 - `notifications` / `getNotifications`
 - `audit` (Admin)
 - `upload` / `uploadAttachment`

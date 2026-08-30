@@ -85,6 +85,7 @@ pub fn crm_customer() -> EntityDef {
         .field(FieldDef::one_to_many("opportunities", "Opportunity", "customer_id"))
         .field(FieldDef::one_to_many("activities", "Activity", "customer_id"))
         .with_tasks()
+        .attachments()
         .build()
 }
 

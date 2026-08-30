@@ -89,12 +89,13 @@ See [sdk.md](sdk.md) for the browser client.
 | GET | `/webhooks`, `/webhooks/{name}/deliveries` |
 | POST | `/webhooks/{name}/test` |
 | GET/POST | `/{slug}/{id}/attachments` |
-| GET/DELETE | `/attachments/{id}` |
+| GET/PATCH/DELETE | `/attachments/{id}` |
+| POST | `/attachments/{id}/replace` |
 | POST | `/{slug}/import/preview`, `/{slug}/import` |
 | GET | `/realtime` (SSE) |
 | GET/POST | `/public/{tenant}/{form}` |
 
-See [singletons](singletons.md), [search](search.md), [attachments](attachments.md), [notifications](notifications.md), [webhooks](webhooks.md), [imports](imports.md), [realtime](realtime.md), [public forms](public-forms.md).
+See [singletons](singletons.md), [search](search.md), [files](files.md), [attachments](attachments.md), [notifications](notifications.md), [webhooks](webhooks.md), [imports](imports.md), [realtime](realtime.md), [public forms](public-forms.md).
 
 ```
 GET /operations

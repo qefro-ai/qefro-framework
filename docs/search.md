@@ -6,7 +6,7 @@ GET /api/v1/search?q=Ahmed
 
 PostgreSQL `ILIKE` over fields marked `searchable: true`. Secret fields are never searched or returned. Modes: exact (`search_exact` or quoted query), prefix (`Ahmed*`), contains. Elasticsearch is not required.
 
-Each entity is skipped unless the caller has app entitlement and `list` permission. Hits are presented through `EntityService` so field permissions strip sensitive values from snippets. Records the user cannot read do not appear.
+Each entity is skipped unless the caller has app entitlement and `list` permission. Hits are presented through `EntityService` so field permissions strip sensitive values from snippets. Records the user cannot read do not appear. Attachment filename and description are searched the same way (not binary contents) and grouped under **Attachments**. See [Files](files.md).
 
 Response:
 

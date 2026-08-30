@@ -33,7 +33,7 @@ pub mod studio;
 pub mod webhooks;
 
 pub use app_registry::AppRegistryRow;
-pub use attachments::{Attachment, AttachmentStore};
+pub use attachments::{Attachment, AttachmentPurgeJob, AttachmentStore, ATTACHMENT_PURGE_JOB};
 pub use audit::AuditLogger;
 pub use automation::AutomationEngine;
 pub use blobs::{BlobMeta, BlobMetaStore};

@@ -677,6 +677,8 @@ async fn transition_entity(
 #[derive(Deserialize)]
 struct CommentBody {
     message: String,
+    #[serde(default)]
+    attachment_id: Option<Uuid>,
 }
 
 async fn list_activity(
@@ -703,7 +705,7 @@ async fn add_comment(
     reject_reserved(&slug)?;
     let row = state
         .entities
-        .add_comment(&ctx, &slug, id, &body.message)
+        .add_comment_with_attachment(&ctx, &slug, id, &body.message, body.attachment_id)
         .await?;
     Ok((
         StatusCode::CREATED,

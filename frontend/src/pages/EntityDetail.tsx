@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   api,
   detailVisible,
@@ -29,6 +29,7 @@ import { useRealtime } from "../realtime";
 
 export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const { slug, id } = useParams();
+  const [params, setParams] = useSearchParams();
   const meta = entities.find((e) => e.slug === slug);
   const navigate = useNavigate();
   const [row, setRow] = useState<Record<string, unknown> | null>(null);
@@ -36,11 +37,12 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const [activity, setActivity] = useState<Array<Record<string, unknown>>>([]);
   const [attachments, setAttachments] = useState<Array<Record<string, unknown>>>([]);
   const [comment, setComment] = useState("");
+  const [commentFile, setCommentFile] = useState<File | null>(null);
   const [commentBusy, setCommentBusy] = useState(false);
   const [pending, setPending] = useState<"delete" | "archive" | "restore" | null>(null);
   const [busy, setBusy] = useState(false);
   const theme = useTenantTheme();
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(params.get("tab") || "overview");
   const { setRecord } = useBreadcrumbRecord();
 
   async function load() {
@@ -263,7 +265,13 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
             role="tab"
             aria-selected={tab === t.id}
             className={tab === t.id ? "is-active" : "ghost"}
-            onClick={() => setTab(t.id)}
+            onClick={() => {
+              setTab(t.id);
+              const next = new URLSearchParams(params);
+              if (t.id === "overview") next.delete("tab");
+              else next.set("tab", t.id);
+              setParams(next, { replace: true });
+            }}
           >
             {t.label}
           </button>
@@ -299,12 +307,20 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
               className="comment-form"
               onSubmit={async (e) => {
                 e.preventDefault();
-                if (!comment.trim() || commentBusy) return;
+                if ((!comment.trim() && !commentFile) || commentBusy) return;
                 setCommentBusy(true);
                 try {
-                  await api.addComment(slug, id, comment.trim());
+                  let attachmentId: string | undefined;
+                  if (commentFile && slug && id) {
+                    const uploaded = await api.uploadAttachment(slug, id, commentFile);
+                    attachmentId = String(uploaded.id ?? "");
+                  }
+                  await api.addComment(slug, id, comment.trim() || `Attached ${commentFile?.name ?? "file"}`, attachmentId);
                   setComment("");
+                  setCommentFile(null);
                   await load();
+                  const activityData = await api.activity(slug, id);
+                  setActivity(activityData.items ?? []);
                 } catch (err) {
                   setError(friendlyError(err));
                 } finally {
@@ -321,9 +337,17 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
                   placeholder={t("comment.placeholder")}
                 />
               </label>
-              <button type="submit" disabled={commentBusy || !comment.trim()}>
-                Comment
+              <button type="submit" disabled={commentBusy || (!comment.trim() && !commentFile)}>
+                Send comment
               </button>
+              <label className="comment-attach">
+                <span className="sr-only">Attach file</span>
+                <input
+                  type="file"
+                  onChange={(e) => setCommentFile(e.target.files?.[0] ?? null)}
+                />
+                {commentFile ? <span className="muted">📎 {commentFile.name}</span> : <span className="muted">📎 Attach file</span>}
+              </label>
             </form>
           ) : null}
           <Timeline
@@ -342,6 +366,10 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
               created_at: item.created_at,
               summary: String(item.message ?? item.summary ?? item.action ?? item.event ?? "updated"),
               message: item.message ? String(item.message) : undefined,
+              filename: (() => {
+                const meta = item.metadata as Record<string, unknown> | undefined;
+                return meta?.filename ? String(meta.filename) : undefined;
+              })(),
             }))}
             timezone={theme.timezone}
             locale={theme.locale}
