@@ -105,6 +105,7 @@ export type UiEntity = {
   attachments?: boolean;
   capabilities?: EntityCapabilities;
   print_formats?: Array<{ name: string; title?: string; variant?: string; version?: number }>;
+  communications?: Array<{ name: string; event?: string; channels?: string[]; purpose?: string }>;
   actions?: Array<{ name: string; label?: string; confirmation?: { required?: boolean; message?: string } }>;
   links?: Array<{
     label: string;
@@ -148,6 +149,7 @@ export type EntityCapabilities = {
   export?: boolean;
   bulk?: boolean;
   print?: boolean;
+  communication?: boolean;
 };
 
 export type RecordPermissions = {

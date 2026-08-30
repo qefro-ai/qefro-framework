@@ -2,6 +2,7 @@
 
 use crate::app::{AppManifest, AppModule};
 use crate::catalog::{load_yaml_docs, parse_app_toml, AppFileManifest};
+use crate::communication::CommunicationDef;
 use crate::document::{PrintFormat, ReportDef};
 use crate::entity::EntityDef;
 use crate::error::{QefroError, QefroResult};
@@ -26,6 +27,7 @@ pub struct AppBundle {
     pub dashboards: Vec<DashboardDef>,
     pub pages: Vec<PageDef>,
     pub print_formats: Vec<PrintFormat>,
+    pub communications: Vec<CommunicationDef>,
     pub seeds: Vec<SeedBatch>,
     pub hooks: Vec<LifecycleHookDef>,
     pub migrations: Vec<AppMigration>,
@@ -66,6 +68,13 @@ impl AppBundle {
             page.normalize();
         }
         let print_formats: Vec<PrintFormat> = load_yaml_docs(&root.join("print_formats"))?;
+        let mut communications: Vec<CommunicationDef> =
+            load_yaml_docs(&root.join("communications"))?;
+        for def in &mut communications {
+            if def.module.is_none() {
+                def.module = Some(manifest.name.clone());
+            }
+        }
         let workflows = load_raw_docs(&root.join("workflows"))?;
         let permissions = load_permission_docs(&root.join("permissions"))?;
         let seeds = load_seeds(&root.join("seeds"))?;
@@ -82,6 +91,7 @@ impl AppBundle {
             dashboards,
             pages,
             print_formats,
+            communications,
             seeds,
             hooks,
             migrations,
@@ -126,6 +136,9 @@ impl AppBundle {
         }
         for fmt in self.print_formats {
             builder = builder.print_format(fmt);
+        }
+        for def in self.communications {
+            builder = builder.communication(def);
         }
         builder.build()
     }

@@ -372,4 +372,31 @@ describe("business object runtime UI", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Print" })).toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Download PDF" })).toBeInTheDocument();
   });
+
+  it("shows Send message when the entity advertises communication", async () => {
+    vi.spyOn(api, "get").mockResolvedValue({
+      id: "o1",
+      name: "#1042",
+      status: "Confirmed",
+    });
+    vi.spyOn(api, "activity").mockResolvedValue({ items: [] });
+    vi.spyOn(api, "attachments").mockResolvedValue({ items: [] });
+    vi.spyOn(api, "communications").mockResolvedValue({ items: [] });
+    const hidden = wrap(<EntityDetail entities={[order]} />, "/orders/o1");
+    await waitFor(() => expect(screen.getByText(/Order #1042/)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+    hidden.unmount();
+
+    const comms = {
+      ...order,
+      capabilities: { ...order.capabilities, communication: true },
+      communications: [
+        { name: "order_confirmed", channels: ["email", "whatsapp"], purpose: "transactional" },
+      ],
+    };
+    wrap(<EntityDetail entities={[comms]} />, "/orders/o1");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument(),
+    );
+  });
 });

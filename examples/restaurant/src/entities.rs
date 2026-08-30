@@ -50,6 +50,21 @@ pub fn customer() -> EntityDef {
                 .section("Contact"),
         )
         .field(
+            FieldDef::enum_values(
+                "communication_channel",
+                vec!["in_app", "email", "sms", "whatsapp", "none"],
+            )
+            .nullable()
+            .label("Preferred channel")
+            .section("Contact"),
+        )
+        .field(
+            FieldDef::boolean("marketing_opt_out")
+                .nullable()
+                .label("Marketing opt-out")
+                .section("Contact"),
+        )
+        .field(
             FieldDef::text("notes")
                 .nullable()
                 .list(false)
@@ -89,7 +104,7 @@ pub fn customer() -> EntityDef {
             form: Some(FormViewSpec::sections(vec![
                 ViewSectionSpec::new("Customer Information").columns(&[
                     ViewColumnSpec::fields(&["name", "email", "phone"]),
-                    ViewColumnSpec::fields(&["party_type", "person_id"]),
+                    ViewColumnSpec::fields(&["party_type", "person_id", "communication_channel", "marketing_opt_out"]),
                 ]),
                 ViewSectionSpec::new("Organization Details")
                     .fields(&["organization_id"])
@@ -97,7 +112,7 @@ pub fn customer() -> EntityDef {
                 ViewSectionSpec::new("Notes").fields(&["notes"]),
             ])),
             detail: Some(DetailViewSpec::sections(vec![
-                ViewSectionSpec::new("Customer").fields(&["name", "email", "phone"]),
+                ViewSectionSpec::new("Customer").fields(&["name", "email", "phone", "communication_channel", "marketing_opt_out"]),
                 ViewSectionSpec::new("Business").fields(&["party_type", "person_id"]),
                 ViewSectionSpec::new("Organization Details")
                     .fields(&["organization_id"])

@@ -1,13 +1,14 @@
 //! Automation runtime: match DomainEvents, enqueue JobQueue work, execute
 //! actions through EntityService / NotificationDef / WebhookDef.
 
+use crate::communication::{enqueue_communication, CommunicationStore};
 use crate::jobs::{JobHandler, JobQueue};
 use crate::notifications::NotificationStore;
 use crate::service::EntityService;
 use async_trait::async_trait;
 use qefro_core::{
     next_run_after, parse_cron, schedule_slot_key, strip_secrets, AutomationAction, AutomationDef,
-    NotificationDef, OpContext, QefroError, QefroResult, ROLE_WORKER, WebhookDef,
+    CommunicationDef, NotificationDef, OpContext, QefroError, QefroResult, WebhookDef, ROLE_WORKER,
 };
 use qefro_events::{DomainEvent, EventHandler};
 use serde_json::{json, Value};
@@ -24,6 +25,8 @@ pub struct AutomationEngine {
     defs: Vec<AutomationDef>,
     notifications: Vec<NotificationDef>,
     webhooks: Vec<WebhookDef>,
+    communications: Vec<CommunicationDef>,
+    comm_store: CommunicationStore,
     store: NotificationStore,
     entities: OnceLock<Arc<EntityService>>,
 }
@@ -35,14 +38,17 @@ impl AutomationEngine {
         defs: Vec<AutomationDef>,
         notifications: Vec<NotificationDef>,
         webhooks: Vec<WebhookDef>,
+        communications: Vec<CommunicationDef>,
     ) -> Self {
         Self {
             store: NotificationStore::new(pool.clone()),
+            comm_store: CommunicationStore::new(pool.clone()),
             pool,
             jobs,
             defs,
             notifications,
             webhooks,
+            communications,
             entities: OnceLock::new(),
         }
     }
@@ -170,7 +176,9 @@ impl AutomationEngine {
             .defs
             .iter()
             .find(|d| d.id_key() == automation_id || d.name == automation_id)
-            .ok_or_else(|| QefroError::not_found(format!("automation '{automation_id}' not found")))?
+            .ok_or_else(|| {
+                QefroError::not_found(format!("automation '{automation_id}' not found"))
+            })?
             .clone();
         if !def.enabled {
             return Ok(());
@@ -211,7 +219,11 @@ impl AutomationEngine {
             .unwrap_or_else(|| scheduled_event(ctx, &def, event_id));
         let mut run_ctx = self.action_context(ctx, &def, &event, execution_id).await;
         let result = self.execute_actions(&mut run_ctx, &def, &event).await;
-        let status = if result.is_ok() { "completed" } else { "failed" };
+        let status = if result.is_ok() {
+            "completed"
+        } else {
+            "failed"
+        };
         let err = result.as_ref().err().map(|e| e.to_string());
         sqlx::query(
             "UPDATE qefro_automation_executions SET status = $2, error = $3 WHERE tenant_id = $1 AND automation_id = $4 AND event_id = $5",
@@ -336,6 +348,10 @@ impl AutomationEngine {
     ) -> QefroResult<()> {
         match action {
             AutomationAction::Notify { notify } => self.action_notify(ctx, event, notify).await,
+            AutomationAction::SendCommunication { send_communication } => {
+                self.action_send_communication(ctx, event, send_communication)
+                    .await
+            }
             AutomationAction::SendWebhook { send_webhook } => {
                 self.action_webhook(ctx, event, send_webhook).await
             }
@@ -366,7 +382,10 @@ impl AutomationEngine {
                 Ok(())
             }
             AutomationAction::Transition { transition } => {
-                let entity = transition.entity.as_deref().unwrap_or(event.entity.as_str());
+                let entity = transition
+                    .entity
+                    .as_deref()
+                    .unwrap_or(event.entity.as_str());
                 let id = resolve_id(transition.record_id.as_deref(), event)?;
                 self.entities()?
                     .transition(ctx, entity, id, &transition.name)
@@ -393,6 +412,11 @@ impl AutomationEngine {
                     let notify: qefro_core::NotifyAction =
                         serde_json::from_value(params.clone()).unwrap_or_default();
                     self.action_notify(ctx, event, &notify).await
+                }
+                "send_communication" => {
+                    let spec: qefro_core::CommunicationAction =
+                        serde_json::from_value(params.clone()).unwrap_or_default();
+                    self.action_send_communication(ctx, event, &spec).await
                 }
                 other => Err(QefroError::bad_request(format!(
                     "unknown automation action '{other}'"
@@ -456,6 +480,37 @@ impl AutomationEngine {
             ctx.request_id,
         )
         .await
+    }
+
+    async fn action_send_communication(
+        &self,
+        ctx: &OpContext,
+        event: &DomainEvent,
+        spec: &qefro_core::CommunicationAction,
+    ) -> QefroResult<()> {
+        let template = spec
+            .template
+            .as_deref()
+            .ok_or_else(|| QefroError::bad_request("send_communication requires template"))?;
+        let def = self
+            .communications
+            .iter()
+            .find(|d| d.name == template)
+            .ok_or_else(|| {
+                QefroError::not_found(format!("communication '{template}' not found"))
+            })?;
+        let _ = enqueue_communication(
+            &self.jobs,
+            &self.comm_store,
+            self.entities()?,
+            ctx,
+            def,
+            Some(event),
+            event.entity_id,
+            spec.channel.as_deref(),
+        )
+        .await?;
+        Ok(())
     }
 
     async fn action_webhook(
@@ -641,7 +696,9 @@ fn scheduled_event(ctx: &OpContext, def: &AutomationDef, event_id: Uuid) -> Doma
 
 fn resolve_id(raw: Option<&str>, event: &DomainEvent) -> QefroResult<Uuid> {
     match raw {
-        None | Some("record_id") | Some("{{record_id}}") | Some("$record_id") => Ok(event.entity_id),
+        None | Some("record_id") | Some("{{record_id}}") | Some("$record_id") => {
+            Ok(event.entity_id)
+        }
         Some(s) => Uuid::parse_str(s)
             .or_else(|_| Uuid::parse_str(&interpolate(s, event).as_str().unwrap_or("")))
             .map_err(|_| QefroError::bad_request("invalid record_id")),

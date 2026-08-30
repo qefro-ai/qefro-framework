@@ -213,6 +213,11 @@ pub fn validate_bundle(bundle: &AppBundle, installed: &[InstalledAppRef]) -> Val
             }
         }
     }
+    for def in &bundle.communications {
+        for err in crate::communication::validate_communication(def, &registry) {
+            report.error(err);
+        }
+    }
     for item in &bundle.manifest.navigation {
         if let Some(page_name) = &item.page {
             if !bundle
@@ -429,6 +434,7 @@ mod tests {
             dashboards: Vec::new(),
             pages: Vec::new(),
             print_formats: Vec::new(),
+            communications: Vec::new(),
             seeds: Vec::new(),
             hooks: Vec::new(),
             migrations: Vec::new(),

@@ -878,6 +878,7 @@ impl EntityDef {
                 export: self.standalone,
                 bulk: self.standalone && !self.singleton,
                 print: !self.print_formats.is_empty() || self.document.is_some(),
+                communication: false,
             }),
             print_formats: self
                 .print_formats
@@ -889,6 +890,7 @@ impl EntityDef {
                     version: f.version,
                 })
                 .collect(),
+            communications: Vec::new(),
             actions: self.actions.clone(),
             links: self.links.clone(),
             public_form: self.public_form.clone(),

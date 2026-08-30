@@ -87,6 +87,7 @@ Every action reuses existing infrastructure and the same RBAC, validation, workf
 | Action | Goes through |
 |---|---|
 | `notify` | `NotificationDef` / in-app store / `notify.email` job |
+| `send_communication` | named `CommunicationDef` → `communication.deliver` job (never calls a provider here) |
 | `send_webhook` | named `WebhookDef` + `webhook.deliver` job |
 | `update_entity` / `create_entity` / `assign` | `EntityService` |
 | `transition` | `EntityService::transition` (OperationDef when bound, otherwise workflow; never a raw status PATCH) |

@@ -397,6 +397,8 @@ pub struct UiEntityMeta {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub print_formats: Vec<PrintFormatSummary>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub communications: Vec<CommunicationSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<crate::platform::EntityActionDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<crate::platform::LinkDef>,
@@ -463,6 +465,21 @@ pub struct EntityCapabilities {
     /// Entity has at least one print format (or a document definition that can print).
     #[serde(default)]
     pub print: bool,
+    /// Entity has at least one communication template.
+    #[serde(default)]
+    pub communication: bool,
+}
+
+/// Templates advertised to the generic UI. Presentation only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CommunicationSummary {
+    pub name: String,
+    #[serde(default)]
+    pub event: String,
+    #[serde(default)]
+    pub channels: Vec<String>,
+    #[serde(default)]
+    pub purpose: String,
 }
 
 fn default_true_standalone() -> bool {

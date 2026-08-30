@@ -6,8 +6,8 @@ use qefro_core::{
     WebhookDef,
 };
 use qefro_db::{
-    AttachmentStore, AutomationEngine, BlobMetaStore, EntityService, MetadataChangeService,
-    NotificationStore, SavedFilterStore, WebhookLog,
+    AttachmentStore, AutomationEngine, BlobMetaStore, CommunicationHub, CommunicationStore,
+    EntityService, MetadataChangeService, NotificationStore, SavedFilterStore, WebhookLog,
 };
 use qefro_tenant::TenantService;
 use std::sync::Arc;
@@ -47,6 +47,9 @@ pub struct AppState {
     pub notification_defs: Vec<NotificationDef>,
     pub webhooks: Vec<WebhookDef>,
     pub automation: Arc<AutomationEngine>,
+    pub communications: Arc<CommunicationStore>,
+    pub communication_defs: Vec<qefro_core::CommunicationDef>,
+    pub communication_hub: Arc<CommunicationHub>,
 }
 
 impl AppState {
@@ -74,6 +77,10 @@ impl AppState {
 
     pub fn print_formats_live(&self) -> Vec<PrintFormat> {
         self.catalog.merge_print_formats(&self.print_formats)
+    }
+
+    pub fn communications_live(&self) -> Vec<qefro_core::CommunicationDef> {
+        self.catalog.merge_communications(&self.communication_defs)
     }
 
     /// Tenant branding wins; empty fields take enabled-app defaults, then tenant name.

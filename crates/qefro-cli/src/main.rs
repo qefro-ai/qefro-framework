@@ -805,6 +805,17 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
             println!("  {}  {}  {}", fmt.document_title(), fmt.variant, fmt.name);
         }
     }
+    let comms: Vec<_> = runtime
+        .communications()
+        .into_iter()
+        .filter(|c| c.entity.eq_ignore_ascii_case(&entity.name))
+        .collect();
+    if !comms.is_empty() {
+        println!("Communication");
+        for def in comms {
+            println!("  {}  {}  {}", def.name, def.event, def.channels.join(","));
+        }
+    }
     Ok(())
 }
 
@@ -887,6 +898,11 @@ fn cmd_validate(app: &str) -> Result<()> {
     }
     for fmt in runtime.print_formats() {
         for err in qefro_core::validate_print_format(&fmt, &registry) {
+            errors.push(err);
+        }
+    }
+    for def in runtime.communications() {
+        for err in qefro_core::validate_communication(&def, &registry) {
             errors.push(err);
         }
     }

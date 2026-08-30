@@ -43,6 +43,10 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const [preview, setPreview] = useState(false);
   const [previewHtml, setPreviewHtml] = useState("");
   const [previewBusy, setPreviewBusy] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendTemplate, setSendTemplate] = useState("");
+  const [sendChannel, setSendChannel] = useState("");
+  const [comms, setComms] = useState<Array<Record<string, unknown>>>([]);
   const [busy, setBusy] = useState(false);
   const theme = useTenantTheme();
   const [tab, setTab] = useState(params.get("tab") || "overview");
@@ -77,6 +81,12 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
         .then((d) => setAttachments(d.items ?? []))
         .catch(() => setAttachments([]));
     }
+    if (tab === "communication" && meta?.capabilities?.communication) {
+      api
+        .communications(slug, id)
+        .then((d) => setComms(d.items ?? []))
+        .catch(() => setComms([]));
+    }
   }, [tab, slug, id, row, meta?.attachments]);
 
   useRealtime({ entity: meta?.entity, recordId: id }, () => {
@@ -91,7 +101,11 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
     | { current?: string; transitions?: WorkflowAction[] }
     | undefined;
   const actions = ((row._actions as EntityAction[] | undefined) ?? []).filter(
-    (a) => a.name !== "generate_document" && a.name !== "generate-document",
+    (a) =>
+      a.name !== "generate_document" &&
+      a.name !== "generate-document" &&
+      a.name !== "send_communication" &&
+      a.name !== "send-communication",
   );
   const related = (row._related ?? {}) as Record<
     string,
@@ -142,6 +156,8 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const showRelated = links.length > 0 || Object.keys(related).length > 0;
   const allowArchive = Boolean(caps?.archive) && canUpdateRecord(meta, row);
   const allowPrint = Boolean(caps?.print);
+  const allowCommunication = Boolean(caps?.communication);
+  const templates = meta.communications ?? [];
   const archived = Boolean(row.archived_at);
 
   const chrome = [
@@ -149,6 +165,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
     ...childTables.map((c) => ({ id: `items:${c.name}`, label: c.label })),
     { id: "related", label: "Related records", hide: !showRelated },
     { id: "files", label: "Attachments", hide: !showAttachments },
+    { id: "communication", label: "Communication", hide: !allowCommunication },
     { id: "activity", label: "Activity", hide: !showActivity },
   ].filter((t) => !t.hide);
 
@@ -250,6 +267,19 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
                 </button>
               </>
             ) : null}
+            {allowCommunication ? (
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  setSendTemplate(templates[0]?.name ?? "");
+                  setSendChannel(templates[0]?.channels?.[0] ?? "");
+                  setSendOpen(true);
+                }}
+              >
+                Send message
+              </button>
+            ) : null}
             <ActionBar
               actions={actions}
               transitions={workflow?.transitions}
@@ -288,6 +318,16 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
                   hidden: !allowPrint,
                   onSelect: () => {
                     void api.downloadPdf(slug, id).catch((e) => setError(friendlyError(e)));
+                  },
+                },
+                {
+                  key: "send-communication",
+                  label: "Send message",
+                  hidden: !allowCommunication,
+                  onSelect: () => {
+                    setSendTemplate(templates[0]?.name ?? "");
+                    setSendChannel(templates[0]?.channels?.[0] ?? "");
+                    setSendOpen(true);
                   },
                 },
                 {
@@ -366,6 +406,25 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
         <div className="panel detail-panel">
           <SectionHeader title="Attachments" />
           <AttachmentsPanel slug={slug} id={id} items={attachments} onChanged={() => void load()} />
+        </div>
+      ) : null}
+      {tab === "communication" && allowCommunication ? (
+        <div className="panel detail-panel">
+          <SectionHeader title="Communication" />
+          {comms.length === 0 ? (
+            <p className="muted">No messages yet.</p>
+          ) : (
+            <ul className="stack">
+              {comms.map((item) => (
+                <li key={String(item.id)} className="row-line">
+                  <strong>{String(item.channel ?? "")}</strong>
+                  <StatusBadge value={item.status} />
+                  <span className="muted">{String(item.template ?? "")}</span>
+                  <span className="muted">{String(item.recipient ?? "")}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       ) : null}
       {tab === "activity" && showActivity ? (
@@ -466,6 +525,57 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
         {previewHtml ? (
           <iframe title="Document preview" className="print-preview" srcDoc={previewHtml} />
         ) : null}
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={sendOpen}
+        title="Send message"
+        confirmLabel="Queue"
+        cancelLabel="Cancel"
+        confirmDisabled={!sendTemplate}
+        onCancel={() => setSendOpen(false)}
+        onConfirm={() => {
+          const body: { template: string; channel?: string } = { template: sendTemplate };
+          if (sendChannel) body.channel = sendChannel;
+          void api
+            .sendCommunication(slug, id, body)
+            .then((res) => {
+              setSendOpen(false);
+              showSnackbar(res.message || "Communication queued");
+              if (tab === "communication") {
+                return api.communications(slug, id).then((d) => setComms(d.items ?? []));
+              }
+            })
+            .catch((e) => setError(friendlyError(e)));
+        }}
+      >
+        <label>
+          Template
+          <select
+            value={sendTemplate}
+            onChange={(e) => {
+              const name = e.target.value;
+              setSendTemplate(name);
+              const next = templates.find((t) => t.name === name);
+              setSendChannel(next?.channels?.[0] ?? "");
+            }}
+          >
+            {templates.map((t) => (
+              <option key={t.name} value={t.name}>
+                {t.name.replaceAll("_", " ")}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Channel
+          <select value={sendChannel} onChange={(e) => setSendChannel(e.target.value)}>
+            {(templates.find((t) => t.name === sendTemplate)?.channels ?? ["email"]).map((ch) => (
+              <option key={ch} value={ch}>
+                {ch}
+              </option>
+            ))}
+          </select>
+        </label>
       </ConfirmDialog>
       <ConfirmDialog
         open={pending === "delete"}

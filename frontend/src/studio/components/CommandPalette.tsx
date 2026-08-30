@@ -116,6 +116,8 @@ function pathFor(r: { kind: string; name: string; entity?: string }) {
       return `/studio/pages/${r.name}`;
     case "print_format":
       return `/studio/print-formats/${r.name}`;
+    case "communication":
+      return `/studio/communications/${r.name}`;
     default:
       return "/studio";
   }

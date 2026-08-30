@@ -42,6 +42,21 @@ pub fn crm_customer() -> EntityDef {
                 .nullable()
                 .section("Contact"),
         )
+        .field(
+            FieldDef::enum_values(
+                "communication_channel",
+                vec!["in_app", "email", "sms", "whatsapp", "none"],
+            )
+            .nullable()
+            .label("Preferred channel")
+            .section("Contact"),
+        )
+        .field(
+            FieldDef::boolean("marketing_opt_out")
+                .nullable()
+                .label("Marketing opt-out")
+                .section("Contact"),
+        )
         .field(FieldDef::string("industry").nullable().filterable())
         .field(FieldDef::text("notes").nullable().list(false))
         .views(EntityViews {

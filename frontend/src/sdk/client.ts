@@ -340,6 +340,17 @@ export class QefroClient {
     }
     return res.text();
   };
+  communications = (slug: string, id: string) =>
+    request<{ items: Array<Record<string, unknown>> }>(`/api/v1/${slug}/${id}/communications`);
+  sendCommunication = (
+    slug: string,
+    id: string,
+    body: { template: string; channel?: string },
+  ) =>
+    request<{ queued: Array<Record<string, unknown>>; message?: string }>(
+      `/api/v1/${slug}/${id}/actions/send_communication`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
   downloadPdf = async (slug: string, id: string, format?: string) => {
     const q = format ? `?format=${encodeURIComponent(format)}` : "";
     const res = await fetch(`/api/v1/${slug}/${id}/print.pdf${q}`, { headers: tokenHeader() });
@@ -489,6 +500,14 @@ export class QefroClient {
     request<Record<string, unknown>>(`/api/v1/studio/print-formats/${name}`);
   studioPrintPreview = (name: string) =>
     request<{ html: string }>(`/api/v1/studio/print-formats/${name}/preview`);
+  studioCommunications = () =>
+    request<{ communications: Array<Record<string, unknown>> }>("/api/v1/studio/communications");
+  studioCommunication = (name: string) =>
+    request<Record<string, unknown>>(`/api/v1/studio/communications/${name}`);
+  studioCommunicationPreview = (name: string) =>
+    request<{ subject: string; body: string; channel?: string; sent?: boolean }>(
+      `/api/v1/studio/communications/${name}/preview`,
+    );
   studioSearch = (q: string) =>
     request<{ results: Array<{ kind: string; name: string; label?: string; entity?: string }> }>(
       `/api/v1/studio/search?q=${encodeURIComponent(q)}`,

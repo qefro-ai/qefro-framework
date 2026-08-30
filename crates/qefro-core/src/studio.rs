@@ -549,6 +549,7 @@ pub struct StudioCatalog {
     dashboards: RwLock<HashMap<String, DashboardDef>>,
     pages: RwLock<HashMap<String, PageDef>>,
     print_formats: RwLock<HashMap<String, PrintFormat>>,
+    communications: RwLock<HashMap<String, crate::communication::CommunicationDef>>,
 }
 
 impl StudioCatalog {
@@ -576,6 +577,12 @@ impl StudioCatalog {
         }
     }
 
+    pub fn upsert_communication(&self, def: crate::communication::CommunicationDef) {
+        if let Ok(mut g) = self.communications.write() {
+            g.insert(def.name.clone(), def);
+        }
+    }
+
     pub fn report(&self, name: &str) -> Option<ReportDef> {
         self.reports.read().ok()?.get(name).cloned()
     }
@@ -590,6 +597,10 @@ impl StudioCatalog {
 
     pub fn print_format(&self, name: &str) -> Option<PrintFormat> {
         self.print_formats.read().ok()?.get(name).cloned()
+    }
+
+    pub fn communication(&self, name: &str) -> Option<crate::communication::CommunicationDef> {
+        self.communications.read().ok()?.get(name).cloned()
     }
 
     pub fn merge_reports(&self, base: &[ReportDef]) -> Vec<ReportDef> {
@@ -611,6 +622,15 @@ impl StudioCatalog {
     pub fn merge_print_formats(&self, base: &[PrintFormat]) -> Vec<PrintFormat> {
         merge_named(base, self.print_formats.read().ok().as_deref(), |p| {
             p.name.clone()
+        })
+    }
+
+    pub fn merge_communications(
+        &self,
+        base: &[crate::communication::CommunicationDef],
+    ) -> Vec<crate::communication::CommunicationDef> {
+        merge_named(base, self.communications.read().ok().as_deref(), |c| {
+            c.name.clone()
         })
     }
 }
