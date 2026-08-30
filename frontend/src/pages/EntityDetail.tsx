@@ -12,6 +12,7 @@ import { AttachmentsPanel } from "../components/attachments/AttachmentsPanel";
 import { Timeline } from "../components/timeline/Timeline";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
 import { PageHeader } from "../components/ui/PageHeader";
+import { SectionHeader } from "../components/ui/SectionHeader";
 import { ActionMenu } from "../components/ui/ActionMenu";
 import { FieldValue } from "../components/fields/FieldValue";
 import { StatusBadge } from "../components/ui/StatusBadge";
@@ -66,7 +67,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   });
 
   if (!meta || !slug || !id) return <ErrorState message="Unknown entity." />;
-  if (!row && !error) return <Skeleton rows={6} />;
+  if (!row && !error) return <Skeleton rows={6} variant="detail" />;
   if (!row) return <ErrorState message={error || "Unable to load record."} />;
 
   const workflow = row._workflow as
@@ -233,14 +234,14 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
         <RelatedPanel links={links} related={related} id={id} meta={meta} entities={entities} />
       ) : null}
       {tab === "files" && showAttachments ? (
-        <div className="panel" style={{ padding: "0.85rem" }}>
-          <h3>Attachments</h3>
+        <div className="panel detail-panel">
+          <SectionHeader title="Attachments" />
           <AttachmentsPanel slug={slug} id={id} items={attachments} onChanged={() => void load()} />
         </div>
       ) : null}
       {tab === "activity" && showActivity ? (
-        <div className="panel" style={{ padding: "0.85rem" }}>
-          <h3>Activity</h3>
+        <div className="panel detail-panel">
+          <SectionHeader title="Activity" />
           {showComments ? (
             <form
               className="comment-form"
@@ -320,8 +321,8 @@ function Overview({
   return (
     <>
       {sections.map(([section, sectionFields]) => (
-        <div key={section || "default"} className="panel">
-          {section ? <h3 className="panel-title">{section}</h3> : null}
+        <section key={section || "default"} className="section-block">
+          {section ? <SectionHeader title={section} /> : <SectionHeader title="Details" />}
           <table className="dl">
             <tbody>
               {sectionFields.map((f) => (
@@ -334,7 +335,7 @@ function Overview({
               ))}
             </tbody>
           </table>
-        </div>
+        </section>
       ))}
     </>
   );
@@ -438,28 +439,43 @@ function RelatedPanel({
         const title = rel.label || fieldMeta?.label || name;
         return (
           <div key={name} className="related panel">
-            <h3 className="panel-title">{title}</h3>
-            <p className="muted related-meta">
-              {rel.total} related
-              {inverse ? (
-                <>
-                  {" · "}
-                  <Link to={`/${rel.slug}/new?${encodeURIComponent(inverse)}=${id}`}>Add</Link>
-                </>
-              ) : null}
-            </p>
+            <div className="related-head">
+              <h3 className="panel-title">{title}</h3>
+              <p className="muted related-meta">
+                {rel.total} related
+                {inverse ? (
+                  <>
+                    {" · "}
+                    <Link to={`/${rel.slug}/new?${encodeURIComponent(inverse)}=${id}`}>Add</Link>
+                  </>
+                ) : null}
+                {" · "}
+                <Link to={`/${rel.slug}?${encodeURIComponent(inverse || name)}=${id}`}>View all</Link>
+              </p>
+            </div>
             {rel.items.length === 0 ? (
               <EmptyState title="No related records." />
             ) : (
-              <ul>
-                {rel.items.map((item) => (
-                  <li key={String(item.id)}>
-                    <Link to={`/${rel.slug}/${item.id}`}>
-                      {String(item.name ?? item.title ?? item.code ?? item.id)}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+              <div className="table-wrap">
+                <table className="data">
+                  <tbody>
+                    {rel.items.map((item) => (
+                      <tr key={String(item.id)}>
+                        <td>
+                          <Link to={`/${rel.slug}/${item.id}`}>
+                            {String(item.name ?? item.title ?? item.code ?? item.id)}
+                          </Link>
+                        </td>
+                        {item.status != null && item.status !== "" ? (
+                          <td>
+                            <StatusBadge value={item.status} />
+                          </td>
+                        ) : null}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         );

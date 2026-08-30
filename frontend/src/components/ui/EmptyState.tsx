@@ -23,7 +23,7 @@ export function Skeleton({
   variant = "table",
 }: {
   rows?: number;
-  variant?: "table" | "cards" | "kanban" | "form" | "calendar";
+  variant?: "table" | "cards" | "kanban" | "form" | "calendar" | "header" | "dashboard" | "detail";
 }) {
   if (variant === "cards") {
     return (
@@ -62,6 +62,30 @@ export function Skeleton({
       </div>
     );
   }
+  if (variant === "dashboard") {
+    return (
+      <div className="skeleton-dash" aria-busy="true" aria-live="polite">
+        <span className="sr-only">Loading</span>
+        {Array.from({ length: 4 }, (_, i) => (
+          <div key={i} className="skeleton-card" />
+        ))}
+      </div>
+    );
+  }
+  if (variant === "header" || variant === "detail") {
+    return (
+      <div className={variant === "detail" ? "skeleton-form" : "skeleton-header"} aria-busy="true" aria-live="polite">
+        <span className="sr-only">Loading</span>
+        <div className="skeleton-header">
+          <div className="skeleton-row" />
+          <div className="skeleton-row" />
+        </div>
+        {Array.from({ length: variant === "detail" ? rows : 0 }, (_, i) => (
+          <div key={i} className="skeleton-row" />
+        ))}
+      </div>
+    );
+  }
   return (
     <div className={`skeleton-table${variant === "form" ? " skeleton-form" : ""}`} aria-busy="true" aria-live="polite">
       <span className="sr-only">Loading</span>
@@ -72,12 +96,23 @@ export function Skeleton({
   );
 }
 
-export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+export function ErrorState({
+  title = "Something went wrong",
+  message,
+  onRetry,
+}: {
+  title?: string;
+  message: string;
+  onRetry?: () => void;
+}) {
   return (
     <div className="error-state">
-      <p className="error" role="alert">
-        {message}
-      </p>
+      <div>
+        <h3 className="error-title">{title}</h3>
+        <p className="error" role="alert">
+          {message}
+        </p>
+      </div>
       {onRetry ? (
         <button type="button" className="ghost" onClick={onRetry}>
           Retry

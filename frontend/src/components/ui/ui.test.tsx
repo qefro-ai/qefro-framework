@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { StatusBadge } from "./StatusBadge";
 import { EmptyState, ErrorState, Skeleton } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
+import { SectionHeader } from "./SectionHeader";
 
 describe("StatusBadge", () => {
   it("uses metadata indicators", () => {
@@ -47,5 +48,11 @@ describe("empty loading error", () => {
     expect(screen.getByText("Note")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Notes" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New Note" })).toBeInTheDocument();
+  });
+
+  it("renders a section header", () => {
+    render(<SectionHeader title="Details" actions={<a href="/x">View all</a>} />);
+    expect(screen.getByRole("heading", { name: "Details" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View all" })).toBeInTheDocument();
   });
 });
