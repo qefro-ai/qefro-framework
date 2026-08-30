@@ -303,11 +303,26 @@ async fn workflow_transition_activity_and_no_direct_status_patch() {
     .await;
     assert_eq!(status, StatusCode::OK, "{submitted}");
     assert_eq!(submitted["status"], "Submitted");
-    let next = submitted["_workflow"]["transitions"]
+    let staff_next = submitted["_workflow"]["transitions"]
         .as_array()
         .cloned()
         .unwrap_or_default();
-    assert!(next.iter().any(|t| t["name"] == "approve"), "{submitted}");
+    assert!(
+        staff_next.iter().all(|t| t["name"] != "approve"),
+        "{submitted}"
+    );
+
+    let (status, as_admin) = json(
+        clone_router(&router),
+        get(&format!("/api/v1/bo-tickets/{id}"), Some(&admin)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{as_admin}");
+    let next = as_admin["_workflow"]["transitions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(next.iter().any(|t| t["name"] == "approve"), "{as_admin}");
     assert_eq!(
         next.iter().find(|t| t["name"] == "approve").unwrap()["confirmation"],
         true

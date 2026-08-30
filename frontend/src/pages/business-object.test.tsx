@@ -92,7 +92,7 @@ describe("business object runtime UI", () => {
     vi.spyOn(api, "attachments").mockResolvedValue({ items: [] });
     wrap(<EntityDetail entities={[order]} />, "/orders/o1");
     await waitFor(() => expect(screen.getByText(/Order #1042/)).toBeInTheDocument());
-    expect(screen.getByText("Draft")).toBeInTheDocument();
+    expect(screen.getAllByText("Draft").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
   });
 

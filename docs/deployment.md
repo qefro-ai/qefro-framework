@@ -79,7 +79,7 @@ Qefro does not ship a backup product. Snapshotting the application server is not
 
 **Migrations:** take a dump immediately before `qefro migrate`. Failed migrations are recorded as `failed` and are never silently marked successful. Do not blindly retry a destructive migration with a changed checksum.
 
-PostgreSQL advisory locking (`pg_advisory_lock`) ensures only one migrate process applies app SQL at a time.
+PostgreSQL advisory locking (`pg_advisory_lock`) ensures only one migrate process applies app SQL at a time. The lock is acquired and released on the same connection; session-level locks cannot be unlocked from a different pool connection.
 
 ## Storage
 
