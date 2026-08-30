@@ -432,7 +432,7 @@ fieldset.is-collapsed { padding-bottom: var(--space-2); margin-bottom: var(--spa
 .card-lg { grid-column: span 2; }
 .card-sm { grid-column: span 1; min-width: 0; }
 
-.filters { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-4); }
+.filters { display: flex; flex-direction: column; flex-wrap: nowrap; gap: var(--space-3); margin-bottom: var(--space-4); align-items: stretch; }
 .filters label { min-width: 160px; }
 .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; align-items: center; }
 .empty { padding: var(--space-7) var(--space-4); text-align: center; color: var(--muted); font-size: var(--text-sm); }
@@ -832,7 +832,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 
 .quick-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-3) 0 var(--space-2); }
 .quick-filters, .chip-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
-.filter-ops { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: end; width: 100%; }
+.quick-filters button,
+.quick-filters .ghost {
+  min-height: var(--control-h-sm);
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
+}
+.filter-ops { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; width: 100%; }
+.filter-ops > button { min-height: var(--control-h); }
 .add-filter { position: relative; }
 .filter-values { display: flex; gap: var(--space-1); }
 .column-picker { display: flex; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-3); margin-bottom: var(--space-3); }
@@ -949,9 +956,10 @@ button.ghost:hover, a.ghost:hover { background: var(--surface-hover); }
 .cal-event:hover { filter: brightness(0.97); }
 .option-list [role="option"].active { background: var(--accent-soft); }
 
-.report-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: end; margin: var(--space-3) 0 var(--space-4); }
-.report-toolbar .form { max-width: none; display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: end; }
+.report-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; margin: var(--space-3) 0 var(--space-4); }
+.report-toolbar .form { max-width: none; display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
 .report-toolbar label { min-width: 140px; }
+.report-toolbar button { align-self: flex-end; }
 .report-result { margin-top: var(--space-4); }
 .report-result h3 { padding: var(--space-4) var(--space-4) 0; }
 .detail-panel { padding: var(--space-4); }
