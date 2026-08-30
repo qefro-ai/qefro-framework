@@ -86,13 +86,35 @@ impl FieldType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RelationKind {
+    #[default]
     ManyToOne,
     OneToMany,
     ManyToMany,
     ChildTable,
+}
+
+/// Referential action when the related record is deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnDelete {
+    /// Reject the delete if related rows exist (PostgreSQL default).
+    #[default]
+    Restrict,
+    Cascade,
+    SetNull,
+}
+
+impl OnDelete {
+    pub fn sql_clause(self) -> &'static str {
+        match self {
+            Self::Restrict => "",
+            Self::Cascade => " ON DELETE CASCADE",
+            Self::SetNull => " ON DELETE SET NULL",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -102,6 +124,23 @@ pub struct RelationDef {
     /// For one-to-many, the field on the target that points back.
     #[serde(default)]
     pub inverse_field: Option<String>,
+    #[serde(default)]
+    pub on_delete: OnDelete,
+    /// Unique many-to-one (one-to-one).
+    #[serde(default)]
+    pub unique: bool,
+}
+
+impl Default for RelationDef {
+    fn default() -> Self {
+        Self {
+            target_entity: String::new(),
+            kind: RelationKind::ManyToOne,
+            inverse_field: None,
+            on_delete: OnDelete::Restrict,
+            unique: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -365,9 +404,27 @@ impl FieldDef {
                 target_entity: target.clone(),
                 kind: RelationKind::ManyToOne,
                 inverse_field: None,
+                ..Default::default()
             })
             .indexed()
             .ui_display_entity(target)
+    }
+
+    /// Unique many-to-one (one-to-one).
+    pub fn one_to_one(name: impl Into<String>, target: impl Into<String>) -> Self {
+        let mut field = Self::many_to_one(name, target);
+        field.unique = true;
+        if let Some(rel) = field.relation.as_mut() {
+            rel.unique = true;
+        }
+        field
+    }
+
+    pub fn on_delete(mut self, policy: OnDelete) -> Self {
+        if let Some(rel) = self.relation.as_mut() {
+            rel.on_delete = policy;
+        }
+        self
     }
 
     /// Generic assignment convention: `assigned_to` → User.
@@ -389,6 +446,7 @@ impl FieldDef {
             target_entity: target,
             kind: RelationKind::OneToMany,
             inverse_field: Some(inverse_field.into()),
+            ..Default::default()
         });
         field.ui.form = false;
         field.ui.list = false;
@@ -400,6 +458,7 @@ impl FieldDef {
             target_entity: target.into(),
             kind: RelationKind::ManyToMany,
             inverse_field: None,
+            ..Default::default()
         });
         field.ui.form = true;
         field.ui.list = false;
@@ -412,6 +471,8 @@ impl FieldDef {
             target_entity: def.child_entity.clone(),
             kind: RelationKind::ChildTable,
             inverse_field: Some(def.parent_field.clone()),
+            on_delete: OnDelete::Cascade,
+            unique: false,
         });
         field.field_type = FieldType::ChildTable;
         field.ui.widget = UiWidget::ChildTable.as_str().into();
@@ -912,5 +973,17 @@ mod tests {
         assert_eq!(field.ui.widget, "time");
         assert!(field.type_error(&json!("18:30")).is_none());
         assert!(field.type_error(&json!(18)).is_some());
+    }
+
+    #[test]
+    fn on_delete_and_one_to_one() {
+        let restrict = FieldDef::many_to_one("customer_id", "Customer");
+        assert_eq!(restrict.relation.as_ref().unwrap().on_delete, OnDelete::Restrict);
+        let cascade = FieldDef::many_to_one("order_id", "Order").on_delete(OnDelete::Cascade);
+        assert_eq!(cascade.relation.as_ref().unwrap().on_delete, OnDelete::Cascade);
+        let pair = FieldDef::one_to_one("profile_id", "Profile");
+        assert!(pair.unique);
+        assert!(pair.relation.as_ref().unwrap().unique);
+        assert_eq!(OnDelete::SetNull.sql_clause(), " ON DELETE SET NULL");
     }
 }

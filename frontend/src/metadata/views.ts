@@ -96,6 +96,14 @@ export function canDelete(entity: UiEntity): boolean {
   return entity.permissions?.delete !== false;
 }
 
+export function canExport(entity: UiEntity): boolean {
+  return entity.permissions?.export !== false;
+}
+
+export function canUpdate(entity: UiEntity): boolean {
+  return entity.permissions?.update !== false;
+}
+
 export function canUpdateRecord(entity: UiEntity, row?: Record<string, unknown> | null): boolean {
   const record = row?._permissions as { update?: boolean } | undefined;
   if (record && typeof record.update === "boolean") return record.update;

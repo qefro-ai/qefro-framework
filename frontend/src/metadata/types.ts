@@ -129,6 +129,7 @@ export type EntityPermissions = {
   read?: boolean;
   update?: boolean;
   delete?: boolean;
+  export?: boolean;
 };
 
 export type EntityCapabilities = {
@@ -139,6 +140,11 @@ export type EntityCapabilities = {
   audit?: boolean;
   relations?: boolean;
   actions?: boolean;
+  archive?: boolean;
+  assignment?: boolean;
+  import?: boolean;
+  export?: boolean;
+  bulk?: boolean;
 };
 
 export type RecordPermissions = {

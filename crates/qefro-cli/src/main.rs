@@ -92,6 +92,17 @@ enum Commands {
     Worker,
     /// Check local development prerequisites and installed apps
     Doctor,
+    /// Validate application metadata (entities, relations, workflows, views)
+    Validate {
+        #[arg(default_value = "all")]
+        app: String,
+    },
+    /// Inspect an entity's fields, relations, permissions, workflow, and views
+    Inspect {
+        name: String,
+        #[arg(long, default_value = "all")]
+        app: String,
+    },
     /// Tenant helpers
     Tenant {
         #[command(subcommand)]
@@ -170,6 +181,7 @@ enum EntityCommands {
         #[arg(long, default_value = "all")]
         app: String,
     },
+    #[command(visible_alias = "new")]
     Create {
         name: String,
         #[arg(long)]
@@ -327,6 +339,8 @@ async fn main() -> Result<()> {
         }
         Commands::Worker => runtime_for("all")?.run_worker().await?,
         Commands::Doctor => app_cmd::cmd_doctor().await?,
+        Commands::Validate { app } => cmd_validate(&app)?,
+        Commands::Inspect { name, app } => cmd_entity_show(&app, &name)?,
     }
     Ok(())
 }
@@ -528,6 +542,18 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
         entity.workflow.clone().unwrap_or_else(|| "(none)".into())
     );
     println!("display_field:  {}", entity.display_field);
+    println!(
+        "lifecycle:      archive={}",
+        entity.archives()
+    );
+    println!(
+        "row_policy:     {}",
+        entity
+            .row_policy
+            .as_ref()
+            .map(|p| format!("{p:?}"))
+            .unwrap_or_else(|| "(none)".into())
+    );
     println!("fields:");
     for field in &entity.fields {
         let mut flags = Vec::new();
@@ -555,10 +581,183 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
             flags.join(", ")
         );
         if let Some(rel) = &field.relation {
-            println!("                     → {}", rel.target_entity);
+            println!(
+                "                     → {}  on_delete={:?}",
+                rel.target_entity, rel.on_delete
+            );
+        }
+    }
+    if !entity.actions.is_empty() {
+        println!("actions:");
+        for action in &entity.actions {
+            println!("  {}  {}", action.name, action.label);
+        }
+    }
+    let ops: Vec<_> = runtime
+        .operation_defs()
+        .into_iter()
+        .filter(|d| d.entity.eq_ignore_ascii_case(&entity.name))
+        .collect();
+    if !ops.is_empty() {
+        println!("operations:");
+        for def in ops {
+            println!("  {}  {}  {}", def.name, def.label, def.permission);
+        }
+    }
+    println!("permissions:");
+    for grant in runtime.permission_grants() {
+        if grant.entity.eq_ignore_ascii_case(&entity.name) {
+            let actions: Vec<_> = grant.actions.iter().map(|a| a.as_str()).collect();
+            println!("  {}  {}", grant.role, actions.join(","));
+        }
+    }
+    if let Some(wf_name) = &entity.workflow {
+        if let Some(wf) = runtime.workflows().into_iter().find(|w| {
+            w.name.eq_ignore_ascii_case(wf_name) || w.entity.eq_ignore_ascii_case(&entity.name)
+        }) {
+            println!("workflow {}:", wf.name);
+            for t in &wf.transitions {
+                let guard = t
+                    .guard
+                    .as_ref()
+                    .map(|_| "  guard")
+                    .unwrap_or_default();
+                println!("  {}  {} → {}{guard}", t.name, t.from, t.to);
+            }
+        }
+    }
+    if let Some(views) = &entity.views {
+        println!(
+            "views:          default={}",
+            views.default.clone().unwrap_or_else(|| "list".into())
+        );
+        if let Some(list) = &views.list {
+            if let Some(group) = &list.group_by {
+                println!("  list group_by={group}");
+            }
+        }
+        if let Some(kanban) = &views.kanban {
+            if let Some(group) = &kanban.group_by {
+                println!("  kanban group_by={group}");
+            }
+        }
+    }
+    let autos: Vec<_> = runtime
+        .automations()
+        .into_iter()
+        .filter(|a| a.module.as_deref() == entity.module.as_deref())
+        .collect();
+    if !autos.is_empty() {
+        println!("automations:");
+        for auto in autos {
+            println!("  {}  {:?}", auto.name, auto.trigger.event);
+        }
+    }
+    let reports: Vec<_> = runtime
+        .reports()
+        .into_iter()
+        .filter(|r| r.entity.eq_ignore_ascii_case(&entity.name))
+        .collect();
+    if !reports.is_empty() {
+        println!("reports:");
+        for report in reports {
+            println!("  {}  {}", report.name, report.label);
         }
     }
     Ok(())
+}
+
+fn cmd_validate(app: &str) -> Result<()> {
+    let runtime = runtime_for(app)?;
+    let mut registry = qefro_core::EntityRegistry::new();
+    for identity in qefro_core::identity_entities() {
+        let _ = registry.register(identity);
+    }
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    for entity in runtime.entities() {
+        if let Err(e) = entity.validate_idents() {
+            errors.push(format!("{}: {e}", entity.name));
+        }
+        match registry.register((*entity).clone()) {
+            Ok(()) => {}
+            Err(e) => errors.push(format!("{}: {e}", entity.name)),
+        }
+    }
+    if let Err(e) = registry.validate_relations() {
+        errors.push(e.to_string());
+    }
+    for wf in runtime.workflows() {
+        if registry.try_get(&wf.entity).is_none() {
+            errors.push(format!(
+                "workflow '{}' references unknown entity '{}'",
+                wf.name, wf.entity
+            ));
+        }
+        match wf.validate() {
+            Ok(notes) => warnings.extend(notes),
+            Err(e) => errors.push(format!("workflow '{}': {e}", wf.name)),
+        }
+    }
+    for report in runtime.reports() {
+        if registry.try_get(&report.entity).is_none() {
+            errors.push(format!(
+                "report '{}' references unknown entity '{}'",
+                report.name, report.entity
+            ));
+        }
+    }
+    for dash in runtime.dashboards() {
+        for card in &dash.cards {
+            if !card.entity.is_empty()
+                && !card.entity.starts_with('_')
+                && registry.try_get(&card.entity).is_none()
+            {
+                errors.push(format!(
+                    "dashboard '{}' card references unknown entity '{}'",
+                    dash.name, card.entity
+                ));
+            }
+        }
+    }
+    for auto in runtime.automations() {
+        for action in &auto.actions {
+            if let Some(entity) = action_entity(action) {
+                if registry.try_get(entity).is_none() {
+                    errors.push(format!(
+                        "automation '{}' references unknown entity '{entity}'",
+                        auto.name
+                    ));
+                }
+            }
+        }
+    }
+    for w in &warnings {
+        println!("warning: {w}");
+    }
+    if errors.is_empty() {
+        println!("ok  {} entities  {} workflows", runtime.entity_names().len(), runtime.workflows().len());
+        Ok(())
+    } else {
+        for e in &errors {
+            eprintln!("error: {e}");
+        }
+        bail!("validation failed ({} errors)", errors.len());
+    }
+}
+
+fn action_entity(action: &qefro_core::AutomationAction) -> Option<&str> {
+    match action {
+        qefro_core::AutomationAction::CreateEntity { create_entity } => {
+            Some(create_entity.entity.as_str())
+        }
+        qefro_core::AutomationAction::UpdateEntity { update_entity } => {
+            update_entity.entity.as_deref()
+        }
+        qefro_core::AutomationAction::Transition { transition } => transition.entity.as_deref(),
+        qefro_core::AutomationAction::Assign { assign } => assign.entity.as_deref(),
+        _ => None,
+    }
 }
 
 fn cmd_entity_create(name: &str, app: Option<&str>) -> Result<()> {
@@ -648,5 +847,10 @@ mod tests {
         assert!(names.contains(&"Reservation.cancel".into()));
         assert!(names.contains(&"Reservation.seat_customer".into()));
         assert!(names.contains(&"Reservation.complete".into()));
+    }
+
+    #[test]
+    fn validate_restaurant_metadata_graph() {
+        cmd_validate("restaurant").expect("restaurant metadata should validate");
     }
 }

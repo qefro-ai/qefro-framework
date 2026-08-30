@@ -85,6 +85,9 @@ pub struct Query {
     pub page_size: u32,
     #[serde(default)]
     pub fields: Option<Vec<String>>,
+    /// When the entity supports archive, include archived rows.
+    #[serde(default)]
+    pub include_archived: bool,
 }
 
 fn default_page() -> u32 {
@@ -194,6 +197,9 @@ pub fn parse_query(entity: &EntityDef, raw: &[(String, String)]) -> QefroResult<
                 );
             }
             "q" => query.search = Some(value.clone()),
+            "include_archived" => {
+                query.include_archived = matches!(value.as_str(), "1" | "true" | "yes");
+            }
             _ => {
                 if let Some(filter) = parse_filter(entity, key, value)? {
                     query.filters.push(filter);

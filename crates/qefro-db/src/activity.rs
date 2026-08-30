@@ -320,6 +320,7 @@ impl EntityService {
         if message.len() > 4000 {
             return Err(QefroError::bad_request("comment is too long"));
         }
+        let mentions = parse_mentions(message);
         let mut tx = self
             .pool()
             .begin()
@@ -334,7 +335,7 @@ impl EntityService {
                 record_id,
                 TYPE_COMMENT,
                 message,
-                json!({}),
+                json!({ "mentions": mentions }),
             )
             .await?;
         let event = {
@@ -343,7 +344,7 @@ impl EntityService {
                 entity.name.clone(),
                 record_id,
                 ctx.tenant_id,
-                json!({ "message": message }),
+                json!({ "message": message, "mentions": mentions }),
             );
             event.user_id = Some(ctx.user_id);
             event
@@ -353,8 +354,120 @@ impl EntityService {
             .await
             .map_err(|e| QefroError::database(e.to_string()))?;
         let _ = self.dispatch_outbox().await;
+        if !mentions.is_empty() {
+            let _ = self
+                .notify_mentions(ctx, &entity.name, record_id, message, &mentions)
+                .await;
+        }
         Ok(row)
     }
+
+    async fn notify_mentions(
+        &self,
+        ctx: &OpContext,
+        entity_name: &str,
+        record_id: Uuid,
+        message: &str,
+        tokens: &[String],
+    ) -> QefroResult<()> {
+        let users = self.resolve_mention_users(ctx, tokens).await;
+        if users.is_empty() {
+            return Ok(());
+        }
+        let store = crate::notifications::NotificationStore::new(self.pool().clone());
+        let title = format!("You were mentioned on {entity_name}");
+        let body: String = message.chars().take(280).collect();
+        for (user_id, _) in users {
+            let _ = store
+                .insert(&crate::notifications::InAppNotification {
+                    id: Uuid::new_v4(),
+                    tenant_id: ctx.tenant_id,
+                    user_id,
+                    title: title.clone(),
+                    body: body.clone(),
+                    entity: Some(entity_name.into()),
+                    record_id: Some(record_id),
+                    read_at: None,
+                    created_at: Utc::now(),
+                })
+                .await;
+        }
+        Ok(())
+    }
+
+    async fn resolve_mention_users(
+        &self,
+        ctx: &OpContext,
+        tokens: &[String],
+    ) -> Vec<(Uuid, String)> {
+        let Some(auth) = self.identity_service() else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        for token in tokens {
+            let Ok((users, _)) = auth
+                .list_tenant_users(ctx.tenant_id, Some(token), 1, 10)
+                .await
+            else {
+                continue;
+            };
+            for user in users {
+                let Some(id) = user
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                else {
+                    continue;
+                };
+                if id == ctx.user_id {
+                    continue;
+                }
+                let name = user.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let email = user.get("email").and_then(|v| v.as_str()).unwrap_or("");
+                let needle = token.to_ascii_lowercase();
+                let first = name.split_whitespace().next().unwrap_or("");
+                if name.eq_ignore_ascii_case(token)
+                    || first.eq_ignore_ascii_case(token)
+                    || email.to_ascii_lowercase().starts_with(&needle)
+                {
+                    if !found.iter().any(|(uid, _)| *uid == id) {
+                        found.push((id, name.to_string()));
+                    }
+                }
+            }
+        }
+        found
+    }
+}
+
+/// `@Ahmed` tokens from a comment. Identity lookup happens separately.
+pub fn parse_mentions(message: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut chars = message.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '@' {
+            continue;
+        }
+        let mut token = String::new();
+        while let Some(&next) = chars.peek() {
+            if next.is_alphanumeric() || next == '_' || next == '.' || next == '-' {
+                token.push(next);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        if token.is_empty() {
+            continue;
+        }
+        if !out
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(&token))
+        {
+            out.push(token);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -384,5 +497,12 @@ mod tests {
         );
         assert!(meta["changes"].get("password_hash").is_none());
         assert_eq!(meta["changes"]["name"]["new"], "B");
+    }
+
+    #[test]
+    fn parse_mentions_collects_unique_tokens() {
+        let tokens = parse_mentions("Hey @Ahmed and @sara — ping @Ahmed again");
+        assert_eq!(tokens, vec!["Ahmed".to_string(), "sara".to_string()]);
+        assert!(parse_mentions("no mentions here").is_empty());
     }
 }

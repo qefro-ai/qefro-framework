@@ -200,6 +200,40 @@ describe("business object runtime UI", () => {
     expect(screen.getByText("Actions")).toBeInTheDocument();
   });
 
+  it("runs bulk archive through the entity runtime", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const bulk = vi.spyOn(api, "bulk").mockResolvedValue({
+      action: "archive",
+      succeeded: 1,
+      failed: 0,
+      results: [{ id: "c1", ok: true }],
+    });
+    vi.spyOn(api, "list").mockResolvedValue({
+      items: [{ id: "c1", name: "Ada" }],
+      total: 1,
+      page: 1,
+      page_size: 25,
+    });
+    const customer: UiEntity = {
+      ...order,
+      entity: "Customer",
+      label: "Customer",
+      label_plural: "Customers",
+      slug: "customers",
+      workflow: undefined,
+      capabilities: { ...order.capabilities, archive: true, bulk: true, assignment: false },
+      permissions: { list: true, create: true, read: true, update: true, delete: true, export: true },
+    };
+    wrap(<EntityList entities={[customer]} />, "/customers");
+    await userEvent.click(await screen.findByLabelText("Select row"));
+    await userEvent.click(screen.getByRole("button", { name: "Archive selected" }));
+    expect(bulk).toHaveBeenCalledWith("customers", {
+      action: "archive",
+      ids: ["c1"],
+      fields: {},
+    });
+  });
+
   it("renders an admin audit table", async () => {
     vi.spyOn(api, "audit").mockResolvedValue({
       items: [

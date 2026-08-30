@@ -54,9 +54,9 @@ pub use condition::Condition;
 pub use context::{OpContext, ROLE_PUBLIC, ROLE_WORKER};
 pub use document::{DocumentConfig, NamingConfig, PrintFormat, ReportDef};
 pub use entitlement::{Entitlements, Plan};
-pub use entity::EntityDef;
+pub use entity::{EntityDef, RecordLifecycle, RowPolicy};
 pub use error::{FieldError, QefroError, QefroResult};
-pub use field::{ChildTableDef, FieldDef, FieldType, RelationDef, RelationKind};
+pub use field::{ChildTableDef, FieldDef, FieldType, OnDelete, RelationDef, RelationKind};
 pub use formula::{
     apply_computed_fields, detect_cycles, eval_formula, eval_value, parse_formula, FormulaContext,
     FormulaValue,
@@ -117,7 +117,8 @@ pub mod prelude {
     pub use crate::{
         AppModule, AppModuleBuilder, ChildTableDef, DocumentConfig, EntityActionDef, EntityDef,
         EntityRegistry, FieldDef, FieldType, LinkDef, NamingConfig, NotificationDef, OpContext,
-        PrintFormat, PublicFormDef, QefroError, QefroResult, RelationDef, RelationKind, ReportDef,
-        UiConfig, ValidationRule, ValidationRules, WebhookDef, AutomationDef,
+        OnDelete, PrintFormat, PublicFormDef, QefroError, QefroResult, RecordLifecycle, RelationDef,
+        RelationKind, ReportDef, RowPolicy, UiConfig, ValidationRule, ValidationRules, WebhookDef,
+        AutomationDef,
     };
 }

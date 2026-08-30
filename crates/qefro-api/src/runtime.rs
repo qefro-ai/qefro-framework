@@ -192,6 +192,27 @@ impl QefroRuntime {
         self.apps.iter().flat_map(|a| a.workflows.clone()).collect()
     }
 
+    pub fn automations(&self) -> Vec<qefro_core::AutomationDef> {
+        self.apps
+            .iter()
+            .flat_map(|a| a.module.automations.clone())
+            .collect()
+    }
+
+    pub fn reports(&self) -> Vec<qefro_core::ReportDef> {
+        self.apps
+            .iter()
+            .flat_map(|a| a.module.reports.clone())
+            .collect()
+    }
+
+    pub fn dashboards(&self) -> Vec<qefro_core::DashboardDef> {
+        self.apps
+            .iter()
+            .flat_map(|a| a.module.dashboards.clone())
+            .collect()
+    }
+
     pub fn tool_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         for entity in self.entities() {
@@ -279,6 +300,8 @@ impl QefroRuntime {
         for app in &self.apps {
             for entity in &app.module.entities {
                 routes.push(format!("GET/POST /api/v1/{}", entity.slug));
+                routes.push(format!("POST /api/v1/{}/bulk", entity.slug));
+                routes.push(format!("GET /api/v1/{}/export", entity.slug));
                 routes.push(format!("GET/PATCH/DELETE /api/v1/{}/:id", entity.slug));
                 if entity.workflow.is_some() {
                     routes.push(format!("GET /api/v1/{}/:id/workflow", entity.slug));

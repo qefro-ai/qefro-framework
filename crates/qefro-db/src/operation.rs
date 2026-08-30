@@ -177,6 +177,9 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
         let to = self
             .workflows
             .apply(&self.entity.name, &from, name, &self.auth)?;
+        if let Some(t) = wf.find_transition(&from, name) {
+            t.guard_allows(&self.record)?;
+        }
         self.set_field(&wf.field, json!(to));
         Ok(to)
     }

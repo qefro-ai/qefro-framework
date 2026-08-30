@@ -121,6 +121,7 @@ pub fn customer() -> EntityDef {
                 .columns(&["guest_name", "reservation_date", "status"])
                 .limit(20),
         )
+        .with_archive()
         .build()
 }
 

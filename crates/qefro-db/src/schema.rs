@@ -338,6 +338,9 @@ pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
     if entity.soft_delete {
         cols.push("\"deleted_at\" TIMESTAMPTZ".to_string());
     }
+    if entity.archives() {
+        cols.push("\"archived_at\" TIMESTAMPTZ".to_string());
+    }
 
     for field in entity.stored_fields() {
         let col = quote_ident(&field.column_name())?;
@@ -397,6 +400,12 @@ pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
     if entity.soft_delete {
         ddl.push_str(&format!(
             "\nCREATE INDEX IF NOT EXISTS {}_deleted_idx ON {table} (\"deleted_at\");",
+            entity.table
+        ));
+    }
+    if entity.archives() {
+        ddl.push_str(&format!(
+            "\nCREATE INDEX IF NOT EXISTS {}_archived_idx ON {table} (\"archived_at\");",
             entity.table
         ));
     }
@@ -516,6 +525,12 @@ async fn apply_missing_columns(pool: &PgPool, registry: &EntityRegistry) -> Qefr
                 QefroError::database(format!("add column {}.{}: {e}", entity.name, field.name))
             })?;
         }
+        if entity.archives() {
+            let sql = format!("ALTER TABLE {table} ADD COLUMN IF NOT EXISTS \"archived_at\" TIMESTAMPTZ");
+            sqlx::query(&sql).execute(pool).await.map_err(|e| {
+                QefroError::database(format!("add column {}.archived_at: {e}", entity.name))
+            })?;
+        }
     }
     Ok(())
 }
@@ -528,6 +543,7 @@ const SYSTEM_COLUMNS: &[&str] = &[
     "created_by",
     "updated_by",
     "deleted_at",
+    "archived_at",
 ];
 
 /// `CREATE TABLE IF NOT EXISTS` never drops leftover columns. A previous
@@ -681,7 +697,7 @@ async fn apply_foreign_keys(pool: &PgPool, registry: &EntityRegistry) -> QefroRe
             {
                 " ON DELETE CASCADE"
             } else {
-                ""
+                rel.on_delete.sql_clause()
             };
             let add = format!(
                 "ALTER TABLE {table} ADD CONSTRAINT \"{constraint}\" FOREIGN KEY ({col}) REFERENCES {target_table} (\"id\"){on_delete}"

@@ -7,6 +7,22 @@ use crate::ui::{UiEntityMeta, UiFieldView, UI_SCHEMA_VERSION};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// Opt-in record lifecycle besides workflow states and soft delete.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RecordLifecycle {
+    /// Maintain `archived_at` and expose archive/restore bulk actions.
+    #[serde(default)]
+    pub archive: bool,
+}
+
+/// Declarative row visibility. Admins bypass. Not arbitrary SQL.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RowPolicy {
+    AssignedTo,
+    CreatedBy,
+}
+
 /// Serializable entity metadata. Applications register these at startup; YAML
 /// and JSON definitions deserialize into the same type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +82,12 @@ pub struct EntityDef {
     /// Comments stored as Activity records. Default on for standalone documents.
     #[serde(default = "default_true")]
     pub comments: bool,
+    /// Optional archive/restore beside [`EntityDef::soft_delete`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<RecordLifecycle>,
+    /// Record visibility beyond tenant isolation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_policy: Option<RowPolicy>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<EntityActionDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -119,6 +141,8 @@ impl EntityDef {
             attachments: false,
             activity: true,
             comments: true,
+            lifecycle: None,
+            row_policy: None,
             actions: Vec::new(),
             links: Vec::new(),
             public_form: None,
@@ -246,6 +270,20 @@ impl EntityDef {
 
     pub fn no_soft_delete(mut self) -> Self {
         self.soft_delete = false;
+        self
+    }
+
+    pub fn archives(&self) -> bool {
+        self.lifecycle.as_ref().is_some_and(|l| l.archive)
+    }
+
+    pub fn with_archive(mut self) -> Self {
+        self.lifecycle = Some(RecordLifecycle { archive: true });
+        self
+    }
+
+    pub fn row_policy(mut self, policy: RowPolicy) -> Self {
+        self.row_policy = Some(policy);
         self
     }
 
@@ -422,6 +460,14 @@ impl EntityDef {
                     .label("Deleted"),
             );
         }
+        if self.archives() {
+            fields.push(
+                FieldDef::datetime("archived_at")
+                    .nullable()
+                    .system()
+                    .label("Archived"),
+            );
+        }
         fields.push(
             FieldDef::uuid("created_by")
                 .nullable()
@@ -456,6 +502,7 @@ impl EntityDef {
                 | "created_at"
                 | "updated_at"
                 | "deleted_at"
+                | "archived_at"
                 | "created_by"
                 | "updated_by"
         ) || self
@@ -714,6 +761,11 @@ impl EntityDef {
                 audit: self.audit,
                 relations: self.fields.iter().any(|f| f.relation.is_some()),
                 actions: !self.actions.is_empty() || self.workflow.is_some(),
+                archive: self.archives(),
+                assignment: self.get_field("assigned_to").is_some(),
+                import: self.standalone && !self.singleton,
+                export: self.standalone,
+                bulk: self.standalone && !self.singleton,
             }),
             actions: self.actions.clone(),
             links: self.links.clone(),
@@ -1024,5 +1076,27 @@ fields:
             .build();
         let err = section.validate_ui_layout().unwrap_err();
         assert!(err.to_string().contains("unknown field 'party_type'"), "{err}");
+    }
+
+    #[test]
+    fn archive_lifecycle_adds_archived_at() {
+        let def = EntityDef::new("Customer").with_archive().build();
+        assert!(def.archives());
+        assert!(def.system_fields().iter().any(|f| f.name == "archived_at"));
+        let caps = def.to_ui_meta().capabilities.unwrap();
+        assert!(caps.archive);
+        assert!(caps.bulk);
+        assert!(caps.export);
+    }
+
+    #[test]
+    fn assignment_capability_follows_assigned_to() {
+        let def = EntityDef::new("Lead")
+            .field(FieldDef::assigned_to())
+            .row_policy(RowPolicy::AssignedTo)
+            .build();
+        let caps = def.to_ui_meta().capabilities.unwrap();
+        assert!(caps.assignment);
+        assert_eq!(def.row_policy, Some(RowPolicy::AssignedTo));
     }
 }

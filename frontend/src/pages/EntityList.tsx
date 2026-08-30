@@ -3,7 +3,6 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   api,
   ApiError,
-  expandedLabel,
   formVisible,
   listVisible,
   type EntityAction,
@@ -22,11 +21,12 @@ import { FieldValue } from "../components/fields/FieldValue";
 import { ViewSelector } from "../components/views/ViewSelector";
 import { renderView } from "../views/registry";
 import "../views";
-import { downloadCsv, isoDate } from "../format";
+import { isoDate } from "../format";
 import { friendlyError } from "../friendlyError";
 import { formatMoney } from "../metadata/timezone";
 import { useTenantTheme } from "../metadata/context";
-import { availableViews, calendarStartField, canCreate, canDelete, defaultView, listGroupField, listViewSpec } from "../metadata/views";
+import { availableViews, calendarStartField, canCreate, canDelete, canExport, canUpdate, defaultView, listGroupField, listViewSpec } from "../metadata/views";
+import { t } from "../i18n";
 import type { ViewKind } from "../metadata/types";
 import { usePrefsOptional } from "../prefsContext";
 import { useRealtime } from "../realtime";
@@ -166,6 +166,11 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
   const grouped = groupBy ? groupRows(rows, groupBy) : ([["", rows]] as Array<[string, Record<string, unknown>[]]>);
   const allowCreate = canCreate(meta);
   const allowDelete = canDelete(meta);
+  const allowExport = canExport(meta);
+  const allowUpdate = canUpdate(meta);
+  const allowArchive = Boolean(meta.capabilities?.archive) && allowUpdate;
+  const allowAssign = Boolean(meta.capabilities?.assignment) && allowUpdate;
+  const allowBulk = meta.capabilities?.bulk !== false;
   const showRowActions = Boolean(meta.workflow || meta.capabilities?.workflow || meta.capabilities?.actions);
   const tableColSpan = cols.length + 1 + (showRowActions ? 1 : 0);
   const queryActive = isQueryActive(params, search);
@@ -201,16 +206,38 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
     else setSelected(new Set(rows.map((r) => String(r.id))));
   }
 
-  async function bulkDelete() {
-    if (!meta || !confirm(`Delete ${selected.size} records?`)) return;
+  async function runBulk(action: string, fields: Record<string, unknown> = {}) {
+    if (!meta) return;
     try {
-      for (const id of selected) await api.remove(meta.slug, id);
+      const result = await api.bulk(meta.slug, { action, ids: [...selected], fields });
       setSelected(new Set());
-      showSnackbar(`Deleted ${selected.size} records`);
+      const failed = result.failed ?? 0;
+      showSnackbar(
+        failed
+          ? `${result.succeeded} succeeded, ${failed} failed`
+          : `${result.succeeded} ${action === "delete" ? "deleted" : action === "archive" ? "archived" : "updated"}`,
+      );
       setTick((n) => n + 1);
     } catch (e) {
       setError(friendlyError(e));
     }
+  }
+
+  async function bulkDelete() {
+    if (!meta || !confirm(t("bulk.deleteConfirm", { n: selected.size }))) return;
+    await runBulk("delete");
+  }
+
+  async function bulkArchive() {
+    if (!meta || !confirm(t("bulk.archiveConfirm", { n: selected.size }))) return;
+    await runBulk("archive");
+  }
+
+  async function bulkAssign() {
+    if (!meta) return;
+    const assigned = window.prompt("Assigned to user id");
+    if (assigned == null) return;
+    await runBulk("assign", { assigned_to: assigned || null });
   }
 
   async function exportCsv() {
@@ -223,15 +250,12 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
     for (const key of [...q.keys()]) {
       if (key.endsWith(".op") || key.endsWith(".preset")) q.delete(key);
     }
-    const result = await api.list(slug, q);
-    const source = selected.size
-      ? result.items.filter((r) => selected.has(String(r.id)))
-      : result.items;
-    downloadCsv(
-      `${meta.slug}.csv`,
-      cols.map((c) => c.label),
-      source.map((row) => cols.map((c) => cellText(row, c, theme))),
-    );
+    if (selected.size) q.set("ids", [...selected].join(","));
+    try {
+      await api.exportCsv(slug, q);
+    } catch (e) {
+      setError(friendlyError(e));
+    }
   }
 
   return (
@@ -243,11 +267,11 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
           <>
             <ActionMenu
               items={[
-                { key: "export", label: "Export", onSelect: () => void exportCsv() },
+                { key: "export", label: t("export.label"), hidden: !allowExport, onSelect: () => void exportCsv() },
                 {
                   key: "import",
                   label: "Import CSV",
-                  hidden: !allowCreate,
+                  hidden: !allowCreate || meta.capabilities?.import === false,
                   onSelect: () => setImportOpen((v) => !v),
                 },
               ]}
@@ -348,15 +372,27 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
           onRetry={() => setTick((n) => n + 1)}
         />
       )}
-      {selected.size > 0 && (
+      {selected.size > 0 && allowBulk && (
         <div className="actions bulk-bar">
-          <span className="muted">{selected.size} selected</span>
-          <button className="ghost" onClick={() => void exportCsv()}>
-            Export selected
-          </button>
+          <span className="muted">{t("bulk.selected", { n: selected.size })}</span>
+          {allowExport ? (
+            <button className="ghost" onClick={() => void exportCsv()}>
+              {t("bulk.export")}
+            </button>
+          ) : null}
+          {allowAssign ? (
+            <button className="ghost" onClick={() => void bulkAssign()}>
+              {t("bulk.assign")}
+            </button>
+          ) : null}
+          {allowArchive ? (
+            <button className="ghost" onClick={() => void bulkArchive()}>
+              {t("bulk.archive")}
+            </button>
+          ) : null}
           {allowDelete ? (
             <button className="danger" onClick={() => void bulkDelete()}>
-              Delete selected
+              {t("bulk.delete")}
             </button>
           ) : null}
         </div>
@@ -671,19 +707,6 @@ function groupRows(rows: Record<string, unknown>[], field: string): Array<[strin
     map.set(key, list);
   }
   return Array.from(map.entries());
-}
-
-function cellText(
-  row: Record<string, unknown>,
-  field: UiField,
-  theme: { currency: string; locale: string },
-) {
-  if (field.relation) return expandedLabel(row, field.name) ?? "";
-  const value = row[field.name];
-  if (value == null) return "";
-  if (field.widget === "currency") return formatMoney(value, field.widget_options?.currency || theme.currency, theme.locale);
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
 }
 
 function isQueryActive(params: URLSearchParams, search: string) {

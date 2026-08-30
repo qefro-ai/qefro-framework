@@ -1,4 +1,4 @@
-use qefro_core::{OpContext, QefroError, QefroResult};
+use qefro_core::{Condition, OpContext, QefroError, QefroResult};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
@@ -28,7 +28,7 @@ impl StateDef {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TransitionDef {
     pub name: String,
     pub from: String,
@@ -42,6 +42,9 @@ pub struct TransitionDef {
     pub confirmation: bool,
     #[serde(default)]
     pub confirmation_message: String,
+    /// Safe metadata condition over the current record. Evaluated server-side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard: Option<Condition>,
 }
 
 impl TransitionDef {
@@ -55,6 +58,7 @@ impl TransitionDef {
             allowed_roles: Vec::new(),
             confirmation: false,
             confirmation_message: String::new(),
+            guard: None,
         }
     }
 
@@ -72,6 +76,45 @@ impl TransitionDef {
         self.confirmation = true;
         self.confirmation_message = message.into();
         self
+    }
+
+    /// Require listed fields to be non-empty before the transition.
+    pub fn requires(mut self, fields: &[&str]) -> Self {
+        let parts: Vec<Condition> = fields
+            .iter()
+            .map(|name| Condition {
+                field: Some((*name).to_string()),
+                is_not_empty: Some(true),
+                ..Default::default()
+            })
+            .collect();
+        self.guard = Some(if parts.len() == 1 {
+            parts.into_iter().next().unwrap()
+        } else {
+            Condition::all(parts)
+        });
+        self
+    }
+
+    pub fn guard(mut self, condition: Condition) -> Self {
+        self.guard = Some(condition);
+        self
+    }
+
+    pub fn guard_allows(&self, record: &serde_json::Value) -> QefroResult<()> {
+        if let Some(guard) = &self.guard {
+            if !guard.matches(record) {
+                let label = if self.label.is_empty() {
+                    self.name.as_str()
+                } else {
+                    self.label.as_str()
+                };
+                return Err(QefroError::workflow(format!(
+                    "cannot {label}: a required field is missing"
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -367,6 +410,15 @@ mod tests {
             .transition(TransitionDef::new("confirm", "Draft", "Confirmed"))
             .transition(TransitionDef::new("confirm", "Draft", "Confirmed"));
         assert!(dup.validate().is_err());
+    }
+
+    #[test]
+    fn guard_blocks_empty_required_field() {
+        let t = TransitionDef::new("confirm", "Draft", "Confirmed").requires(&["customer_id"]);
+        assert!(t.guard_allows(&serde_json::json!({ "customer_id": "" })).is_err());
+        assert!(t
+            .guard_allows(&serde_json::json!({ "customer_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" }))
+            .is_ok());
     }
 
     #[test]

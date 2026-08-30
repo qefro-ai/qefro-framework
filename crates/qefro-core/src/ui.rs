@@ -432,6 +432,8 @@ pub struct EntityPermissions {
     pub read: bool,
     pub update: bool,
     pub delete: bool,
+    #[serde(default)]
+    pub export: bool,
 }
 
 /// Which business-object surfaces the generic UI may offer. Not authorization.
@@ -451,6 +453,16 @@ pub struct EntityCapabilities {
     pub relations: bool,
     #[serde(default)]
     pub actions: bool,
+    #[serde(default)]
+    pub archive: bool,
+    #[serde(default)]
+    pub assignment: bool,
+    #[serde(default)]
+    pub import: bool,
+    #[serde(default)]
+    pub export: bool,
+    #[serde(default)]
+    pub bulk: bool,
 }
 
 fn default_true_standalone() -> bool {
