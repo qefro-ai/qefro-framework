@@ -875,7 +875,7 @@ impl DashboardCard {
         field: impl Into<String>,
     ) -> Self {
         let mut card = Self::base(title, entity, "count", "status_breakdown");
-        card.chart = Some("donut".into());
+        card.chart = Some("bar".into());
         card.group_by = Some(field.into());
         card
     }

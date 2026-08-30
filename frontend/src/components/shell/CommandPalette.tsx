@@ -39,6 +39,7 @@ export default function CommandPalette({
   const [reports, setReports] = useState<Array<{ name: string; label: string }>>([]);
   const [recent, setRecent] = useState<string[]>(() => readRecent());
   const [active, setActive] = useState(0);
+  const [searching, setSearching] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -72,8 +73,10 @@ export default function CommandPalette({
     if (!open || !q.trim()) {
       setResults([]);
       setGroups([]);
+      setSearching(false);
       return;
     }
+    setSearching(true);
     const handle = window.setTimeout(() => {
       api
         .search(q)
@@ -84,7 +87,8 @@ export default function CommandPalette({
         .catch(() => {
           setResults([]);
           setGroups([]);
-        });
+        })
+        .finally(() => setSearching(false));
     }, 150);
     return () => window.clearTimeout(handle);
   }, [open, q]);
@@ -249,7 +253,8 @@ export default function CommandPalette({
               ))}
             </li>
           ) : null}
-          {q && flat.length === 0 ? <li className="muted">No matches.</li> : null}
+          {q && searching && results.length === 0 ? <li className="muted">Searching…</li> : null}
+          {q && !searching && flat.length === 0 ? <li className="muted">No matches.</li> : null}
         </ul>
       </div>
     </div>

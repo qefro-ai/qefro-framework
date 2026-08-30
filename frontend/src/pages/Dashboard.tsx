@@ -31,7 +31,7 @@ function cardClass(card: Card) {
   const kind = card.kind || "metric";
   const wide = ["chart", "status_breakdown", "workflow", "list", "table", "activity", "saved_view", "report"].includes(kind);
   const classes = ["card"];
-  if (size === "xl" || (wide && !size)) classes.push("card-wide");
+  if (size === "xl" || (wide && size !== "sm")) classes.push("card-wide");
   if (size === "lg") classes.push("card-lg");
   if (size === "sm") classes.push("card-sm");
   return classes.join(" ");
@@ -213,7 +213,11 @@ export default function Dashboard({
               <div key={card.title} className={cardClass(card)}>
                 <div className="muted">{card.title}</div>
                 <Chart
-                  kind={card.chart || "bar"}
+                  kind={
+                    kind === "workflow" || kind === "status_breakdown"
+                      ? "bar"
+                      : card.chart || "bar"
+                  }
                   series={series}
                   onSegmentClick={
                     card.group_by
