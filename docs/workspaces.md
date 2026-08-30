@@ -20,10 +20,13 @@ GET /api/v1/meta/workspace
 
 `GET /api/v1/meta/ui` includes the same `workspace` object. `TenantUiConfig.navigation` can still override the slug list.
 
+Navigation items may include a `section` heading. The generic sidebar groups those items. Workspace `shortcuts` (create, list, dashboard, reports) are derived from the same navigation, dashboards, and reports — filtered by permission.
+
 ```rust
 AppModule::new("restaurant")
-    .nav(NavItem::new("Orders", "Order"))
-    .nav(NavItem::new("Kitchen", "Order").query("status=Preparing").view("kanban"))
+    .nav(NavItem::new("Orders", "Order").section("Operations"))
+    .nav(NavItem::new("Kitchen", "Order").query("status=Preparing").view("kanban").section("Operations"))
+    .nav(NavItem::new("Customers", "Customer").section("Catalog"))
     .dashboard(dashboard::ops())
 ```
 

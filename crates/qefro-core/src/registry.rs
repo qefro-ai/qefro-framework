@@ -171,6 +171,54 @@ impl EntityRegistry {
             }
             crate::formula::detect_cycles(&entity.fields)?;
             self.validate_formulas(&entity)?;
+            self.validate_links(&entity)?;
+            self.validate_child_table_columns(&entity)?;
+        }
+        Ok(())
+    }
+
+    fn validate_links(&self, entity: &EntityDef) -> QefroResult<()> {
+        for link in &entity.links {
+            let Ok(target) = self.get(&link.entity) else {
+                return Err(QefroError::bad_request(format!(
+                    "link '{}' on '{}' references unknown entity '{}'",
+                    link.label, entity.name, link.entity
+                )));
+            };
+            if target.get_field(&link.relation).is_none() {
+                return Err(QefroError::bad_request(format!(
+                    "link '{}' on '{}' uses unknown relation '{}' on '{}'",
+                    link.label, entity.name, link.relation, link.entity
+                )));
+            }
+            for col in &link.columns {
+                if target.get_field(col).is_none() && !target.has_column(col) {
+                    return Err(QefroError::bad_request(format!(
+                        "link '{}' on '{}' lists unknown column '{col}' on '{}'",
+                        link.label, entity.name, link.entity
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_child_table_columns(&self, entity: &EntityDef) -> QefroResult<()> {
+        for table in &entity.child_tables {
+            if table.ui.columns.is_empty() {
+                continue;
+            }
+            let Ok(child) = self.get(&table.child_entity) else {
+                continue;
+            };
+            for col in &table.ui.columns {
+                if child.get_field(col).is_none() && !child.has_column(col) {
+                    return Err(QefroError::bad_request(format!(
+                        "child table '{}.{}' lists unknown column '{col}'",
+                        entity.name, table.name
+                    )));
+                }
+            }
         }
         Ok(())
     }

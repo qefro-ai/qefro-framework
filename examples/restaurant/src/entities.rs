@@ -1,4 +1,7 @@
-use qefro_core::ui::{ChartMeasureSpec, ChartViewSpec, ListColumnSpec, SortSpec};
+use qefro_core::ui::{
+    ChartMeasureSpec, ChartViewSpec, DetailViewSpec, FormViewSpec, ListColumnSpec, SortSpec,
+    ViewColumnSpec, ViewSectionSpec,
+};
 use qefro_core::{
     CalendarViewSpec, ChildTableDef, DocumentConfig, EntityActionDef, EntityDef, EntityViews,
     FieldDef, KanbanCardSpec, KanbanViewSpec, LinkDef, ListViewSpec, NamingConfig, PrintFormat,
@@ -83,6 +86,23 @@ pub fn customer() -> EntityDef {
                 }),
                 ..Default::default()
             }),
+            form: Some(FormViewSpec::sections(vec![
+                ViewSectionSpec::new("Customer Information").columns(&[
+                    ViewColumnSpec::fields(&["name", "email", "phone"]),
+                    ViewColumnSpec::fields(&["party_type", "person_id"]),
+                ]),
+                ViewSectionSpec::new("Organization Details")
+                    .fields(&["organization_id"])
+                    .visible_when("party_type", json!("Organization")),
+                ViewSectionSpec::new("Notes").fields(&["notes"]),
+            ])),
+            detail: Some(DetailViewSpec::sections(vec![
+                ViewSectionSpec::new("Customer").fields(&["name", "email", "phone"]),
+                ViewSectionSpec::new("Business").fields(&["party_type", "person_id"]),
+                ViewSectionSpec::new("Organization Details")
+                    .fields(&["organization_id"])
+                    .visible_when("party_type", json!("Organization")),
+            ])),
             ..Default::default()
         })
         .field(FieldDef::one_to_many(
@@ -91,6 +111,16 @@ pub fn customer() -> EntityDef {
             "customer_id",
         ))
         .field(FieldDef::one_to_many("orders", "Order", "customer_id"))
+        .link(
+            LinkDef::new("Orders", "Order", "customer_id")
+                .columns(&["doc_no", "status", "grand_total"])
+                .limit(20),
+        )
+        .link(
+            LinkDef::new("Reservations", "Reservation", "customer_id")
+                .columns(&["guest_name", "reservation_date", "status"])
+                .limit(20),
+        )
         .build()
 }
 
@@ -384,6 +414,39 @@ pub fn reservation() -> EntityDef {
                 subtitle: Some("status".into()),
                 ..Default::default()
             }),
+            form: Some(FormViewSpec::sections(vec![
+                ViewSectionSpec::new("Booking Details").columns(&[
+                    ViewColumnSpec::fields(&[
+                        "customer_id",
+                        "table_id",
+                        "guest_name",
+                        "guest_phone",
+                    ]),
+                    ViewColumnSpec::fields(&[
+                        "reservation_date",
+                        "reservation_time",
+                        "party_size",
+                        "status",
+                    ]),
+                ]),
+                ViewSectionSpec::new("Additional Information").fields(&[
+                    "notes",
+                    "cancellation_reason",
+                ]),
+            ])),
+            detail: Some(DetailViewSpec::sections(vec![
+                ViewSectionSpec::new("Reservation").fields(&[
+                    "guest_name",
+                    "guest_phone",
+                    "customer_id",
+                    "table_id",
+                    "reservation_date",
+                    "reservation_time",
+                    "party_size",
+                    "status",
+                ]),
+                ViewSectionSpec::new("Notes").fields(&["notes", "cancellation_reason"]),
+            ])),
             ..Default::default()
         })
         .build()
@@ -467,6 +530,52 @@ pub fn order() -> EntityDef {
                     aggregation: Some("sum".into()),
                 }),
             }),
+            form: Some(FormViewSpec::sections(vec![
+                ViewSectionSpec::new("Order")
+                    .tab("Details")
+                    .columns(&[
+                        ViewColumnSpec::fields(&["order_type", "customer_id", "table_id"]),
+                        ViewColumnSpec::fields(&["reservation_id", "order_date", "status"]),
+                    ]),
+                ViewSectionSpec::new("Takeaway")
+                    .tab("Details")
+                    .fields(&["pickup_at"])
+                    .visible_when("order_type", json!("Takeaway")),
+                ViewSectionSpec::new("Line items")
+                    .tab("Items")
+                    .fields(&["items"]),
+                ViewSectionSpec::new("Totals")
+                    .tab("Totals")
+                    .fields(&[
+                        "subtotal",
+                        "tax_rate",
+                        "tax",
+                        "discount",
+                        "grand_total",
+                        "notes",
+                        "delivery_note",
+                    ]),
+            ])),
+            detail: Some(DetailViewSpec::sections(vec![
+                ViewSectionSpec::new("Order").fields(&[
+                    "doc_no",
+                    "order_type",
+                    "customer_id",
+                    "table_id",
+                    "reservation_id",
+                    "order_date",
+                    "status",
+                    "pickup_at",
+                ]),
+                ViewSectionSpec::new("Totals").fields(&[
+                    "subtotal",
+                    "tax_rate",
+                    "tax",
+                    "discount",
+                    "grand_total",
+                    "notes",
+                ]),
+            ])),
             ..Default::default()
         })
         .attachments()
@@ -561,7 +670,11 @@ pub fn order() -> EntityDef {
             .filterable()
             .section("Details"),
         )
-        .child_table(ChildTableDef::new("items", "OrderItem").parent_field("order_id"))
+        .child_table(
+            ChildTableDef::new("items", "OrderItem")
+                .parent_field("order_id")
+                .columns(&["menu_item_id", "quantity", "unit_price", "amount"]),
+        )
         .field(
             FieldDef::currency("subtotal")
                 .computed("SUM(items.amount)")

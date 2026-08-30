@@ -769,6 +769,7 @@ fn upsert_field(entity: &mut EntityDef, field: FieldDef) {
 fn validate_entity(registry: &EntityRegistry, after: &EntityDef) -> QefroResult<()> {
     after.validate_idents()?;
     detect_cycles(&after.fields)?;
+    after.validate_ui_layout()?;
     for field in &after.fields {
         if let Some(rel) = &field.relation {
             if rel.target_entity != after.name && registry.try_get(&rel.target_entity).is_none() {

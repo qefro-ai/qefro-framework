@@ -934,6 +934,9 @@ impl EntityService {
                 "slug": target.slug,
                 "relation": link.relation,
                 "total": total,
+                "columns": link.columns,
+                "limit": link.limit,
+                "filters": link.filters,
             }));
         }
         if let Some(obj) = record.as_object_mut() {
@@ -1313,24 +1316,41 @@ impl EntityService {
             {
                 continue;
             }
+            let link = entity.links.iter().find(|l| {
+                l.entity == spec.target.name && l.relation == spec.inverse
+            });
             let mut query = Query::default();
-            query.page_size = 50;
+            query.page_size = link.and_then(|l| l.limit).unwrap_or(50).min(50);
             query.filters.push(Filter::Eq {
                 field: spec.inverse.clone(),
                 value: json!(id),
             });
+            if let Some(link) = link {
+                for extra in &link.filters {
+                    query.filters.push(Filter::Eq {
+                        field: extra.field.clone(),
+                        value: json!(extra.value.clone()),
+                    });
+                }
+            }
             if let Ok(mut page) = self.repo.list(&spec.target, ctx, &query).await {
                 for item in &mut page.items {
                     strip_secrets(Some(&spec.target), item);
                 }
+                let label = link
+                    .map(|l| l.label.clone())
+                    .unwrap_or_else(|| spec.label.clone());
+                let columns = link.map(|l| l.columns.clone()).unwrap_or_default();
                 related.insert(
                     spec.name.clone(),
                     json!({
                         "entity": spec.target.name,
                         "slug": spec.target.slug,
-                        "label": spec.label,
+                        "label": label,
                         "items": page.items,
                         "total": page.total,
+                        "columns": columns,
+                        "limit": link.and_then(|l| l.limit),
                     }),
                 );
             }

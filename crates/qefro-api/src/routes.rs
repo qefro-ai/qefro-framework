@@ -735,6 +735,16 @@ fn workspace_payload(
     ctx: &qefro_core::OpContext,
     config: &TenantConfig,
 ) -> Value {
+    let permissions = state.entities.permissions();
+    let navigation: Vec<_> = state
+        .default_nav_items
+        .iter()
+        .filter(|item| {
+            ctx.allows_app(item.module.as_deref())
+                && permissions.allows(&ctx.roles, &item.entity, Action::List)
+        })
+        .cloned()
+        .collect();
     let dashboards: Vec<_> = state
         .dashboards_live()
         .into_iter()
@@ -764,8 +774,64 @@ fn workspace_payload(
             .find(|d| ctx.allows_app(d.module.as_deref()))
             .map(|d| d.name)
     };
+    let mut shortcuts = Vec::new();
+    let mut seen_create = std::collections::HashSet::new();
+    for item in &navigation {
+        if seen_create.insert(item.entity.clone())
+            && permissions.allows(&ctx.roles, &item.entity, Action::Create)
+        {
+            let noun = item.label.trim_end_matches('s');
+            shortcuts.push(json!({
+                "label": format!("New {noun}"),
+                "to": format!("/{}/new", item.slug),
+                "entity": item.entity,
+                "kind": "create",
+            }));
+        }
+    }
+    for item in &navigation {
+        let mut search = Vec::new();
+        if let Some(q) = &item.query {
+            if !q.is_empty() {
+                search.push(q.clone());
+            }
+        }
+        if let Some(view) = &item.view {
+            if !view.is_empty() {
+                search.push(format!("view={view}"));
+            }
+        }
+        let to = if search.is_empty() {
+            format!("/{}", item.slug)
+        } else {
+            format!("/{}?{}", item.slug, search.join("&"))
+        };
+        shortcuts.push(json!({
+            "label": item.label,
+            "to": to,
+            "entity": item.entity,
+            "kind": "list",
+        }));
+    }
+    if let Some(name) = &default_dashboard {
+        if let Some(dash) = dashboards.iter().find(|d| d["name"] == *name) {
+            shortcuts.push(json!({
+                "label": dash["label"],
+                "to": "/",
+                "kind": "dashboard",
+            }));
+        }
+    }
+    for report in &reports {
+        shortcuts.push(json!({
+            "label": report["label"],
+            "to": "/reports",
+            "kind": "report",
+        }));
+    }
     json!({
-        "navigation": state.default_nav_items.clone(),
+        "navigation": navigation,
+        "shortcuts": shortcuts,
         "default_dashboard": default_dashboard,
         "dashboards": dashboards,
         "reports": reports,

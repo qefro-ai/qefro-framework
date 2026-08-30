@@ -78,7 +78,7 @@ pub use migration::{sql_is_destructive, AppMigration};
 pub use operation::{operation, OperationDef};
 pub use package::{extract_package, inspect_package, write_package, PackageMeta};
 pub use platform::{
-    webhook_secret, webhook_signature, ConfirmationDef, EntityActionDef, LinkDef, NotificationDef,
+    webhook_secret, webhook_signature, ConfirmationDef, EntityActionDef, LinkDef, LinkFilter, NotificationDef,
     PublicFormDef, WebhookDef,
 };
 pub use rate_limit::{MemoryRateLimiter, RateLimiter};
@@ -99,7 +99,7 @@ pub use ui::{
     DetailViewSpec, EntityCapabilities, EntityPermissions, EntityViews, FormViewSpec,
     KanbanCardSpec, KanbanViewSpec, ListViewSpec, TenantBranding, TenantBusinessConfig,
     TenantConfig, TenantFeatures, TenantUiConfig, UiConfig, UiEntityMeta, UiFieldMeta, UiWhen,
-    UiWidget, ViewSectionSpec, WidgetOptions, WorkspaceNavItem, UI_SCHEMA_VERSION,
+    UiWidget, ViewColumnSpec, ViewSectionSpec, WidgetOptions, WorkspaceNavItem, UI_SCHEMA_VERSION,
 };
 pub use validate::{
     destructive_field_removals, validate_bundle, InstalledAppRef, ValidationReport,

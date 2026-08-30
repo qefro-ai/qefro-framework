@@ -112,6 +112,9 @@ pub struct WidgetOptions {
     pub deletable: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reorderable: Option<bool>,
+    /// Child-table column field names. Distinct from `columns` (layout count).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column_fields: Option<Vec<String>>,
 }
 
 /// Presentation-only condition. Server validation still applies when hidden.
@@ -191,7 +194,11 @@ pub struct UiFieldMeta {
     pub order: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_when: Option<UiWhen>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "read_only_when"
+    )]
     pub readonly_when: Option<UiWhen>,
 }
 
@@ -533,19 +540,100 @@ pub struct FormViewSpec {
     pub sections: Vec<ViewSectionSpec>,
 }
 
+impl FormViewSpec {
+    pub fn sections(sections: Vec<ViewSectionSpec>) -> Self {
+        Self { sections }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DetailViewSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sections: Vec<ViewSectionSpec>,
 }
 
+impl DetailViewSpec {
+    pub fn sections(sections: Vec<ViewSectionSpec>) -> Self {
+        Self { sections }
+    }
+}
+
+/// One column inside a section. Fields stack within the column; the renderer
+/// places columns side-by-side on desktop and stacks them on mobile.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ViewColumnSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<String>,
+}
+
+impl ViewColumnSpec {
+    pub fn fields(fields: &[&str]) -> Self {
+        Self {
+            fields: fields.iter().map(|s| (*s).to_string()).collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ViewSectionSpec {
     pub title: String,
+    /// Flat field list. Used when `columns` is empty. Kept for compatibility.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fields: Vec<String>,
+    /// Optional two- (or more) column grouping. Renderer stacks on mobile.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<ViewColumnSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub visible_when: Option<UiWhen>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collapsed: Option<bool>,
+}
+
+impl ViewSectionSpec {
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            ..Default::default()
+        }
+    }
+
+    pub fn fields(mut self, fields: &[&str]) -> Self {
+        self.fields = fields.iter().map(|s| (*s).to_string()).collect();
+        self
+    }
+
+    pub fn columns(mut self, columns: &[ViewColumnSpec]) -> Self {
+        self.columns = columns.to_vec();
+        self
+    }
+
+    pub fn tab(mut self, tab: impl Into<String>) -> Self {
+        self.tab = Some(tab.into());
+        self
+    }
+
+    pub fn visible_when(mut self, field: impl Into<String>, equals: impl Into<Value>) -> Self {
+        self.visible_when = Some(UiWhen::new(field, equals));
+        self
+    }
+
+    pub fn collapsed(mut self) -> Self {
+        self.collapsed = Some(true);
+        self
+    }
+
+    /// Field names in layout order, from columns or the flat list.
+    pub fn field_names(&self) -> Vec<&str> {
+        if self.columns.is_empty() {
+            return self.fields.iter().map(String::as_str).collect();
+        }
+        self.columns
+            .iter()
+            .flat_map(|c| c.fields.iter().map(String::as_str))
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -708,8 +796,10 @@ pub struct UiFieldView {
     pub readonly: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub visible_when: Option<UiWhen>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", alias = "read_only_when")]
     pub readonly_when: Option<UiWhen>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_from: Option<String>,
     #[serde(default)]
@@ -970,6 +1060,9 @@ pub struct WorkspaceNavItem {
     pub view: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub module: Option<String>,
+    /// Workspace section heading, e.g. Operations / Catalog / Analytics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1205,5 +1298,39 @@ mod tests {
             serde_json::from_value::<CardViewSpec>(serde_json::to_value(&card).unwrap()).unwrap();
         assert_eq!(round.title.as_deref(), Some("name"));
         assert!(round.enabled);
+    }
+
+    #[test]
+    fn read_only_when_alias_round_trips() {
+        let meta: UiFieldMeta = serde_json::from_value(json!({
+            "label": "Customer",
+            "read_only_when": { "field": "status", "equals": "completed" }
+        }))
+        .unwrap();
+        assert_eq!(meta.readonly_when.as_ref().unwrap().field, "status");
+        assert_eq!(UI_SCHEMA_VERSION, "1");
+    }
+
+    #[test]
+    fn view_section_columns_are_additive() {
+        let section = ViewSectionSpec::new("Customer Information")
+            .columns(&[
+                ViewColumnSpec::fields(&["name", "email", "phone"]),
+                ViewColumnSpec::fields(&["party_type", "person_id"]),
+            ])
+            .tab("Details");
+        let json = serde_json::to_value(&section).unwrap();
+        assert_eq!(json["title"], "Customer Information");
+        assert_eq!(json["tab"], "Details");
+        assert_eq!(json["columns"][0]["fields"][0], "name");
+        let names = section.field_names();
+        assert_eq!(names, vec!["name", "email", "phone", "party_type", "person_id"]);
+        let legacy: ViewSectionSpec = serde_json::from_value(json!({
+            "title": "Customer",
+            "fields": ["name", "email"]
+        }))
+        .unwrap();
+        assert!(legacy.columns.is_empty());
+        assert_eq!(legacy.field_names(), vec!["name", "email"]);
     }
 }

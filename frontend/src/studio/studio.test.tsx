@@ -153,9 +153,11 @@ describe("Studio UI", () => {
 
   it("previews the generic form renderer", () => {
     render(
-      <TenantThemeContext.Provider value={{ timezone: "UTC", locale: "en-US", currency: "USD" }}>
-        <FormPreview entity={orderUi} />
-      </TenantThemeContext.Provider>,
+      <MemoryRouter>
+        <TenantThemeContext.Provider value={{ timezone: "UTC", locale: "en-US", currency: "USD" }}>
+          <FormPreview entity={orderUi} />
+        </TenantThemeContext.Provider>
+      </MemoryRouter>,
     );
     expect(screen.getByText("Order preview")).toBeInTheDocument();
     expect(screen.getByText(/Customer/)).toBeInTheDocument();

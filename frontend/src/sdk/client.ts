@@ -145,7 +145,9 @@ export class QefroClient {
           query?: string | null;
           view?: string | null;
           module?: string | null;
+          section?: string | null;
         }>;
+        shortcuts?: Array<{ label: string; to: string; entity?: string; kind?: string }>;
         default_dashboard?: string | null;
       };
     }>("/api/v1/meta/ui");
@@ -196,7 +198,9 @@ export class QefroClient {
         query?: string | null;
         view?: string | null;
         module?: string | null;
+        section?: string | null;
       }>;
+      shortcuts?: Array<{ label: string; to: string; entity?: string; kind?: string }>;
       default_dashboard?: string | null;
       dashboards: Array<{ name: string; label: string; module?: string }>;
       reports: Array<{ name: string; label: string; entity: string }>;

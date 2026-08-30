@@ -39,7 +39,7 @@ Do not hardcode those labels in React.
 
 ## Form / detail (unchanged keys)
 
-`tab`, `section`, `width`, `widget`, `placeholder`, `help`, `visible_when`, `readonly_when`, `widget_options.collapsed`, `widget_options.allow_create` continue to drive the generic form and document views.
+`tab`, `section`, `width` (`full` | `half` | `third`), `widget`, `placeholder`, `help`, `visible_when`, `readonly_when` / `read_only_when`, `widget_options.collapsed`, `widget_options.allow_create`, and optional `views.form.sections` / `views.detail.sections` (title, tab, columns, fields, visible_when, collapsed) continue to drive the generic form and document views. Child tables use `widget_options.column_fields`. Related lists may set `columns`, `limit`, and `filters` on `LinkDef`.
 
 User personalization (column order, page size, density, theme, preferred view) is stored in the browser, keyed by tenant + user + entity. It is not a second metadata registry.
 

@@ -52,7 +52,8 @@ function Shell() {
     hidden_entities: string[];
     default_dashboard?: string | null;
     workspaceNav: WorkspaceNavItem[];
-  }>({ navigation: [], hidden_entities: [], workspaceNav: [] });
+    workspaceShortcuts: Array<{ label: string; to: string; entity?: string; kind?: string }>;
+  }>({ navigation: [], hidden_entities: [], workspaceNav: [], workspaceShortcuts: [] });
   const [userName, setUserName] = useState("");
   const [userEmail, setUserEmail] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
@@ -73,6 +74,7 @@ function Shell() {
             hidden_entities: d.hidden_entities ?? [],
             default_dashboard: d.default_dashboard,
             workspaceNav: d.workspace?.navigation ?? [],
+            workspaceShortcuts: d.workspace?.shortcuts ?? [],
           });
           if (d.branding) {
             setConfig((prev) =>
@@ -182,7 +184,7 @@ function Shell() {
 
   const routes = (
     <Routes>
-      <Route path="/" element={<Dashboard entities={entities} config={resolvedConfig} />} />
+      <Route path="/" element={<Dashboard entities={entities} config={resolvedConfig} shortcuts={uiMeta.workspaceShortcuts} />} />
       <Route path="/login" element={<Navigate to="/" replace />} />
       <Route
         path="/settings"
@@ -204,6 +206,7 @@ function Shell() {
                     hidden_entities: d.hidden_entities ?? [],
                     default_dashboard: d.default_dashboard,
                     workspaceNav: d.workspace?.navigation ?? [],
+                    workspaceShortcuts: d.workspace?.shortcuts ?? [],
                   });
                 })
                 .catch(() => undefined);

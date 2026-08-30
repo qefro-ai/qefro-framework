@@ -176,6 +176,9 @@ pub struct ChildTableUi {
     pub deletable: bool,
     #[serde(default = "default_true")]
     pub reorderable: bool,
+    /// Visible child columns, in order. Empty means all form-visible fields.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<String>,
 }
 
 impl Default for ChildTableUi {
@@ -185,6 +188,7 @@ impl Default for ChildTableUi {
             addable: true,
             deletable: true,
             reorderable: true,
+            columns: Vec::new(),
         }
     }
 }
@@ -224,6 +228,16 @@ impl ChildTableDef {
 
     pub fn cascade_delete(mut self, cascade: bool) -> Self {
         self.cascade_delete = cascade;
+        self
+    }
+
+    pub fn columns(mut self, columns: &[&str]) -> Self {
+        self.ui.columns = columns.iter().map(|s| (*s).to_string()).collect();
+        self
+    }
+
+    pub fn editable(mut self, editable: bool) -> Self {
+        self.ui.editable = editable;
         self
     }
 }
@@ -409,6 +423,9 @@ impl FieldDef {
         field.ui.widget_options.addable = Some(def.ui.addable);
         field.ui.widget_options.deletable = Some(def.ui.deletable);
         field.ui.widget_options.reorderable = Some(def.ui.reorderable);
+        if !def.ui.columns.is_empty() {
+            field.ui.widget_options.column_fields = Some(def.ui.columns.clone());
+        }
         field
     }
 

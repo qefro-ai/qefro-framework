@@ -54,6 +54,20 @@ export function AppShell({
     setUserOpen(false);
   }, [location.pathname]);
 
+  const groupedWorkspace = useMemo(() => {
+    if (!workspaceNav?.length) return [];
+    const hasSections = workspaceNav.some((item) => item.section);
+    if (!hasSections) return [["", workspaceNav] as const];
+    const map = new Map<string, typeof workspaceNav>();
+    for (const item of workspaceNav) {
+      const key = item.section || "Workspace";
+      const list = map.get(key) ?? [];
+      list.push(item);
+      map.set(key, list);
+    }
+    return Array.from(map.entries());
+  }, [workspaceNav]);
+
   const groups = useMemo(() => {
     const map = new Map<string, UiEntity[]>();
     for (const entity of navEntities) {
@@ -155,23 +169,28 @@ export function AppShell({
           <NavLink to="/" className={({ isActive }) => (isActive ? "active" : "")} end>
             <span className="nav-label">Dashboard</span>
           </NavLink>
-          {workspaceNav && workspaceNav.length > 0
-            ? workspaceNav.map((item) => {
-                const search = [item.query, item.view ? `view=${item.view}` : ""]
-                  .filter(Boolean)
-                  .join("&");
-                const to = search ? `/${item.slug}?${search}` : `/${item.slug}`;
-                return (
-                  <NavLink
-                    key={`${item.label}-${to}`}
-                    to={to}
-                    className={({ isActive }) => (isActive ? "active" : "")}
-                    title={item.label}
-                  >
-                    <span className="nav-label">{item.label}</span>
-                  </NavLink>
-                );
-              })
+          {groupedWorkspace.length > 0
+            ? groupedWorkspace.map(([section, items]) => (
+                <div key={section || "workspace"} className="nav-group">
+                  {section ? <div className="nav-group-label">{section}</div> : null}
+                  {items.map((item) => {
+                    const search = [item.query, item.view ? `view=${item.view}` : ""]
+                      .filter(Boolean)
+                      .join("&");
+                    const to = search ? `/${item.slug}?${search}` : `/${item.slug}`;
+                    return (
+                      <NavLink
+                        key={`${item.label}-${to}`}
+                        to={to}
+                        className={({ isActive }) => (isActive ? "active" : "")}
+                        title={item.label}
+                      >
+                        <span className="nav-label">{item.label}</span>
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              ))
             : groups.map(([group, items]) => (
             <div key={group} className="nav-group">
               <div className="nav-group-label">{group}</div>
@@ -214,7 +233,13 @@ export function AppShell({
           {children}
         </BreadcrumbRecordProvider>
       </main>
-      <CommandPalette entities={allEntities ?? navEntities} studio={studio} open={palette} onOpenChange={setPalette} />
+      <CommandPalette
+        entities={allEntities ?? navEntities}
+        workspaceNav={workspaceNav}
+        studio={studio}
+        open={palette}
+        onOpenChange={setPalette}
+      />
       {helpOpen ? (
         <div className="palette-backdrop" onClick={() => setHelpOpen(false)}>
           <div className="palette dialog" role="dialog" aria-label="Keyboard shortcuts" onClick={(e) => e.stopPropagation()}>

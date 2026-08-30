@@ -507,6 +507,7 @@ impl QefroRuntime {
                         query: item.query.clone(),
                         view: item.view.clone(),
                         module: Some(a.module.name.clone()),
+                        section: item.section.clone(),
                     })
                 })
             })

@@ -258,12 +258,14 @@ describe("widgets", () => {
 
     it("renders relation file image and rich text", () => {
       wrap(
-        <RelationPicker
-          field={field({ name: "customer", widget: "relation", relation: "Customer" })}
-          value=""
-          onChange={() => undefined}
-          entities={[]}
-        />,
+        <MemoryRouter>
+          <RelationPicker
+            field={field({ name: "customer", widget: "relation", relation: "Customer" })}
+            value=""
+            onChange={() => undefined}
+            entities={[]}
+          />
+        </MemoryRouter>,
       );
       wrap(
         <FileUpload field={field({ name: "attachment", widget: "file" })} value="" onChange={() => undefined} entities={[]} />,
@@ -333,6 +335,30 @@ describe("widgets", () => {
       expect(screen.getByRole("link", { name: "Open Customer" })).toHaveAttribute("href", "/customers/c1");
     });
 
+    it("offers a create-related action that keeps the original form return path", () => {
+      wrap(
+        <MemoryRouter initialEntries={["/orders/new"]}>
+          <RelationPicker
+            field={field({ name: "customer_id", widget: "relation", relation: "Customer" })}
+            value=""
+            onChange={() => undefined}
+            entities={[
+              {
+                entity: "Customer",
+                label: "Customer",
+                label_plural: "Customers",
+                slug: "customers",
+                searchable: true,
+                permissions: { create: true, list: true, read: true, update: true, delete: true },
+                fields: [field({ name: "name", widget: "text" })],
+              },
+            ]}
+          />
+        </MemoryRouter>,
+      );
+      expect(screen.getByRole("button", { name: "Create Customer" })).toBeInTheDocument();
+    });
+
     it("highlights nested child-table field errors", () => {
       wrap(
         <ChildTable
@@ -360,5 +386,37 @@ describe("widgets", () => {
       );
       expect(screen.getByRole("alert")).toHaveTextContent("Must be greater than 0");
       expect(screen.getByRole("alert").closest("td")).toHaveClass("is-invalid");
+    });
+
+    it("limits child table columns from metadata", () => {
+      wrap(
+        <ChildTable
+          field={field({
+            name: "items",
+            widget: "child_table",
+            type: "child_table",
+            child_entity: "Line",
+            relation_kind: "child_table",
+            widget_options: { column_fields: ["quantity"] },
+          })}
+          value={[{ quantity: 1, rate: 2 }]}
+          onChange={() => undefined}
+          entities={[
+            {
+              entity: "Line",
+              label: "Line",
+              label_plural: "Lines",
+              slug: "lines",
+              searchable: false,
+              fields: [
+                field({ name: "quantity", widget: "number", type: "integer", label: "Qty" }),
+                field({ name: "rate", widget: "currency", type: "decimal", label: "Rate" }),
+              ],
+            },
+          ]}
+        />,
+      );
+      expect(screen.getByRole("columnheader", { name: "Qty" })).toBeInTheDocument();
+      expect(screen.queryByRole("columnheader", { name: "Rate" })).not.toBeInTheDocument();
     });
 });

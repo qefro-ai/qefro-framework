@@ -46,6 +46,9 @@ pub struct NavItem {
     /// Preferred collection view (`list`, `kanban`, `card`, `calendar`, `chart`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<String>,
+    /// Workspace section heading. Renderer groups items that share a section.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
 }
 
 impl NavItem {
@@ -55,6 +58,7 @@ impl NavItem {
             entity: entity.into(),
             query: None,
             view: None,
+            section: None,
         }
     }
 
@@ -65,6 +69,11 @@ impl NavItem {
 
     pub fn view(mut self, view: impl Into<String>) -> Self {
         self.view = Some(view.into());
+        self
+    }
+
+    pub fn section(mut self, section: impl Into<String>) -> Self {
+        self.section = Some(section.into());
         self
     }
 }

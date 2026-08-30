@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../../sdk/client";
 import { useTenantTheme } from "../../metadata/context";
 import { registerWidget, renderWidget, type WidgetProps } from "../../metadata/registry";
@@ -24,7 +24,6 @@ function a11y(field: WidgetProps["field"], id?: string, invalid?: boolean) {
     .join(" ");
   return {
     id,
-    required: field.required,
     readOnly: field.readonly,
     "aria-required": field.required || undefined,
     "aria-invalid": invalid || undefined,
@@ -632,14 +631,15 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id,
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [hi, setHi] = useState(0);
-  const [creating, setCreating] = useState(false);
   const [loading, setLoading] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const selected = value == null || value === "" ? "" : String(value);
   const displayField = opt(field).display_field || target?.display_field || "name";
   const current = options.find((o) => o.id === selected);
-  const allowCreate = opt(field).allow_create !== false;
+  const allowCreate = opt(field).allow_create !== false && target?.permissions?.create !== false;
   const listId = `${id || field.name}-options`;
+  const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     if (!open) return;
@@ -751,8 +751,19 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id,
           }}
         />
         {allowCreate ? (
-          <button type="button" className="ghost" disabled={disabled} aria-label={`Create ${target.label}`} onClick={() => setCreating(true)}>
-            +
+          <button
+            type="button"
+            className="ghost"
+            disabled={disabled}
+            aria-label={`Create ${target.label}`}
+            onClick={() => {
+              const returnTo = `${location.pathname}${location.search}`;
+              navigate(
+                `/${target.slug}/new?return=${encodeURIComponent(returnTo)}&return_field=${encodeURIComponent(field.name)}`,
+              );
+            }}
+          >
+            + Create {target.label}
           </button>
         ) : null}
         {selected && (
@@ -803,86 +814,6 @@ export function RelationPicker({ field, value, onChange, entities, disabled, id,
           )}
         </ul>
       )}
-      {creating ? (
-        <QuickCreate
-          target={target}
-          onClose={() => setCreating(false)}
-          onCreated={(id) => {
-            setCreating(false);
-            pick(id);
-          }}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function QuickCreate({
-  target,
-  onClose,
-  onCreated,
-}: {
-  target: { slug: string; label: string; fields: WidgetProps["entities"][number]["fields"] };
-  onClose: () => void;
-  onCreated: (id: string) => void;
-}) {
-  const fields = target.fields
-    .filter((f) => f.form !== false && !f.hidden && !f.readonly && f.relation_kind !== "child_table" && f.type !== "child_table")
-    .filter((f) => !["id", "tenant_id", "created_at", "updated_at"].includes(f.name))
-    .slice(0, 6);
-  const [values, setValues] = useState<Record<string, unknown>>({});
-  const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  return (
-    <div className="palette-backdrop" onClick={onClose}>
-      <form
-        className="palette quick-create"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Quick create ${target.label}`}
-        onClick={(e) => e.stopPropagation()}
-        onSubmit={async (e) => {
-          e.preventDefault();
-          try {
-            setSaving(true);
-            setError("");
-            const created = await api.create(target.slug, values);
-            onCreated(String(created.id));
-          } catch (err) {
-            setError(err instanceof Error ? err.message : "Unable to create.");
-          } finally {
-            setSaving(false);
-          }
-        }}
-      >
-        <h3>Quick create {target.label}</h3>
-        {fields.map((f) => (
-          <label key={f.name}>
-            {f.label}
-            {f.required ? " *" : ""}
-            <input
-              required={f.required}
-              placeholder={f.placeholder}
-              value={String(values[f.name] ?? "")}
-              onChange={(e) => setValues((prev) => ({ ...prev, [f.name]: e.target.value }))}
-            />
-          </label>
-        ))}
-        {error ? (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        ) : null}
-        <div className="actions">
-          <button type="button" className="ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button type="submit" disabled={saving}>
-            {saving ? "Creating…" : "Create"}
-          </button>
-        </div>
-      </form>
     </div>
   );
 }
@@ -892,12 +823,18 @@ export function ChildTable({ field, value, onChange, entities, disabled, fieldEr
   const child = entities.find((e) => e.entity === childName);
   const opts = opt(field);
   const rows = Array.isArray(value) ? (value as Record<string, unknown>[]) : [];
-  const cols = (child?.fields ?? []).filter((f) => {
+  const allCols = (child?.fields ?? []).filter((f) => {
     if (f.hidden || f.form === false) return false;
     if (["id", "tenant_id"].includes(f.name)) return false;
     if (f.relation_kind === "one_to_many" || f.relation_kind === "child_table") return false;
     return true;
   });
+  const named = opts.column_fields;
+  const cols = named?.length
+    ? named
+        .map((name) => allCols.find((c) => c.name === name))
+        .filter((c): c is NonNullable<typeof c> => Boolean(c))
+    : allCols;
   const addable = opts.addable !== false && !disabled;
   const deletable = opts.deletable !== false && !disabled;
   const reorderable = opts.reorderable !== false && !disabled;

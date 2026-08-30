@@ -69,7 +69,8 @@ export default function LayoutEditor({
         publish().catch((err) => setError(err.message));
       }}
     >
-      <p className="muted">Publishes field order, section, tab, and label via entity.field.ui.</p>
+      <p className="muted">Publishes field order, section, tab, and label via entity.field.ui. Form/detail sections are edited under Views.</p>
+      <LayoutTree ui={ui} />
       <table className="data">
         <thead>
           <tr>
@@ -115,5 +116,71 @@ export default function LayoutEditor({
         Publish layout
       </button>
     </form>
+  );
+}
+
+function LayoutTree({ ui }: { ui: UiEntity }) {
+  const form = ui.views?.form?.sections ?? [];
+  const detail = ui.views?.detail?.sections ?? [];
+  if (form.length === 0 && detail.length === 0) {
+    const sections = [...new Set(ui.fields.map((f) => f.section).filter(Boolean))] as string[];
+    return (
+      <div className="card studio-preview">
+        <h4>Form Layout</h4>
+        <p className="muted">No explicit sections. Fields group by field.section:</p>
+        <ul className="layout-tree">
+          {sections.map((title) => (
+            <li key={title}>
+              <strong>{title}</strong>
+              <ul>
+                {ui.fields.filter((f) => f.section === title && f.form !== false).map((f) => (
+                  <li key={f.name}>{f.label}</li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  return (
+    <div className="card studio-preview">
+      <h4>Form Layout</h4>
+      <ul className="layout-tree">
+        {form.map((section) => (
+          <li key={`form-${section.title}`}>
+            <strong>
+              {section.tab ? `${section.tab} / ` : ""}
+              {section.title}
+            </strong>
+            <ul>
+              {(section.columns?.length
+                ? section.columns.flatMap((c) => c.fields ?? [])
+                : section.fields ?? []
+              ).map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
+          </li>
+        ))}
+      </ul>
+      {detail.length > 0 ? (
+        <>
+          <h4>Detail Layout</h4>
+          <ul className="layout-tree">
+            {detail.map((section) => (
+              <li key={`detail-${section.title}`}>
+                <strong>{section.title}</strong>
+                <ul>
+                  {(section.fields ?? []).map((name) => (
+                    <li key={name}>{name}</li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </div>
   );
 }

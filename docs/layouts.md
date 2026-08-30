@@ -12,7 +12,22 @@ Layout comes from field metadata, not custom pages.
 | `form` / `form_visible` | Shown on create/edit |
 | `detail` / `detail_visible` | Shown on the record page |
 | `visible_when` | Presentation-only show/hide |
-| `readonly_when` | Presentation-only lock |
+| `readonly_when` | Presentation-only lock (`read_only_when` alias) |
+| `views.form.sections` / `views.detail.sections` | Shared layout: section, columns, tab, fieldset grouping |
+
+Form and detail share the same section language. Omit `views.form` to keep the generic field.section grouping (schema v1).
+
+```yaml
+form:
+  layout: # stored as views.form.sections
+    - title: Customer Information
+      columns:
+        - fields: [name, email, phone]
+        - fields: [party_type, person_id]
+    - title: Address
+      tab: Address
+      fields: [address, city, country]
+```
 
 ```yaml
 - name: cancellation_reason

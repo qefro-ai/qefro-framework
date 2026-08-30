@@ -17,6 +17,7 @@ export type WidgetOptions = {
   allow_create?: boolean;
   indicators?: Record<string, string>;
   columns?: number;
+  column_fields?: string[];
   editable?: boolean;
   addable?: boolean;
   deletable?: boolean;
@@ -64,6 +65,8 @@ export type UiField = {
   readonly: boolean;
   visible_when?: UiWhen;
   readonly_when?: UiWhen;
+  read_only_when?: UiWhen;
+  default?: unknown;
   default_from?: string;
   computed?: boolean;
   formula?: string;
@@ -101,7 +104,14 @@ export type UiEntity = {
   attachments?: boolean;
   capabilities?: EntityCapabilities;
   actions?: Array<{ name: string; label?: string; confirmation?: { required?: boolean; message?: string } }>;
-  links?: Array<{ label: string; entity: string; relation: string }>;
+  links?: Array<{
+    label: string;
+    entity: string;
+    relation: string;
+    columns?: string[];
+    limit?: number;
+    filters?: Array<{ field: string; value: string }>;
+  }>;
   public_form?: { enabled?: boolean; slug?: string; fields?: string[] };
   list?: {
     columns?: Array<{ field: string; width?: number | string; widget?: string }>;
@@ -178,12 +188,23 @@ export type WorkspaceNavItem = {
   query?: string | null;
   view?: string | null;
   module?: string | null;
+  section?: string | null;
+};
+
+export type WorkspaceShortcut = {
+  label: string;
+  to: string;
+  entity?: string;
+  kind?: string;
 };
 
 export type ViewSection = {
   title: string;
   fields?: string[];
+  columns?: Array<{ fields?: string[] }>;
+  tab?: string;
   visible_when?: UiWhen;
+  collapsed?: boolean;
 };
 
 export type TenantTheme = {

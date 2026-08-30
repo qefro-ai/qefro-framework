@@ -152,9 +152,11 @@ function DashboardCard({
 export default function Dashboard({
   entities,
   config,
+  shortcuts,
 }: {
   entities: UiEntity[];
   config: TenantConfig | null;
+  shortcuts?: Array<{ label: string; to: string; entity?: string; kind?: string }>;
 }) {
   const [label, setLabel] = useState("Dashboard");
   const [name, setName] = useState("");
@@ -169,8 +171,19 @@ export default function Dashboard({
   const theme = useTenantTheme();
   const navigate = useNavigate();
 
+  const createShortcuts = useMemo(
+    () => (shortcuts ?? []).filter((s) => s.kind === "create").slice(0, 3),
+    [shortcuts],
+  );
+  const listShortcuts = useMemo(
+    () => (shortcuts ?? []).filter((s) => s.kind === "list" || s.kind === "report" || s.kind === "dashboard"),
+    [shortcuts],
+  );
+
   const quick = useMemo(() => {
-    const all = entities.filter((e) => e.standalone !== false && !e.singleton && !e.child_of);
+    const all = entities.filter(
+      (e) => e.standalone !== false && !e.singleton && !e.child_of && e.permissions?.create !== false,
+    );
     const nav = config?.ui_config.navigation ?? [];
     if (nav.length === 0) return all.slice(0, 6);
     const bySlug = new Map(all.map((e) => [e.slug, e]));
@@ -263,7 +276,17 @@ export default function Dashboard({
         title={label}
         description="Live counts and recent work for this workspace."
         actions={
-          quick.length > 0 ? (
+          createShortcuts.length > 0 ? (
+            <>
+              {createShortcuts.map((s) => (
+                <Link key={s.to} to={s.to}>
+                  <button type="button" className="ghost">
+                    {s.label}
+                  </button>
+                </Link>
+              ))}
+            </>
+          ) : quick.length > 0 ? (
             <>
               {quick.slice(0, 3).map((e) => (
                 <Link key={e.slug} to={`/${e.slug}/new`}>
@@ -369,7 +392,18 @@ export default function Dashboard({
           </div>
         </section>
       ) : null}
-      {quick.length > 0 ? (
+      {listShortcuts.length > 0 ? (
+        <div className="shortcuts panel">
+          <h3>Shortcuts</h3>
+          <ul>
+            {listShortcuts.map((s) => (
+              <li key={`${s.kind}-${s.to}-${s.label}`}>
+                <Link to={s.to}>{s.label}</Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : quick.length > 0 ? (
         <div className="shortcuts panel">
           <h3>Shortcuts</h3>
           <ul>

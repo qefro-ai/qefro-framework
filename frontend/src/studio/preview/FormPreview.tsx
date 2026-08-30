@@ -19,6 +19,7 @@ export default function FormPreview({ entity }: { entity: UiEntity }) {
         values={values}
         entities={[entity]}
         fieldErrors={{}}
+        layout={entity.views?.form?.sections}
         onChange={(name, value) =>
           setValues((prev) => {
             const next = { ...prev, [name]: value };

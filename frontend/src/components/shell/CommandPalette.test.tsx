@@ -71,4 +71,23 @@ describe("CommandPalette", () => {
     expect(await screen.findByText("Recent searches")).toBeInTheDocument();
     expect(screen.getByText("Ahmed")).toBeInTheDocument();
   });
+
+  it("uses workspace navigation for Go to destinations", async () => {
+    render(
+      <MemoryRouter>
+        <CommandPalette
+          entities={[customer]}
+          workspaceNav={[
+            { label: "Orders", slug: "orders" },
+            { label: "Kitchen", slug: "orders", query: "status=Preparing", view: "kanban" },
+          ]}
+          open
+          onOpenChange={() => undefined}
+        />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("Orders")).toBeInTheDocument();
+    expect(screen.getByText("Kitchen")).toBeInTheDocument();
+    expect(screen.getByText(/Create Customer/)).toBeInTheDocument();
+  });
 });

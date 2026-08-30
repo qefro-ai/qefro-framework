@@ -5,6 +5,7 @@ export function ConfirmDialog({
   title,
   message,
   confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
   danger,
   onConfirm,
   onCancel,
@@ -13,6 +14,7 @@ export function ConfirmDialog({
   title?: string;
   message: string;
   confirmLabel?: string;
+  cancelLabel?: string;
   danger?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -42,7 +44,7 @@ export function ConfirmDialog({
         <p id="confirm-desc">{message}</p>
         <div className="dialog-actions">
           <button type="button" className="ghost" onClick={onCancel}>
-            Cancel
+            {cancelLabel}
           </button>
           <button
             ref={ref}

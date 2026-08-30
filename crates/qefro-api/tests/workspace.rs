@@ -19,7 +19,8 @@ fn workspace_app() -> InstalledApp {
         qefro_core::AppModule::new("workspace_demo")
             .version("1.0.0")
             .label("Workspace Demo")
-            .nav(qefro_core::NavItem::new("Deals", "WsDeal"))
+            .nav(qefro_core::NavItem::new("Deals", "WsDeal").section("Pipeline"))
+            .nav(qefro_core::NavItem::new("Secrets", "WsSecret").section("Admin"))
             .entity(
                 EntityDef::new("WsDeal")
                     .table_name("ws_deals")
@@ -38,6 +39,14 @@ fn workspace_app() -> InstalledApp {
                             .default_value(json!(0)),
                     )
                     .field(FieldDef::string("secret_note").searchable().secret())
+                    .build(),
+            )
+            .entity(
+                EntityDef::new("WsSecret")
+                    .table_name("ws_secrets")
+                    .slug_name("ws-secrets")
+                    .skip_ddl()
+                    .field(FieldDef::string("name").required())
                     .build(),
             )
             .dashboard(
@@ -414,4 +423,95 @@ async fn saved_views_are_user_and_permission_scoped() {
             .any(|i| i["label"] == "Deals"),
         "{workspace}"
     );
+}
+
+#[tokio::test]
+async fn create_applies_server_side_field_defaults() {
+    let _ = db_url();
+    let router = runtime().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let token = register(&router, suffix).await;
+    let (status, created) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/ws-deals",
+            Some(&token),
+            json!({ "name": format!("default-{suffix}") }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created["status"], "Lead", "{created}");
+    assert_eq!(created["amount"].as_f64(), Some(0.0), "{created}");
+}
+
+#[tokio::test]
+async fn workspace_navigation_and_shortcuts_respect_list_permission() {
+    let _ = db_url();
+    let router = runtime().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let admin = register(&router, suffix).await;
+    let staff = staff_token(&router, &admin, suffix, &format!("w-{suffix}")).await;
+
+    let (status, admin_ws) = json(
+        clone_router(&router),
+        get("/api/v1/meta/workspace", Some(&admin)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{admin_ws}");
+    let admin_nav = admin_ws["navigation"].as_array().cloned().unwrap_or_default();
+    assert!(
+        admin_nav.iter().any(|i| i["label"] == "Deals" && i["section"] == "Pipeline"),
+        "{admin_ws}"
+    );
+    assert!(
+        admin_nav.iter().any(|i| i["label"] == "Secrets" && i["section"] == "Admin"),
+        "{admin_ws}"
+    );
+    let admin_shortcuts = admin_ws["shortcuts"].as_array().cloned().unwrap_or_default();
+    assert!(
+        admin_shortcuts
+            .iter()
+            .any(|s| s["kind"] == "create" && s["entity"] == "WsDeal"),
+        "{admin_ws}"
+    );
+    assert!(
+        admin_shortcuts
+            .iter()
+            .any(|s| s["kind"] == "create" && s["entity"] == "WsSecret"),
+        "{admin_ws}"
+    );
+
+    let (status, staff_ws) = json(
+        clone_router(&router),
+        get("/api/v1/meta/workspace", Some(&staff)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{staff_ws}");
+    let staff_nav = staff_ws["navigation"].as_array().cloned().unwrap_or_default();
+    assert!(staff_nav.iter().any(|i| i["label"] == "Deals"), "{staff_ws}");
+    assert!(
+        !staff_nav.iter().any(|i| i["label"] == "Secrets"),
+        "{staff_ws}"
+    );
+    let staff_shortcuts = staff_ws["shortcuts"].as_array().cloned().unwrap_or_default();
+    assert!(
+        staff_shortcuts
+            .iter()
+            .any(|s| s["kind"] == "create" && s["entity"] == "WsDeal"),
+        "{staff_ws}"
+    );
+    assert!(
+        !staff_shortcuts
+            .iter()
+            .any(|s| s["entity"] == "WsSecret"),
+        "{staff_ws}"
+    );
+
+    let (status, denied) = json(
+        clone_router(&router),
+        get("/api/v1/ws-secrets", Some(&staff)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
 }

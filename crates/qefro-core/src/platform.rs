@@ -79,13 +79,26 @@ impl EntityActionDef {
 }
 
 /// Related-records link. Prefer deriving from relations; use this when the
-/// automatic inverse is not enough.
+/// automatic inverse is not enough, or to customize order, columns, and limits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LinkDef {
     pub label: String,
     pub entity: String,
     /// Field on the related entity that points at this record.
     pub relation: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+    /// Default list filters as `field=value` pairs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filters: Vec<LinkFilter>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LinkFilter {
+    pub field: String,
+    pub value: String,
 }
 
 impl LinkDef {
@@ -98,7 +111,28 @@ impl LinkDef {
             label: label.into(),
             entity: entity.into(),
             relation: relation.into(),
+            columns: Vec::new(),
+            limit: None,
+            filters: Vec::new(),
         }
+    }
+
+    pub fn columns(mut self, columns: &[&str]) -> Self {
+        self.columns = columns.iter().map(|s| (*s).to_string()).collect();
+        self
+    }
+
+    pub fn limit(mut self, limit: u32) -> Self {
+        self.limit = Some(limit);
+        self
+    }
+
+    pub fn filter(mut self, field: impl Into<String>, value: impl Into<String>) -> Self {
+        self.filters.push(LinkFilter {
+            field: field.into(),
+            value: value.into(),
+        });
+        self
     }
 }
 
