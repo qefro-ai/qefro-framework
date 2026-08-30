@@ -223,4 +223,21 @@ describe("FormLayout", () => {
     expect(screen.getByText("Email is required")).toBeInTheDocument();
     expect(screen.getByText(/must be >= 1/)).toBeInTheDocument();
   });
+
+  it("shows a generic debit/credit balance hint", () => {
+    render(
+      <FormLayout
+        fields={[
+          { ...fields[0], name: "total_debit", label: "Debit", required: false, computed: true, widget: "number" },
+          { ...fields[0], name: "total_credit", label: "Credit", required: false, computed: true, widget: "number" },
+        ]}
+        values={{ total_debit: 100, total_credit: 90 }}
+        entities={[]}
+        fieldErrors={{}}
+        onChange={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(/Not balanced/);
+    expect(screen.getByRole("status")).toHaveTextContent(/Difference: 10/);
+  });
 });

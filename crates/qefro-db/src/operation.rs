@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use qefro_core::{
     apply_entity_rules, ident::snake_case, reject_readonly_writes, strip_computed_fields,
     validate_record, EntityRegistry, HookRegistry, MeteringEvent, OpContext, OperationDef,
-    QefroError, QefroResult, RowPolicy, RELATED_ID_FIELD, RELATED_TYPE_FIELD,
+    QefroError, QefroResult, RelationKind, RowPolicy, RELATED_ID_FIELD, RELATED_TYPE_FIELD,
 };
 use qefro_events::DomainEvent;
 use qefro_permissions::{Action, PermissionRegistry};
@@ -296,22 +296,91 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
         self.permissions
             .check(&self.auth, &def.name, Action::Create)?;
         reject_client_tenant(&data)?;
+        let children = extract_child_payloads(&def, &mut data);
         strip_computed_fields(&def.fields, &mut data);
         apply_op_defaults(&def, &mut data, &self.auth);
-        if let Some(wf) = self.workflows.for_entity(&def.name) {
-            if data.get(&wf.field).and_then(|v| v.as_str()).is_none() {
-                if let Some(obj) = data.as_object_mut() {
-                    obj.insert(wf.field.clone(), json!(wf.initial));
+        apply_initial_workflow_status(self.workflows, &def.name, &mut data)?;
+        if let Some(naming) = &def.naming {
+            if naming.assign_on != "submit" {
+                let empty = data
+                    .get(&naming.field)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .is_empty();
+                if empty {
+                    let number = crate::numbering::allocate(
+                        self.tx,
+                        self.auth.tenant_id,
+                        &def.name,
+                        naming,
+                        chrono::Utc::now(),
+                    )
+                    .await?;
+                    if let Some(obj) = data.as_object_mut() {
+                        obj.insert(naming.field.clone(), json!(number));
+                    }
                 }
             }
         }
         validate_record(def.business_fields(), &data, false)?;
         apply_entity_rules(def.business_fields(), &def.validation, &data, false)?;
         self.check_cross_entity_refs(&def, &data).await?;
-        let created = self.repo.insert_tx(self.tx, &def, &self.auth, data).await?;
+        let mut created = self.repo.insert_tx(self.tx, &def, &self.auth, data).await?;
+        let id = record_id(&created)?;
+        let stored_children = self.write_child_rows(&def, id, children).await?;
+        if let Some(obj) = created.as_object_mut() {
+            for (name, rows) in stored_children {
+                obj.insert(name, json!(rows));
+            }
+        }
         self.record_side_effects(&def, None, &created, "create")
             .await?;
         Ok(created)
+    }
+
+    async fn write_child_rows(
+        &mut self,
+        parent: &qefro_core::EntityDef,
+        parent_id: Uuid,
+        children: HashMap<String, Vec<Value>>,
+    ) -> QefroResult<HashMap<String, Vec<Value>>> {
+        let mut stored = HashMap::new();
+        for field in &parent.fields {
+            let Some(rel) = &field.relation else { continue };
+            if rel.kind != RelationKind::ChildTable {
+                continue;
+            }
+            let Some(rows) = children.get(&field.name) else {
+                stored.insert(field.name.clone(), Vec::new());
+                continue;
+            };
+            let child = self.registry.get(&rel.target_entity)?;
+            self.permissions
+                .check(&self.auth, &child.name, Action::Create)?;
+            let inverse = rel
+                .inverse_field
+                .clone()
+                .unwrap_or_else(|| "parent_id".into());
+            let mut out = Vec::new();
+            for mut row in rows.clone() {
+                reject_client_tenant(&row)?;
+                strip_computed_fields(&child.fields, &mut row);
+                if let Some(obj) = row.as_object_mut() {
+                    obj.insert(inverse.clone(), json!(parent_id.to_string()));
+                }
+                apply_op_defaults(&child, &mut row, &self.auth);
+                validate_record(child.business_fields(), &row, false)?;
+                apply_entity_rules(child.business_fields(), &child.validation, &row, false)?;
+                self.check_cross_entity_refs(&child, &row).await?;
+                let created = self
+                    .repo
+                    .insert_tx(self.tx, &child, &self.auth, row)
+                    .await?;
+                out.push(created);
+            }
+            stored.insert(field.name.clone(), out);
+        }
+        Ok(stored)
     }
 
     pub async fn create_many(&mut self, entity: &str, rows: Vec<Value>) -> QefroResult<Vec<Value>> {
@@ -1335,6 +1404,47 @@ fn enforce_row_policy(
             }
         }
         None => {}
+    }
+    Ok(())
+}
+
+fn extract_child_payloads(
+    entity: &qefro_core::EntityDef,
+    data: &mut Value,
+) -> HashMap<String, Vec<Value>> {
+    let mut out = HashMap::new();
+    let Some(obj) = data.as_object_mut() else {
+        return out;
+    };
+    for field in &entity.fields {
+        if !field.is_child_table() {
+            continue;
+        }
+        if let Some(Value::Array(rows)) = obj.remove(&field.name) {
+            out.insert(field.name.clone(), rows);
+        }
+    }
+    out
+}
+
+fn apply_initial_workflow_status(
+    workflows: &WorkflowRegistry,
+    entity: &str,
+    data: &mut Value,
+) -> QefroResult<()> {
+    let Some(wf) = workflows.for_entity(entity) else {
+        return Ok(());
+    };
+    if let Some(status) = data.get(&wf.field).and_then(|v| v.as_str()) {
+        if !status.is_empty() && status != wf.initial {
+            return Err(QefroError::bad_request(format!(
+                "field '{}' is workflow-managed; use a transition",
+                wf.field
+            )));
+        }
+    }
+    if let Some(obj) = data.as_object_mut() {
+        obj.insert(wf.field.clone(), json!(wf.initial));
     }
     Ok(())
 }

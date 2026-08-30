@@ -376,6 +376,7 @@ pub fn task_dashboard() -> DashboardDef {
 pub fn platform_entities() -> Vec<EntityDef> {
     let mut entities = crate::identity::identity_entities();
     entities.push(task_entity());
+    entities.extend(crate::accounting::accounting_entities());
     entities
 }
 
@@ -455,5 +456,8 @@ mod tests {
         assert!(names.contains(&"Person".into()));
         assert!(names.contains(&"User".into()));
         assert!(names.contains(&TASK_ENTITY.into()));
+        assert!(names.contains(&"Account".into()));
+        assert!(names.contains(&"JournalEntry".into()));
+        assert!(names.contains(&"FiscalPeriod".into()));
     }
 }

@@ -361,6 +361,18 @@ pub fn strip_computed_fields(fields: &[FieldDef], data: &mut Value) {
     }
 }
 
+/// Drop client-supplied server-managed values. Operations may still write them.
+pub fn strip_server_managed_fields(fields: &[FieldDef], data: &mut Value) {
+    let Some(obj) = data.as_object_mut() else {
+        return;
+    };
+    for field in fields {
+        if field.server_managed {
+            obj.remove(&field.name);
+        }
+    }
+}
+
 /// Whether a field is readonly for this record (static, computed, or `readonly_when`).
 pub fn field_is_readonly(field: &FieldDef, record: &Value) -> bool {
     if field.computed || field.ui.readonly {

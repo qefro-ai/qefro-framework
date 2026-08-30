@@ -13,8 +13,8 @@ pub mod studio;
 
 pub use qefro_core::{operation, OperationDef};
 pub use qefro_db::{
-    JobHandler, JobQueue, JobRegistry, LogNotificationJob, NoopOperationHandler, OperationCtx,
-    OperationHandler, OperationRegistry,
+    post_ledger, JobHandler, JobQueue, JobRegistry, LogNotificationJob, NoopOperationHandler,
+    OperationCtx, OperationHandler, OperationRegistry,
 };
 pub use runtime::{Config, InstalledApp, QefroRuntime};
 pub use state::AppState;

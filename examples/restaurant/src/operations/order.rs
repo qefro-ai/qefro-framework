@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use qefro_api::{OperationCtx, OperationHandler};
-use qefro_core::QefroResult;
+use qefro_api::{post_ledger, OperationCtx, OperationHandler};
+use qefro_core::{LedgerPosting, QefroResult, ACCOUNT_KEY_CASH, ACCOUNT_KEY_SALES};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -145,9 +145,11 @@ impl OperationHandler for CompleteOrder {
         let id = ctx.record_id()?;
         let number = ctx
             .record
-            .get("number")
+            .get("doc_no")
             .and_then(|v| v.as_str())
-            .unwrap_or("order");
+            .or_else(|| ctx.record.get("number").and_then(|v| v.as_str()))
+            .unwrap_or("order")
+            .to_string();
         let task = ctx
             .create(
                 "Task",
@@ -167,6 +169,19 @@ impl OperationHandler for CompleteOrder {
                 "task_id": task.get("id"),
             }),
         );
+        let amount = ctx.record.get("grand_total").cloned().unwrap_or(json!(0));
+        let date = ctx
+            .record
+            .get("order_date")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let mut posting = LedgerPosting::new(format!("Order {number}"), number)
+            .debit(ACCOUNT_KEY_CASH, amount.clone())
+            .credit(ACCOUNT_KEY_SALES, amount);
+        if let Some(date) = date {
+            posting = posting.date(date);
+        }
+        let _ = post_ledger(ctx, posting).await?;
         ctx.set_message("Order completed");
         Ok(ctx.record.clone())
     }

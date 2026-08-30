@@ -1175,6 +1175,19 @@ pub struct TenantBusinessConfig {
     pub date_format: String,
     #[serde(default = "default_number_format")]
     pub number_format: String,
+    /// Chart of accounts codes for this tenant. Never hardcoded account IDs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cash_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receivable_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payable_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sales_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cogs_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory_account: Option<String>,
 }
 
 fn default_currency() -> String {
@@ -1201,6 +1214,12 @@ impl Default for TenantBusinessConfig {
             locale: default_locale(),
             date_format: default_date_format(),
             number_format: default_number_format(),
+            cash_account: None,
+            receivable_account: None,
+            payable_account: None,
+            sales_account: None,
+            cogs_account: None,
+            inventory_account: None,
         }
     }
 }

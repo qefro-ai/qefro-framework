@@ -11,10 +11,10 @@ use qefro_auth::AuthService;
 use qefro_core::{
     apply_entity_rules, canonicalize_datetime, existence_rules, is_person_link_field,
     person_backref_field, reject_readonly_writes, sanitize_html, strip_computed_fields,
-    strip_secrets, validate_party, validate_record, EntityRegistry, FieldError, FieldType,
-    HookRegistry, OpContext, OperationDef, QefroError, QefroResult, PERSON_ENTITY,
-    PERSON_LINK_FIELD, RELATED_ID_FIELD, RELATED_TYPE_FIELD, STATUS_CANCELLED, STATUS_COMPLETED,
-    USER_ENTITY,
+    strip_secrets, strip_server_managed_fields, validate_party, validate_record, EntityRegistry,
+    FieldError, FieldType, HookRegistry, OpContext, OperationDef, QefroError, QefroResult,
+    PERSON_ENTITY, PERSON_LINK_FIELD, RELATED_ID_FIELD, RELATED_TYPE_FIELD, STATUS_CANCELLED,
+    STATUS_COMPLETED, USER_ENTITY,
 };
 use qefro_events::{DomainEvent, InProcessEventBus};
 use qefro_permissions::{Action, PermissionRegistry};
@@ -321,10 +321,16 @@ impl EntityService {
         strip_computed(&entity, &mut data);
         prepare_record(&entity, &mut data, ctx);
         if let Some(wf) = self.workflows.for_entity(&entity.name) {
-            if data.get(&wf.field).and_then(|v| v.as_str()).is_none() {
-                if let Some(obj) = data.as_object_mut() {
-                    obj.insert(wf.field.clone(), json!(wf.initial));
+            if let Some(status) = data.get(&wf.field).and_then(|v| v.as_str()) {
+                if !status.is_empty() && status != wf.initial {
+                    return Err(QefroError::bad_request(format!(
+                        "field '{}' is workflow-managed; use a transition",
+                        wf.field
+                    )));
                 }
+            }
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert(wf.field.clone(), json!(wf.initial));
             }
         }
         validate_record(entity.business_fields(), &data, false)?;
@@ -1929,7 +1935,11 @@ impl EntityService {
                 }
             }
         }
-        let parsed = crate::reports::filters_from_json(&entity, &filters)?;
+        let mut combined = report.filters.clone();
+        if let Some(items) = filters.as_array() {
+            combined.extend(items.iter().cloned());
+        }
+        let parsed = crate::reports::filters_from_json(&entity, &Value::Array(combined))?;
         let mut query = qefro_search::Query::default();
         query.filters = parsed;
         query.page_size = 500;
@@ -2745,6 +2755,7 @@ fn extract_children(
 
 fn strip_computed(entity: &qefro_core::EntityDef, data: &mut Value) {
     strip_computed_fields(&entity.fields, data);
+    strip_server_managed_fields(&entity.fields, data);
 }
 
 fn coerce_numeric_json(entity: &qefro_core::EntityDef, record: &mut Value) {

@@ -704,11 +704,16 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
 fn cmd_validate(app: &str) -> Result<()> {
     let runtime = runtime_for(app)?;
     let mut registry = qefro_core::EntityRegistry::new();
-    for identity in qefro_core::platform_entities() {
-        let _ = registry.register(identity);
-    }
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
+    for identity in qefro_core::platform_entities() {
+        if let Err(e) = identity.validate_idents() {
+            errors.push(format!("{}: {e}", identity.name));
+        }
+        if let Err(e) = registry.register(identity) {
+            errors.push(e.to_string());
+        }
+    }
     for entity in runtime.entities() {
         if let Err(e) = entity.validate_idents() {
             errors.push(format!("{}: {e}", entity.name));

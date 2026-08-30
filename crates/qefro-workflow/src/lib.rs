@@ -446,15 +446,16 @@ mod tests {
 
 /// Framework Task workflow. Status is workflow-managed; clients must transition.
 pub fn task_workflow() -> WorkflowDef {
-    use qefro_core::{STATUS_CANCELLED, STATUS_COMPLETED, STATUS_IN_PROGRESS, STATUS_OPEN, TASK_ENTITY, TASK_WORKFLOW};
+    use qefro_core::{
+        STATUS_CANCELLED, STATUS_COMPLETED, STATUS_IN_PROGRESS, STATUS_OPEN, TASK_ENTITY,
+        TASK_WORKFLOW,
+    };
 
     WorkflowDef::new(TASK_WORKFLOW, TASK_ENTITY, STATUS_OPEN)
         .state(StateDef::new(STATUS_IN_PROGRESS))
         .state(StateDef::new(STATUS_COMPLETED).terminal())
         .state(StateDef::new(STATUS_CANCELLED).terminal())
-        .transition(
-            TransitionDef::new("start", STATUS_OPEN, STATUS_IN_PROGRESS).label("Start"),
-        )
+        .transition(TransitionDef::new("start", STATUS_OPEN, STATUS_IN_PROGRESS).label("Start"))
         .transition(
             TransitionDef::new("completed", STATUS_OPEN, STATUS_COMPLETED).label("Complete"),
         )
@@ -473,10 +474,59 @@ pub fn task_workflow() -> WorkflowDef {
         )
 }
 
+/// Journal Draft → Posted → Reversed. Status is never PATCHed.
+pub fn journal_workflow() -> WorkflowDef {
+    use qefro_core::{
+        JOURNAL_DRAFT, JOURNAL_ENTITY, JOURNAL_POSTED, JOURNAL_REVERSED, JOURNAL_WORKFLOW,
+    };
+
+    WorkflowDef::new(JOURNAL_WORKFLOW, JOURNAL_ENTITY, JOURNAL_DRAFT)
+        .state(StateDef::new(JOURNAL_POSTED))
+        .state(StateDef::new(JOURNAL_REVERSED).terminal())
+        .transition(
+            TransitionDef::new("post", JOURNAL_DRAFT, JOURNAL_POSTED)
+                .label("Post")
+                .roles(&["Staff", "Manager"])
+                .confirm("Post this journal to the ledger? Posted entries cannot be edited."),
+        )
+        .transition(
+            TransitionDef::new("reverse", JOURNAL_POSTED, JOURNAL_REVERSED)
+                .label("Reverse")
+                .roles(&["Manager"])
+                .confirm("Reverse this posted journal? A reversing entry will be created."),
+        )
+}
+
+/// Fiscal period Open → Closed. Reopen is Admin-only via the operation roles.
+pub fn period_workflow() -> WorkflowDef {
+    use qefro_core::{PERIOD_CLOSED, PERIOD_ENTITY, PERIOD_OPEN, PERIOD_WORKFLOW};
+
+    WorkflowDef::new(PERIOD_WORKFLOW, PERIOD_ENTITY, PERIOD_OPEN)
+        .state(StateDef::new(PERIOD_CLOSED))
+        .transition(
+            TransitionDef::new("close", PERIOD_OPEN, PERIOD_CLOSED)
+                .label("Close period")
+                .roles(&["Manager"])
+                .confirm("Close this period? New journals cannot be posted into it."),
+        )
+        .transition(
+            TransitionDef::new("reopen", PERIOD_CLOSED, PERIOD_OPEN)
+                .label("Reopen period")
+                .roles(&["Admin"])
+                .confirm("Reopen this closed period?"),
+        )
+}
+
 #[cfg(test)]
 mod task_workflow_tests {
     #[test]
     fn task_workflow_is_structurally_valid() {
         crate::task_workflow().validate().unwrap();
+    }
+
+    #[test]
+    fn accounting_workflows_are_structurally_valid() {
+        crate::journal_workflow().validate().unwrap();
+        crate::period_workflow().validate().unwrap();
     }
 }
