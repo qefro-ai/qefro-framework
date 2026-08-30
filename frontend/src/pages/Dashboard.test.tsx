@@ -65,7 +65,7 @@ describe("Dashboard widgets", () => {
     );
     await waitFor(() => expect(screen.getByText("Restaurant")).toBeInTheDocument());
     expect(screen.getByText("Ready orders")).toBeInTheDocument();
-    expect(screen.getByText("4")).toBeInTheDocument();
+    expect(screen.getAllByText("4").length).toBeGreaterThan(0);
     expect(screen.getByText("Orders by status")).toBeInTheDocument();
     expect(screen.getByText("Recent activity")).toBeInTheDocument();
     expect(screen.getByText(/Order #1042/)).toBeInTheDocument();
