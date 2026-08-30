@@ -190,16 +190,23 @@ impl EntityRegistry {
         Ok(())
     }
 
-    /// Attach Person ← business-entity inverses for every `person_id` field.
+    /// Attach Person / Organization inverses for `person_id` and `organization_id`.
     pub fn wire_identity_inverses(&mut self) -> QefroResult<()> {
-        let Ok(person) = self.get(crate::identity::PERSON_ENTITY) else {
-            return Ok(());
-        };
-        let mut person = (*person).clone();
         let listed = self.list();
-        let backrefs = crate::identity::person_backrefs(listed.iter().map(|e| e.as_ref()));
-        if crate::identity::apply_person_backrefs(&mut person, backrefs) {
-            self.replace(person)?;
+        if let Ok(person) = self.get(crate::identity::PERSON_ENTITY) {
+            let mut person = (*person).clone();
+            let backrefs = crate::identity::person_backrefs(listed.iter().map(|e| e.as_ref()));
+            if crate::identity::apply_person_backrefs(&mut person, backrefs) {
+                self.replace(person)?;
+            }
+        }
+        if let Ok(org) = self.get(crate::identity::ORGANIZATION_ENTITY) {
+            let mut org = (*org).clone();
+            let backrefs =
+                crate::identity::organization_backrefs(listed.iter().map(|e| e.as_ref()));
+            if crate::identity::apply_organization_backrefs(&mut org, backrefs) {
+                self.replace(org)?;
+            }
         }
         Ok(())
     }

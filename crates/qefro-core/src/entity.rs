@@ -60,6 +60,12 @@ pub struct EntityDef {
     /// When true, the generic UI and attachment API are enabled for records.
     #[serde(default)]
     pub attachments: bool,
+    /// Business-facing timeline. Default on so every entity can show Activity.
+    #[serde(default = "default_true")]
+    pub activity: bool,
+    /// Comments stored as Activity records. Default on for standalone documents.
+    #[serde(default = "default_true")]
+    pub comments: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<EntityActionDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -108,6 +114,8 @@ impl EntityDef {
             child_tables: Vec::new(),
             singleton: false,
             attachments: false,
+            activity: true,
+            comments: true,
             actions: Vec::new(),
             links: Vec::new(),
             public_form: None,
@@ -131,6 +139,22 @@ impl EntityDef {
 
     pub fn attachments(mut self) -> Self {
         self.attachments = true;
+        self
+    }
+
+    pub fn no_activity(mut self) -> Self {
+        self.activity = false;
+        self
+    }
+
+    pub fn no_comments(mut self) -> Self {
+        self.comments = false;
+        self
+    }
+
+    /// Optional Person / Organization identity fields (`party_type`, `person_id`, `organization_id`).
+    pub fn with_party(mut self) -> Self {
+        crate::identity::apply_party_fields(&mut self);
         self
     }
 
@@ -564,6 +588,15 @@ impl EntityDef {
             naming: self.naming.clone(),
             singleton: self.singleton,
             attachments: self.attachments,
+            capabilities: Some(crate::ui::EntityCapabilities {
+                workflow: self.workflow.is_some(),
+                activity: self.activity,
+                comments: self.comments,
+                attachments: self.attachments,
+                audit: self.audit,
+                relations: self.fields.iter().any(|f| f.relation.is_some()),
+                actions: !self.actions.is_empty() || self.workflow.is_some(),
+            }),
             actions: self.actions.clone(),
             links: self.links.clone(),
             public_form: self.public_form.clone(),

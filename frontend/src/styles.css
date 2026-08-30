@@ -460,10 +460,27 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .doc-header { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; align-items: flex-start; }
 .doc-meta { display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; }
-.timeline { list-style: none; margin: 0; padding: 0.5rem 0.85rem 1rem; display: grid; gap: 0.85rem; }
-.timeline-item { display: grid; grid-template-columns: 7rem 1fr; gap: 0.75rem; }
-.timeline-time { color: var(--muted); font-size: 0.85rem; }
+.timeline { list-style: none; margin: 0; padding: 0.5rem 0.85rem 1rem; display: grid; gap: 1.1rem; }
+.timeline > li > ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.85rem; }
+.timeline-day-label { margin: 0 0 0.45rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.timeline-item { display: grid; grid-template-columns: 5.5rem 1fr; gap: 0.75rem; }
+.timeline-time { color: var(--muted); font-size: 0.85rem; display: flex; gap: 0.4rem; align-items: center; }
+.timeline-dot { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: var(--accent); display: inline-block; flex-shrink: 0; }
 .timeline-title { font-weight: 650; }
+.timeline-created .timeline-dot { background: #16a34a; }
+.timeline-workflow .timeline-dot { background: #2563eb; }
+.timeline-comment .timeline-dot { background: #7c3aed; }
+.timeline-attachment .timeline-dot { background: #ea580c; }
+.comment-form { display: grid; gap: 0.5rem; margin-bottom: 1rem; }
+.comment-form textarea { width: 100%; }
+.row-actions { white-space: nowrap; width: 1%; }
+.action-bar.is-compact { gap: 0.35rem; flex-wrap: wrap; }
+.dialog { background: var(--panel); color: var(--ink); border-radius: 12px; padding: 1.1rem 1.2rem; max-width: 24rem; width: min(24rem, 92vw); box-shadow: var(--shadow); }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
+.notify-heading { margin: 0 0 0.4rem; font-size: 0.95rem; }
+.attachment-size { margin-left: auto; font-size: 0.8rem; }
+.audit-table { font-size: 0.85rem; }
+.audit-table .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; }
 .dropzone { border: 1px dashed var(--line); border-radius: 10px; padding: 1rem; text-align: center; margin: 0.5rem 0; }
 .dropzone.is-drag { border-color: var(--accent); background: var(--accent-soft); }
 .attachment-list { list-style: none; margin: 0; padding: 0; }

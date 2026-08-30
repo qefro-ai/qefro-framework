@@ -31,6 +31,12 @@ pub struct OpContext {
     pub currency: String,
     #[serde(default)]
     pub plan: Option<String>,
+    /// Display name of the acting user. Never agent chain-of-thought.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_name: Option<String>,
+    /// `user` (default), `agent`, `worker`, or `system`.
+    #[serde(default)]
+    pub source: String,
 }
 
 impl OpContext {
@@ -49,6 +55,8 @@ impl OpContext {
             locale: "en-US".into(),
             currency: "USD".into(),
             plan: None,
+            actor_name: None,
+            source: String::new(),
         }
     }
 
@@ -77,6 +85,25 @@ impl OpContext {
         self.roles
             .iter()
             .any(|r| r.eq_ignore_ascii_case(ROLE_WORKER))
+            || self.source.eq_ignore_ascii_case("worker")
+    }
+
+    pub fn is_agent(&self) -> bool {
+        self.source.eq_ignore_ascii_case("agent")
+    }
+
+    /// Business-facing actor label for Activity. Audit still stores user_id.
+    pub fn activity_actor_name(&self) -> String {
+        if self.is_agent() {
+            return "Qefro Agent".into();
+        }
+        if self.is_worker() || self.source.eq_ignore_ascii_case("system") {
+            return "System".into();
+        }
+        self.actor_name
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "User".into())
     }
 
     pub fn has_role(&self, role: &str) -> bool {
@@ -138,5 +165,14 @@ mod tests {
         ctx.features.insert("agent_actions".into(), false);
         assert!(!ctx.feature_allowed("agent_actions"));
         assert!(ctx.feature_allowed("unknown"));
+    }
+
+    #[test]
+    fn activity_actor_labels_agents_without_reasoning() {
+        let mut ctx = OpContext::new(Uuid::new_v4(), Uuid::new_v4(), vec!["Staff".into()]);
+        ctx.actor_name = Some("Ahmed".into());
+        assert_eq!(ctx.activity_actor_name(), "Ahmed");
+        ctx.source = "agent".into();
+        assert_eq!(ctx.activity_actor_name(), "Qefro Agent");
     }
 }

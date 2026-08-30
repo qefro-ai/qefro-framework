@@ -84,6 +84,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/{slug}/{id}/preview", get(print_document))
         .route("/api/v1/{slug}/{id}/workflow", get(get_workflow_state))
         .route("/api/v1/{slug}/{id}/transition", post(transition_entity))
+        .route("/api/v1/{slug}/{id}/activity", get(list_activity))
+        .route("/api/v1/{slug}/{id}/comments", post(add_comment))
         .route("/api/v1/{slug}/{id}/actions/{name}", post(execute_action))
         .route("/api/v1/{slug}/{id}/actions", get(list_record_actions))
         .route(
@@ -379,6 +381,9 @@ async fn list_audit(
     Auth(ctx): Auth,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, ApiError> {
+    if !ctx.is_admin() {
+        return Err(QefroError::forbidden("audit log requires Admin").into());
+    }
     let entity = params.get("entity").map(|s| s.as_str());
     let entity_id = params
         .get("entity_id")
@@ -392,7 +397,8 @@ async fn list_audit(
         .audit()
         .list(&ctx, entity, entity_id, limit)
         .await?;
-    Ok(Json(json!({ "items": rows })))
+    let items: Vec<Value> = rows.iter().map(|r| r.to_client_json()).collect();
+    Ok(Json(json!({ "items": items })))
 }
 
 async fn list_tools(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
@@ -427,6 +433,8 @@ async fn invoke_tool(
             return Err(QefroError::not_found(format!("tool '{name}' not found")).into());
         }
     }
+    let mut ctx = ctx;
+    ctx.source = "agent".into();
     let result = state
         .tools
         .invoke(
@@ -572,6 +580,43 @@ async fn transition_entity(
             .entities
             .transition(&ctx, &slug, id, &body.transition)
             .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+struct CommentBody {
+    message: String,
+}
+
+async fn list_activity(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path((slug, id)): Path<(String, Uuid)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    reject_reserved(&slug)?;
+    let limit = params
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+    let items = state.entities.list_activity(&ctx, &slug, id, limit).await?;
+    Ok(Json(json!({ "items": items })))
+}
+
+async fn add_comment(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path((slug, id)): Path<(String, Uuid)>,
+    Json(body): Json<CommentBody>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    reject_reserved(&slug)?;
+    let row = state
+        .entities
+        .add_comment(&ctx, &slug, id, &body.message)
+        .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(row).unwrap_or(json!({}))),
     ))
 }
 

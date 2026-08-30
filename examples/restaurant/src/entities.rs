@@ -21,6 +21,7 @@ pub fn customer() -> EntityDef {
                 .section("Identity")
                 .filterable(),
         )
+        .with_party()
         .field(
             FieldDef::string("name")
                 .required()

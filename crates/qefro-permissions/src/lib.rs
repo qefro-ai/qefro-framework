@@ -94,9 +94,15 @@ pub fn identity_grants() -> Vec<PermissionGrant> {
     vec![
         PermissionGrant::read(ROLE_MANAGER, "User"),
         PermissionGrant::crud(ROLE_MANAGER, "Person"),
+        PermissionGrant::crud(ROLE_MANAGER, "Organization"),
         PermissionGrant::new(
             ROLE_STAFF,
             "Person",
+            vec![Action::Create, Action::Read, Action::Update, Action::List],
+        ),
+        PermissionGrant::new(
+            ROLE_STAFF,
+            "Organization",
             vec![Action::Create, Action::Read, Action::Update, Action::List],
         ),
     ]

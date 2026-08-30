@@ -135,7 +135,11 @@ impl TenantService {
         Ok(config)
     }
 
-    pub async fn upsert_config(&self, tenant_id: Uuid, config: &TenantConfig) -> QefroResult<TenantConfig> {
+    pub async fn upsert_config(
+        &self,
+        tenant_id: Uuid,
+        config: &TenantConfig,
+    ) -> QefroResult<TenantConfig> {
         sqlx::query(
             r#"
             INSERT INTO tenant_settings (

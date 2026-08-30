@@ -151,10 +151,29 @@ mod tests {
         assert!(!person.required);
         assert!(person.nullable);
         assert_eq!(person.ui.section.as_deref(), Some("Identity"));
-        assert!(person.ui.help.as_ref().is_some_and(|h| h.contains("Walk-ins")));
+        assert!(person
+            .ui
+            .help
+            .as_ref()
+            .is_some_and(|h| h.contains("Walk-ins")));
         assert!(person.ui.list);
-        assert_eq!(customer.fields[0].name, "person_id");
-        let columns = &customer.views.as_ref().unwrap().list.as_ref().unwrap().columns;
+        assert!(customer.get_field("party_type").is_some());
+        assert!(customer.get_field("organization_id").is_some());
+        let identity = customer
+            .fields
+            .iter()
+            .take(4)
+            .map(|f| f.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(identity.contains(&"person_id"));
+        let columns = &customer
+            .views
+            .as_ref()
+            .unwrap()
+            .list
+            .as_ref()
+            .unwrap()
+            .columns;
         assert!(columns.iter().any(|c| c.field == "person_id"));
         assert!(columns.iter().any(|c| c.field == "name"));
     }

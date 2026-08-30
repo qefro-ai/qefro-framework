@@ -9,7 +9,7 @@ framework_version = ">=1.0,<2.0"
 inventory = ">=1.0,<2.0"
 ```
 
-`core`, `qefro-framework`, `qefro`, and `framework` are the current runtime, not separately installed apps. They are checked against `FRAMEWORK_VERSION` (this crate, 1.1.x).
+`core`, `qefro-framework`, `qefro`, and `framework` are the current runtime, not separately installed apps. They are checked against `FRAMEWORK_VERSION` (this crate, 1.2.x).
 
 Other names must already be **installed** (not merely catalogued) at a matching version. Missing or incompatible versions fail `qefro app validate` and `qefro app install`.
 

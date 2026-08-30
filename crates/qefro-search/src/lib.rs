@@ -5,19 +5,57 @@ use serde_json::Value;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Filter {
-    Eq { field: String, value: Value },
-    Neq { field: String, value: Value },
-    Contains { field: String, value: String },
-    StartsWith { field: String, value: String },
-    Gt { field: String, value: Value },
-    Gte { field: String, value: Value },
-    Lt { field: String, value: Value },
-    Lte { field: String, value: Value },
-    Between { field: String, from: Value, to: Value },
-    In { field: String, values: Vec<Value> },
-    NotIn { field: String, values: Vec<Value> },
-    Empty { field: String },
-    NotEmpty { field: String },
+    Eq {
+        field: String,
+        value: Value,
+    },
+    Neq {
+        field: String,
+        value: Value,
+    },
+    Contains {
+        field: String,
+        value: String,
+    },
+    StartsWith {
+        field: String,
+        value: String,
+    },
+    Gt {
+        field: String,
+        value: Value,
+    },
+    Gte {
+        field: String,
+        value: Value,
+    },
+    Lt {
+        field: String,
+        value: Value,
+    },
+    Lte {
+        field: String,
+        value: Value,
+    },
+    Between {
+        field: String,
+        from: Value,
+        to: Value,
+    },
+    In {
+        field: String,
+        values: Vec<Value>,
+    },
+    NotIn {
+        field: String,
+        values: Vec<Value>,
+    },
+    Empty {
+        field: String,
+    },
+    NotEmpty {
+        field: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

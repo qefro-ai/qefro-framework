@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type UiEntity } from "../api";
+import { relativeTime } from "../format";
 import { useRealtime } from "../realtime";
+import { useTenantTheme } from "../metadata/context";
 
 type Note = {
   id?: string;
@@ -10,6 +12,7 @@ type Note = {
   read_at?: string | null;
   entity?: string;
   record_id?: string;
+  created_at?: string;
 };
 
 export default function NotificationBell({ entities = [] }: { entities?: UiEntity[] }) {
@@ -17,6 +20,7 @@ export default function NotificationBell({ entities = [] }: { entities?: UiEntit
   const [unread, setUnread] = useState(0);
   const [items, setItems] = useState<Note[]>([]);
   const navigate = useNavigate();
+  const theme = useTenantTheme();
 
   async function load() {
     const data = await api.notifications();
@@ -45,6 +49,7 @@ export default function NotificationBell({ entities = [] }: { entities?: UiEntit
       </button>
       {open ? (
         <div className="notify-panel" role="dialog" aria-label="Notifications">
+          <h3 className="notify-heading">Notifications</h3>
           {items.length === 0 ? <p className="muted">No notifications.</p> : null}
           <ul>
             {items.map((n) => (
@@ -61,6 +66,7 @@ export default function NotificationBell({ entities = [] }: { entities?: UiEntit
                 >
                   <strong>{n.title || "Notification"}</strong>
                   {n.body ? <div className="muted">{n.body}</div> : null}
+                  {n.created_at ? <div className="muted">{relativeTime(n.created_at, theme.locale)}</div> : null}
                 </button>
               </li>
             ))}

@@ -30,6 +30,8 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const [error, setError] = useState("");
   const [activity, setActivity] = useState<Array<Record<string, unknown>>>([]);
   const [attachments, setAttachments] = useState<Array<Record<string, unknown>>>([]);
+  const [comment, setComment] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
   const theme = useTenantTheme();
   const [tab, setTab] = useState("overview");
   const { setRecord } = useBreadcrumbRecord();
@@ -41,7 +43,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
     if (meta) {
       setRecord(recordCrumb(meta, entities, data));
       api
-        .audit(meta.entity, id)
+        .activity(slug, id)
         .then((d) => setActivity(d.items ?? []))
         .catch(() => setActivity([]));
       if (meta.attachments) {
@@ -103,22 +105,26 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const statusField = meta.fields.find((f) => f.widget === "status" || f.name === "status");
   const status = workflow?.current ?? row.status;
 
+  const caps = meta.capabilities;
+  const showActivity = caps?.activity !== false;
+  const showComments = caps?.comments !== false;
+  const showAttachments = Boolean(meta.attachments || caps?.attachments);
+  const showRelated = links.length > 0 || Object.keys(related).length > 0;
+
   const chrome = [
-    { id: "overview", label: "Overview" },
+    { id: "overview", label: "Details" },
     ...childTables.map((c) => ({ id: `items:${c.name}`, label: c.label })),
-    { id: "related", label: "Related", hide: links.length === 0 && Object.keys(related).length === 0 },
-    { id: "files", label: "Attachments", hide: !meta.attachments },
-    { id: "activity", label: "Activity" },
+    { id: "related", label: "Related records", hide: !showRelated },
+    { id: "files", label: "Attachments", hide: !showAttachments },
+    { id: "activity", label: "Activity", hide: !showActivity },
   ].filter((t) => !t.hide);
 
-  async function runAction(name: string, action?: EntityAction) {
+  async function runAction(name: string) {
     if (!slug || !id) return;
-    const message = action?.confirmation_message || `${action?.label || name}?`;
-    if ((action?.requires_confirmation || action?.confirmation_message) && !confirm(message)) return;
     try {
-      const next = await api.action(slug, id, name);
-      setRow(next);
+      await api.action(slug, id, name);
       setError("");
+      await load();
     } catch (e) {
       setError(friendlyError(e));
     }
@@ -150,12 +156,13 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
             <ActionBar
               actions={actions}
               transitions={workflow?.transitions}
-              onAction={(name, action) => void runAction(name, action)}
+              onAction={(name) => void runAction(name)}
               onTransition={async (name) => {
                 try {
                   const next = await api.transition(slug, id, name);
                   setRow(next);
                   setError("");
+                  await load();
                 } catch (e) {
                   setError(friendlyError(e));
                 }
@@ -225,22 +232,63 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
       {tab === "related" ? (
         <RelatedPanel links={links} related={related} id={id} meta={meta} entities={entities} />
       ) : null}
-      {tab === "files" && meta.attachments ? (
+      {tab === "files" && showAttachments ? (
         <div className="panel" style={{ padding: "0.85rem" }}>
           <h3>Attachments</h3>
           <AttachmentsPanel slug={slug} id={id} items={attachments} onChanged={() => void load()} />
         </div>
       ) : null}
-      {tab === "activity" ? (
+      {tab === "activity" && showActivity ? (
         <div className="panel" style={{ padding: "0.85rem" }}>
           <h3>Activity</h3>
+          {showComments ? (
+            <form
+              className="comment-form"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!comment.trim() || commentBusy) return;
+                setCommentBusy(true);
+                try {
+                  await api.addComment(slug, id, comment.trim());
+                  setComment("");
+                  await load();
+                } catch (err) {
+                  setError(friendlyError(err));
+                } finally {
+                  setCommentBusy(false);
+                }
+              }}
+            >
+              <label>
+                Add comment
+                <textarea
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  rows={3}
+                  placeholder="Write a comment…"
+                />
+              </label>
+              <button type="submit" disabled={commentBusy || !comment.trim()}>
+                Comment
+              </button>
+            </form>
+          ) : null}
           <Timeline
             items={activity.map((item) => ({
               id: String(item.id ?? ""),
-              action: String(item.action ?? item.event ?? "updated"),
-              actor: item.actor ? String(item.actor) : item.user ? String(item.user) : undefined,
+              action: String(item.activity_type ?? item.action ?? item.event ?? "updated"),
+              activity_type: item.activity_type ? String(item.activity_type) : undefined,
+              actor: item.actor_name
+                ? String(item.actor_name)
+                : item.actor
+                  ? String(item.actor)
+                  : item.user
+                    ? String(item.user)
+                    : undefined,
+              actor_name: item.actor_name ? String(item.actor_name) : undefined,
               created_at: item.created_at,
-              summary: String(item.summary ?? item.action ?? item.event ?? "updated"),
+              summary: String(item.message ?? item.summary ?? item.action ?? item.event ?? "updated"),
+              message: item.message ? String(item.message) : undefined,
             }))}
             timezone={theme.timezone}
             locale={theme.locale}

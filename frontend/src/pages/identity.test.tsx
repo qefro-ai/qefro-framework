@@ -159,6 +159,7 @@ describe("identity generic UI", () => {
       },
     });
     vi.spyOn(api, "audit").mockResolvedValue({ items: [] });
+    vi.spyOn(api, "activity").mockResolvedValue({ items: [] });
     const shop: UiEntity = {
       entity: "ShopCustomer",
       label: "Shop customer",
@@ -182,7 +183,7 @@ describe("identity generic UI", () => {
     };
     wrap(<EntityDetail entities={[personEntity, shop]} />, "/people/p1");
     await waitFor(() => expect(screen.getByText(/Person Ada/)).toBeInTheDocument());
-    await userEvent.click(screen.getByRole("tab", { name: "Related" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Related records" }));
     expect(screen.getByText("Shop customers")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Walk-in Guest" })).toHaveAttribute(
       "href",
@@ -215,6 +216,7 @@ describe("identity generic UI", () => {
       },
     });
     vi.spyOn(api, "audit").mockResolvedValue({ items: [] });
+    vi.spyOn(api, "activity").mockResolvedValue({ items: [] });
     const customer: UiEntity = {
       entity: "Customer",
       label: "Customer",

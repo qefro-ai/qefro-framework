@@ -67,6 +67,8 @@ PATCH  /{slug}/{id}
 DELETE /{slug}/{id}
 GET    /{slug}/{id}/workflow
 POST   /{slug}/{id}/transition   { "transition": "confirm" }
+GET    /{slug}/{id}/activity
+POST   /{slug}/{id}/comments     { "message": "…" }
 GET    /{slug}/{id}/actions
 POST   /{slug}/{id}/actions/{name}
 ```
@@ -83,6 +85,7 @@ See [sdk.md](sdk.md) for the browser client.
 | GET | `/search?q=` |
 | GET | `/notifications` |
 | POST | `/notifications/{id}/read` |
+| GET | `/audit` (Admin) |
 | GET | `/webhooks`, `/webhooks/{name}/deliveries` |
 | POST | `/webhooks/{name}/test` |
 | GET/POST | `/{slug}/{id}/attachments` |

@@ -10,7 +10,7 @@ Header (from the record + metadata):
 - primary **Edit** plus `_actions` (fallback: workflow transitions)
 - More: print, PDF, delete
 
-Tabs are generic: Overview, each child table, Related (`_links` / `_related`), Attachments, Activity.
+Tabs are generic: **Details**, each child table, **Related records** (`_links` / `_related`), **Attachments**, **Activity**. Sections render only when the matching capability or data exists.
 
 Related links open the generic list with a filter on the relation field. The frontend does not join tables.
 

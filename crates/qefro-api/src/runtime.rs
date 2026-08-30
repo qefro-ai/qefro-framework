@@ -255,6 +255,7 @@ impl QefroRuntime {
             "POST /api/v1/users".into(),
             "GET/PATCH /api/v1/users/:id".into(),
             "GET/POST /api/v1/people".into(),
+            "GET/POST /api/v1/organizations".into(),
             "GET /api/v1/meta/ui".into(),
             "GET /api/v1/meta/dashboards".into(),
             "GET /api/v1/meta/reports".into(),
@@ -471,8 +472,11 @@ impl QefroRuntime {
             .iter()
             .flat_map(|a| a.module.default_nav_slugs())
             .collect();
-        let mut default_hidden_entities: Vec<String> =
-            vec![qefro_core::PERSON_SLUG.into(), qefro_core::USER_SLUG.into()];
+        let mut default_hidden_entities: Vec<String> = vec![
+            qefro_core::PERSON_SLUG.into(),
+            qefro_core::ORGANIZATION_SLUG.into(),
+            qefro_core::USER_SLUG.into(),
+        ];
         default_hidden_entities.extend(
             self.apps
                 .iter()

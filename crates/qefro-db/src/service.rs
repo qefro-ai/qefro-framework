@@ -10,8 +10,9 @@ use chrono::Utc;
 use qefro_auth::AuthService;
 use qefro_core::{
     canonicalize_datetime, is_person_link_field, person_backref_field, sanitize_html,
-    strip_secrets, validate_record, EntityRegistry, FieldError, FieldType, HookRegistry, OpContext,
-    OperationDef, QefroError, QefroResult, PERSON_ENTITY, PERSON_LINK_FIELD, USER_ENTITY,
+    strip_secrets, validate_party, validate_record, EntityRegistry, FieldError, FieldType,
+    HookRegistry, OpContext, OperationDef, QefroError, QefroResult, PERSON_ENTITY,
+    PERSON_LINK_FIELD, USER_ENTITY,
 };
 use qefro_events::{DomainEvent, EventBus, InProcessEventBus};
 use qefro_permissions::{Action, PermissionRegistry};
@@ -34,6 +35,7 @@ pub struct EntityService {
     hooks: Arc<HookRegistry>,
     events: InProcessEventBus,
     audit: Arc<AuditLogger>,
+    pub(crate) activity: Arc<crate::activity::ActivityStore>,
     operations: Arc<OperationRegistry>,
     jobs: Arc<JobQueue>,
     job_handlers: Arc<JobRegistry>,
@@ -54,6 +56,7 @@ impl EntityService {
             jobs: Arc::new(JobQueue::new(pool.clone())),
             repo: Arc::new(EntityRepository::new(pool.clone())),
             audit: Arc::new(AuditLogger::new(pool.clone())),
+            activity: Arc::new(crate::activity::ActivityStore::new(pool.clone())),
             outbox: Outbox::new(pool),
             registry,
             permissions,
@@ -150,6 +153,7 @@ impl EntityService {
             &self.operations,
             &self.jobs,
             &self.audit,
+            &self.activity,
             ctx,
             &entity.name,
             id,
@@ -269,6 +273,7 @@ impl EntityService {
         }
         reject_client_tenant(&data)?;
         self.reject_forbidden_writes(ctx, &entity, &data)?;
+        validate_party(&entity, &data, None)?;
         if entity.name == PERSON_ENTITY {
             self.link_person_account(ctx, &mut data).await?;
         }
@@ -338,14 +343,6 @@ impl EntityService {
                 return Err(e);
             }
         };
-        let event = DomainEvent::new(
-            format!("{}.created", snake(&entity.name)),
-            entity.name.clone(),
-            id,
-            ctx.tenant_id,
-            created.clone(),
-        )
-        .with_user(ctx.user_id);
         if entity.audit {
             if let Err(e) = self
                 .audit
@@ -364,7 +361,31 @@ impl EntityService {
                 return Err(e);
             }
         }
-        if let Err(e) = Outbox::enqueue_tx(&mut tx, &event).await {
+        if let Err(e) = self
+            .write_activity_tx(
+                &mut tx,
+                ctx,
+                &entity,
+                id,
+                crate::activity::TYPE_CREATED,
+                None,
+                Some(&created),
+                None,
+            )
+            .await
+        {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+        let events = mutation_events(
+            &entity.name,
+            id,
+            ctx,
+            created.clone(),
+            "created",
+            "entity.created",
+        );
+        if let Err(e) = Outbox::enqueue_many_tx(&mut tx, &events).await {
             let _ = tx.rollback().await;
             return Err(e);
         }
@@ -397,6 +418,7 @@ impl EntityService {
         canonicalize_values(&entity, &mut patch, ctx);
         sanitize_values(&entity, &mut patch);
         let current = self.repo.get(&entity, ctx, id).await?;
+        validate_party(&entity, &patch, Some(&current))?;
         if let Some(doc) = &entity.document {
             let status = current.get("status").and_then(|v| v.as_str()).unwrap_or("");
             if doc.is_locked(status) {
@@ -453,14 +475,6 @@ impl EntityService {
                 return Err(e);
             }
         };
-        let event = DomainEvent::new(
-            format!("{}.updated", snake(&entity.name)),
-            entity.name.clone(),
-            id,
-            ctx.tenant_id,
-            updated.clone(),
-        )
-        .with_user(ctx.user_id);
         if entity.audit {
             if let Err(e) = self
                 .audit
@@ -479,7 +493,31 @@ impl EntityService {
                 return Err(e);
             }
         }
-        if let Err(e) = Outbox::enqueue_tx(&mut tx, &event).await {
+        if let Err(e) = self
+            .write_activity_tx(
+                &mut tx,
+                ctx,
+                &entity,
+                id,
+                crate::activity::TYPE_UPDATED,
+                Some(&current),
+                Some(&updated),
+                None,
+            )
+            .await
+        {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+        let events = mutation_events(
+            &entity.name,
+            id,
+            ctx,
+            updated.clone(),
+            "updated",
+            "entity.updated",
+        );
+        if let Err(e) = Outbox::enqueue_many_tx(&mut tx, &events).await {
             let _ = tx.rollback().await;
             return Err(e);
         }
@@ -516,14 +554,6 @@ impl EntityService {
                 return Err(e);
             }
         };
-        let event = DomainEvent::new(
-            format!("{}.deleted", snake(&entity.name)),
-            entity.name.clone(),
-            id,
-            ctx.tenant_id,
-            deleted.clone(),
-        )
-        .with_user(ctx.user_id);
         if entity.audit {
             if let Err(e) = self
                 .audit
@@ -542,7 +572,31 @@ impl EntityService {
                 return Err(e);
             }
         }
-        if let Err(e) = Outbox::enqueue_tx(&mut tx, &event).await {
+        if let Err(e) = self
+            .write_activity_tx(
+                &mut tx,
+                ctx,
+                &entity,
+                id,
+                crate::activity::TYPE_DELETED,
+                Some(&current),
+                None,
+                None,
+            )
+            .await
+        {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+        let events = mutation_events(
+            &entity.name,
+            id,
+            ctx,
+            deleted.clone(),
+            "deleted",
+            "entity.deleted",
+        );
+        if let Err(e) = Outbox::enqueue_many_tx(&mut tx, &events).await {
             let _ = tx.rollback().await;
             return Err(e);
         }
@@ -581,13 +635,27 @@ impl EntityService {
         let from = current
             .get(&wf.field)
             .and_then(|v| v.as_str())
-            .unwrap_or(&wf.initial);
-        let to = self.workflows.apply(&entity.name, from, transition, ctx)?;
-        let patch = json!({ wf.field.clone(): to });
-        let updated = self.repo.update(&entity, ctx, id, patch).await?;
+            .unwrap_or(&wf.initial)
+            .to_string();
+        let to = self.workflows.apply(&entity.name, &from, transition, ctx)?;
+        let patch = json!({ wf.field.clone(): to.clone() });
+        let mut tx = self
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        let updated = match self.repo.update_tx(&mut tx, &entity, ctx, id, patch).await {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
+        };
         if entity.audit {
-            self.audit
-                .record(
+            if let Err(e) = self
+                .audit
+                .record_tx(
+                    &mut tx,
                     ctx,
                     &entity.name,
                     Some(id),
@@ -595,20 +663,51 @@ impl EntityService {
                     Some(&current),
                     Some(&updated),
                 )
-                .await?;
+                .await
+            {
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
         }
-        self.events
-            .publish(
-                DomainEvent::new(
-                    format!("{}.{transition}", snake(&entity.name)),
-                    entity.name.clone(),
-                    id,
-                    ctx.tenant_id,
-                    updated.clone(),
-                )
-                .with_user(ctx.user_id),
+        if let Err(e) = self
+            .write_activity_tx(
+                &mut tx,
+                ctx,
+                &entity,
+                id,
+                crate::activity::TYPE_WORKFLOW,
+                Some(&current),
+                Some(&updated),
+                Some(json!({ "from": from, "to": to, "transition": transition })),
             )
-            .await?;
+            .await
+        {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+        let mut events = mutation_events(
+            &entity.name,
+            id,
+            ctx,
+            updated.clone(),
+            transition,
+            "workflow.transitioned",
+        );
+        if let Some(evt) = events.get_mut(1) {
+            if let Some(obj) = evt.payload.as_object_mut() {
+                obj.insert("from".into(), json!(from));
+                obj.insert("to".into(), json!(to));
+                obj.insert("transition".into(), json!(transition));
+            }
+        }
+        if let Err(e) = Outbox::enqueue_many_tx(&mut tx, &events).await {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+        tx.commit()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        let _ = self.dispatch_outbox().await;
         Ok(self.present(ctx, &entity, updated).await?)
     }
 
@@ -912,6 +1011,35 @@ impl EntityService {
         }
     }
 
+    async fn write_activity_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        id: Uuid,
+        activity_type: &str,
+        old: Option<&Value>,
+        new: Option<&Value>,
+        extra: Option<Value>,
+    ) -> QefroResult<()> {
+        if !entity.activity {
+            return Ok(());
+        }
+        let activity_type = if activity_type == crate::activity::TYPE_UPDATED
+            && crate::activity::assignment_changed(old, new)
+        {
+            crate::activity::TYPE_ASSIGNMENT
+        } else {
+            activity_type
+        };
+        let (message, metadata) =
+            crate::activity::mutation_activity(&entity.label, activity_type, old, new, extra);
+        self.activity
+            .record_tx(tx, ctx, &entity.name, id, activity_type, &message, metadata)
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_singleton(&self, ctx: &OpContext, entity_name: &str) -> QefroResult<Value> {
         let entity = self.registry.get(entity_name)?;
         self.ensure_app(ctx, &entity)?;
@@ -979,11 +1107,22 @@ impl EntityService {
             .into_iter()
             .map(|t| {
                 json!({
+                    "id": t.name,
                     "name": t.name,
                     "label": if t.label.is_empty() { t.name.clone() } else { t.label.clone() },
                     "from": t.from,
+                    "from_state": t.from,
                     "to": t.to,
+                    "to_state": t.to,
                     "allowed_roles": t.allowed_roles,
+                    "permissions": t.allowed_roles,
+                    "requires_confirmation": t.confirmation,
+                    "confirmation": t.confirmation,
+                    "confirmation_message": if t.confirmation_message.is_empty() {
+                        Value::Null
+                    } else {
+                        json!(t.confirmation_message)
+                    },
                 })
             })
             .collect();
@@ -1802,6 +1941,26 @@ impl EntityService {
                 .record(ctx, USER_ENTITY, Some(id), "create", None, Some(&created))
                 .await?;
         }
+        if entity.activity {
+            let (message, metadata) = crate::activity::mutation_activity(
+                &entity.label,
+                crate::activity::TYPE_CREATED,
+                None,
+                Some(&created),
+                None,
+            );
+            let _ = self
+                .activity
+                .record(
+                    ctx,
+                    USER_ENTITY,
+                    id,
+                    crate::activity::TYPE_CREATED,
+                    &message,
+                    metadata,
+                )
+                .await;
+        }
         self.present(ctx, &entity, created).await
     }
 
@@ -1822,6 +1981,45 @@ impl EntityService {
                     Some(&updated),
                 )
                 .await?;
+        }
+        if entity.activity {
+            let (message, metadata) = crate::activity::mutation_activity(
+                &entity.label,
+                crate::activity::TYPE_UPDATED,
+                Some(&current),
+                Some(&updated),
+                None,
+            );
+            let _ = self
+                .activity
+                .record(
+                    ctx,
+                    USER_ENTITY,
+                    id,
+                    crate::activity::TYPE_UPDATED,
+                    &message,
+                    metadata,
+                )
+                .await;
+        }
+        let was_enabled = current
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let now_enabled = updated
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        if was_enabled && !now_enabled {
+            let mut event = DomainEvent::new(
+                "user.disabled",
+                USER_ENTITY.to_string(),
+                id,
+                ctx.tenant_id,
+                json!({ "enabled": false }),
+            );
+            event.user_id = Some(ctx.user_id);
+            let _ = self.events.publish(event).await;
         }
         self.present(ctx, &entity, updated).await
     }
@@ -2094,6 +2292,40 @@ fn reject_client_tenant(data: &Value) -> QefroResult<()> {
 
 fn snake(name: &str) -> String {
     qefro_core::ident::snake_case(name)
+}
+
+fn mutation_events(
+    entity: &str,
+    id: Uuid,
+    ctx: &OpContext,
+    mut payload: Value,
+    specific: &str,
+    framework: &str,
+) -> Vec<DomainEvent> {
+    strip_secrets(None, &mut payload);
+    let specific_name = if specific.contains('.') {
+        specific.to_string()
+    } else {
+        format!("{}.{}", snake(entity), specific)
+    };
+    vec![
+        DomainEvent::new(
+            specific_name,
+            entity.to_string(),
+            id,
+            ctx.tenant_id,
+            payload.clone(),
+        )
+        .with_user(ctx.user_id),
+        DomainEvent::new(
+            framework.to_string(),
+            entity.to_string(),
+            id,
+            ctx.tenant_id,
+            payload,
+        )
+        .with_user(ctx.user_id),
+    ]
 }
 
 trait WithUser {

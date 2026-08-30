@@ -1,6 +1,8 @@
 use qefro_core::{BlobStore, QefroError, QefroResult};
+use qefro_events::EventBus;
 use qefro_permissions::Action;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -27,6 +29,7 @@ pub struct Attachment {
     pub filename: String,
     pub mime_type: String,
     pub size: i64,
+    #[serde(skip_serializing)]
     pub storage_key: String,
     pub uploaded_by: Option<Uuid>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -167,6 +170,17 @@ impl EntityService {
         store.list(ctx.tenant_id, &entity.name, record_id).await
     }
 
+    pub async fn list_record_attachments(
+        &self,
+        ctx: &qefro_core::OpContext,
+        entity_name: &str,
+        record_id: Uuid,
+    ) -> QefroResult<Vec<Attachment>> {
+        let store = AttachmentStore::new(self.pool().clone());
+        self.list_attachments(ctx, entity_name, record_id, &store)
+            .await
+    }
+
     pub async fn create_attachment(
         &self,
         ctx: &qefro_core::OpContext,
@@ -202,6 +216,35 @@ impl EntityService {
             created_at: chrono::Utc::now(),
         };
         store.insert(&row).await?;
+        if entity.activity {
+            let (message, metadata) = crate::activity::mutation_activity(
+                &entity.label,
+                crate::activity::TYPE_SYSTEM,
+                None,
+                None,
+                Some(json!({ "message": format!("{} attached", filename), "filename": filename })),
+            );
+            let _ = self
+                .activity
+                .record(
+                    ctx,
+                    &entity.name,
+                    record_id,
+                    crate::activity::TYPE_SYSTEM,
+                    &message,
+                    metadata,
+                )
+                .await;
+        }
+        let mut event = qefro_events::DomainEvent::new(
+            "attachment.created",
+            entity.name.clone(),
+            record_id,
+            ctx.tenant_id,
+            json!({ "filename": filename, "attachment_id": id }),
+        );
+        event.user_id = Some(ctx.user_id);
+        let _ = self.events().publish(event).await;
         Ok(row)
     }
 

@@ -81,6 +81,25 @@ pub trait EntityOps: Send + Sync {
         name: &str,
         input: Value,
     ) -> impl std::future::Future<Output = QefroResult<Value>> + Send;
+    fn list_activity(
+        &self,
+        ctx: &OpContext,
+        entity: &str,
+        id: uuid::Uuid,
+    ) -> impl std::future::Future<Output = QefroResult<Value>> + Send;
+    fn add_comment(
+        &self,
+        ctx: &OpContext,
+        entity: &str,
+        id: uuid::Uuid,
+        message: &str,
+    ) -> impl std::future::Future<Output = QefroResult<Value>> + Send;
+    fn list_attachments(
+        &self,
+        ctx: &OpContext,
+        entity: &str,
+        id: uuid::Uuid,
+    ) -> impl std::future::Future<Output = QefroResult<Value>> + Send;
 }
 
 #[derive(Clone, Default)]
@@ -200,6 +219,60 @@ impl ToolRegistry {
                 required_roles: Vec::new(),
             });
         }
+        if entity.activity {
+            self.register(ToolDef {
+                name: format!("list_activity_{snake}"),
+                description: format!("List activity for a {}", entity.label),
+                entity: entity.name.clone(),
+                operation: "list_activity".into(),
+                action: Action::Read.as_str().into(),
+                input_schema: json!({
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": { "id": { "type": "string", "format": "uuid" } }
+                }),
+                required_permissions: vec![format!("{}.read", snake)],
+                permissions: vec![format!("{}:read", entity.name)],
+                required_roles: Vec::new(),
+            });
+        }
+        if entity.comments {
+            self.register(ToolDef {
+                name: format!("comment_{snake}"),
+                description: format!("Add a comment on a {}", entity.label),
+                entity: entity.name.clone(),
+                operation: "comment".into(),
+                action: Action::Read.as_str().into(),
+                input_schema: json!({
+                    "type": "object",
+                    "required": ["id", "message"],
+                    "properties": {
+                        "id": { "type": "string", "format": "uuid" },
+                        "message": { "type": "string" }
+                    }
+                }),
+                required_permissions: vec![format!("{}.read", snake)],
+                permissions: vec![format!("{}:read", entity.name)],
+                required_roles: Vec::new(),
+            });
+        }
+        if entity.attachments {
+            self.register(ToolDef {
+                name: format!("list_attachments_{snake}"),
+                description: format!("List attachments for a {}", entity.label),
+                entity: entity.name.clone(),
+                operation: "list_attachments".into(),
+                action: Action::Read.as_str().into(),
+                input_schema: json!({
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": { "id": { "type": "string", "format": "uuid" } }
+                }),
+                required_permissions: vec![format!("{}.read", snake)],
+                permissions: vec![format!("{}:read", entity.name)],
+                required_roles: Vec::new(),
+            });
+        }
     }
 
     pub fn register_operation(&mut self, def: &qefro_core::OperationDef) {
@@ -217,9 +290,7 @@ impl ToolRegistry {
                     .entry("id")
                     .or_insert_with(|| json!({ "type": "string", "format": "uuid" }));
             }
-            let required = obj
-                .entry("required")
-                .or_insert_with(|| json!([]));
+            let required = obj.entry("required").or_insert_with(|| json!([]));
             if let Some(arr) = required.as_array_mut() {
                 if !arr.iter().any(|v| v.as_str() == Some("id")) {
                     arr.insert(0, json!("id"));
@@ -295,9 +366,7 @@ impl ToolRegistry {
             && !ctx.is_admin()
             && !tool.required_roles.iter().any(|r| ctx.has_role(r))
         {
-            return Err(QefroError::forbidden(
-                "not allowed to invoke this tool",
-            ));
+            return Err(QefroError::forbidden("not allowed to invoke this tool"));
         }
         let action = parse_action(&tool.action)?;
         let _ = action;
@@ -333,6 +402,22 @@ impl ToolRegistry {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| QefroError::bad_request("transition is required"))?;
                 ops.transition(ctx, &tool.entity, id, transition).await?
+            }
+            "list_activity" => {
+                let id = require_id(&input)?;
+                ops.list_activity(ctx, &tool.entity, id).await?
+            }
+            "comment" => {
+                let id = require_id(&input)?;
+                let message = input
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| QefroError::bad_request("message is required"))?;
+                ops.add_comment(ctx, &tool.entity, id, message).await?
+            }
+            "list_attachments" => {
+                let id = require_id(&input)?;
+                ops.list_attachments(ctx, &tool.entity, id).await?
             }
             _ if name.starts_with("transition_") => {
                 let id = require_id(&input)?;
@@ -478,10 +563,7 @@ fn json_schema_for_field(field: &qefro_core::FieldDef) -> Value {
     if let Value::Object(map) = &mut schema {
         map.insert("x-widget".into(), json!(field.ui.widget));
         if field.ui.widget == "currency" {
-            map.insert(
-                "x-currency".into(),
-                json!(field.ui.widget_options.currency),
-            );
+            map.insert("x-currency".into(), json!(field.ui.widget_options.currency));
         }
         if let Some(rel) = &field.relation {
             map.insert("x-relation".into(), json!(rel.target_entity));
@@ -507,23 +589,20 @@ mod tests {
         assert_eq!(tools.get("create_reservation").unwrap().operation, "create");
         assert!(tools.get("find_reservations").is_ok());
         assert!(tools.get("transition_reservation").is_ok());
+        assert!(tools.get("list_activity_reservation").is_ok());
+        assert!(tools.get("comment_reservation").is_ok());
         assert!(tools.get("drop_database").is_err());
-        assert!(
-            tools
-                .get("create_reservation")
-                .unwrap()
-                .required_permissions
-                .contains(&"reservation.create".into())
-        );
+        assert!(tools
+            .get("create_reservation")
+            .unwrap()
+            .required_permissions
+            .contains(&"reservation.create".into()));
     }
 
     #[test]
     fn agent_crate_has_no_sqlx_dependency() {
         let manifest = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
-        let deps = manifest
-            .split("[dependencies]")
-            .nth(1)
-            .unwrap_or(manifest);
+        let deps = manifest.split("[dependencies]").nth(1).unwrap_or(manifest);
         assert!(
             !deps.lines().any(|l| l.trim_start().starts_with("sqlx")),
             "qefro-agent [dependencies] must not include sqlx"
@@ -556,9 +635,7 @@ mod tests {
         let mut perms = PermissionRegistry::new();
         perms.grant(PermissionGrant::crud("Staff", "Reservation"));
         let mut tools = ToolRegistry::new();
-        tools.register_operation(
-            &OperationDef::new("explode", "Reservation").roles(&["Manager"]),
-        );
+        tools.register_operation(&OperationDef::new("explode", "Reservation").roles(&["Manager"]));
         let staff = OpContext::new(uuid::Uuid::nil(), uuid::Uuid::nil(), vec!["Staff".into()]);
         let names: Vec<_> = tools
             .available(&staff, &perms)
@@ -579,6 +656,8 @@ mod tests {
         let tool = tools.get("confirm_reservation").unwrap();
         assert_eq!(tool.entity, "Reservation");
         assert_eq!(tool.operation, "confirm");
-        assert!(tool.required_permissions.contains(&"reservation.confirm".into()));
+        assert!(tool
+            .required_permissions
+            .contains(&"reservation.confirm".into()));
     }
 }

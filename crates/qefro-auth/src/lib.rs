@@ -1,8 +1,8 @@
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use qefro_core::{OpContext, QefroError, QefroResult, USER_ENTITY};
-use serde_json::{json, Value};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -261,9 +261,15 @@ impl AuthService {
         if !enabled {
             return Err(QefroError::unauthorized("session expired"));
         }
+        let actor_name: Option<String> = sqlx::query_scalar("SELECT name FROM users WHERE id = $1")
+            .bind(claims.sub)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
 
         let mut ctx = OpContext::new(claims.tid, claims.sub, membership.roles);
         ctx.session_id = Some(claims.sid);
+        ctx.actor_name = actor_name;
         Ok(ctx)
     }
 
@@ -420,7 +426,9 @@ impl AuthService {
         }
         let roles = parse_roles(data.get("roles"));
         if roles.iter().any(|r| r.eq_ignore_ascii_case("Admin")) && !ctx.is_admin() {
-            return Err(QefroError::forbidden("only Admin can assign the Admin role"));
+            return Err(QefroError::forbidden(
+                "only Admin can assign the Admin role",
+            ));
         }
         let user = self
             .create_user_in_tenant(ctx.tenant_id, name, email, password, roles)
@@ -480,15 +488,13 @@ impl AuthService {
                 return Err(QefroError::forbidden("only Admin can assign roles"));
             }
             let roles = parse_roles(patch.get("roles"));
-            sqlx::query(
-                "UPDATE user_tenants SET roles = $1 WHERE user_id = $2 AND tenant_id = $3",
-            )
-            .bind(&roles)
-            .bind(id)
-            .bind(ctx.tenant_id)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| QefroError::database(e.to_string()))?;
+            sqlx::query("UPDATE user_tenants SET roles = $1 WHERE user_id = $2 AND tenant_id = $3")
+                .bind(&roles)
+                .bind(id)
+                .bind(ctx.tenant_id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| QefroError::database(e.to_string()))?;
         }
         if let Some(enabled) = patch.get("enabled").and_then(|v| v.as_bool()) {
             self.set_membership_enabled(ctx, id, enabled).await?;
@@ -669,7 +675,10 @@ fn parse_roles(value: Option<&Value>) -> Vec<String> {
     };
     let mut unique = Vec::new();
     for role in roles.drain(..) {
-        if unique.iter().all(|existing: &String| !existing.eq_ignore_ascii_case(&role)) {
+        if unique
+            .iter()
+            .all(|existing: &String| !existing.eq_ignore_ascii_case(&role))
+        {
             unique.push(role);
         }
     }

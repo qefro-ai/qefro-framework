@@ -37,6 +37,11 @@ pub struct TransitionDef {
     pub allowed_roles: Vec<String>,
     #[serde(default)]
     pub label: String,
+    /// When true the generic UI asks before invoking the transition endpoint.
+    #[serde(default)]
+    pub confirmation: bool,
+    #[serde(default)]
+    pub confirmation_message: String,
 }
 
 impl TransitionDef {
@@ -48,6 +53,8 @@ impl TransitionDef {
             from: from.into(),
             to: to.into(),
             allowed_roles: Vec::new(),
+            confirmation: false,
+            confirmation_message: String::new(),
         }
     }
 
@@ -58,6 +65,12 @@ impl TransitionDef {
 
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = label.into();
+        self
+    }
+
+    pub fn confirm(mut self, message: impl Into<String>) -> Self {
+        self.confirmation = true;
+        self.confirmation_message = message.into();
         self
     }
 }
@@ -362,9 +375,8 @@ mod tests {
         reg.register(reservation_wf());
         let mut next = reservation_wf();
         next = next.state(StateDef::new("Waitlisted"));
-        next.transitions.push(
-            TransitionDef::new("waitlist", "Pending", "Waitlisted").roles(&["Manager"]),
-        );
+        next.transitions
+            .push(TransitionDef::new("waitlist", "Pending", "Waitlisted").roles(&["Manager"]));
         next.validate().unwrap();
         reg.overlay_put(next);
         let manager = OpContext::new(Uuid::nil(), Uuid::nil(), vec!["Manager".into()]);

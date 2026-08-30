@@ -28,7 +28,7 @@ Payload:
 }
 ```
 
-CRUD still emits `{entity}.created|updated|deleted`. Operations emit the name configured on `OperationDef::event` and any extra events the handler queued with `ctx.emit`.
+CRUD still emits `{entity}.created|updated|deleted` plus framework names `entity.created` / `entity.updated` / `entity.deleted`. Workflow emits `workflow.transitioned`. Comments and attachments emit `comment.created` and `attachment.created`. Operations emit the name configured on `OperationDef::event` and any extra events the handler queued with `ctx.emit`.
 
 Events are published **after COMMIT**. A rolled-back operation does not emit a successful business event.
 

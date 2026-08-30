@@ -1,4 +1,4 @@
-import { datePresetRange, relativeTime, statusTone } from "./format";
+import { datePresetRange, fileSize, relativeTime, statusTone } from "./format";
 
 describe("format", () => {
   it("computes date presets without sql", () => {
@@ -13,5 +13,10 @@ describe("format", () => {
 
   it("formats relative time", () => {
     expect(relativeTime(new Date().toISOString())).toMatch(/second|now/i);
+  });
+
+  it("formats attachment sizes", () => {
+    expect(fileSize(245 * 1024)).toMatch(/245 KB/);
+    expect(fileSize(1.2 * 1024 * 1024)).toMatch(/1\.2 MB/);
   });
 });

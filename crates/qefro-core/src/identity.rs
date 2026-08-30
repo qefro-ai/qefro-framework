@@ -1,10 +1,10 @@
-//! Qefro 1.1 identity foundation.
+//! Qefro identity foundation (1.1 Person, 1.2 Organization / party).
 //!
-//! Person (canonical identity once linked) ≠ User (optional login) ≠
-//! Customer / Patient / Employee (business). These are not a second auth
-//! runtime — User maps onto the existing `users` / `user_tenants` / sessions
-//! tables. Business entities link with nullable `person_id`; Person is then
-//! the source of truth for name / email / phone. Customer columns stay.
+//! Person (canonical individual once linked) ≠ User (optional login) ≠
+//! Organization (canonical company once linked) ≠ Customer / Patient /
+//! Employee / Supplier (business). These are not a second auth runtime —
+//! User maps onto the existing `users` / `user_tenants` / sessions tables.
+//! Business entities link with nullable `person_id` and/or `organization_id`.
 
 use crate::entity::EntityDef;
 use crate::field::{FieldDef, RelationKind};
@@ -17,11 +17,20 @@ use serde_json::{json, Value};
 
 pub const USER_ENTITY: &str = "User";
 pub const PERSON_ENTITY: &str = "Person";
+pub const ORGANIZATION_ENTITY: &str = "Organization";
 pub const USER_SLUG: &str = "users";
 pub const PERSON_SLUG: &str = "people";
+pub const ORGANIZATION_SLUG: &str = "organizations";
 /// Conventional FK from a business entity (Customer, Patient, Employee, …)
 /// to Person. When set, Person is the source of truth for name / email / phone.
 pub const PERSON_LINK_FIELD: &str = "person_id";
+/// Conventional FK from a business entity (Customer, Supplier, Partner, …)
+/// to Organization.
+pub const ORGANIZATION_LINK_FIELD: &str = "organization_id";
+/// Optional discriminator when a business entity may reference Person or Organization.
+pub const PARTY_TYPE_FIELD: &str = "party_type";
+pub const PARTY_TYPE_PERSON: &str = "Person";
+pub const PARTY_TYPE_ORGANIZATION: &str = "Organization";
 
 /// Column / JSON keys that must never leave EntityService, meta payloads, or UI.
 pub const SECRET_KEYS: &[&str] = &[
@@ -34,6 +43,10 @@ pub const SECRET_KEYS: &[&str] = &[
     "secret",
     "jwt",
     "session_token",
+    "session_hash",
+    "reset_token",
+    "private_key",
+    "storage_credentials",
 ];
 
 pub fn is_secret_key(name: &str) -> bool {
@@ -41,18 +54,67 @@ pub fn is_secret_key(name: &str) -> bool {
 }
 
 /// Drop password hashes, tokens, and fields marked `secret` on an entity.
+/// Recurses into nested objects so audit / activity / expansions stay clean.
 pub fn strip_secrets(entity: Option<&EntityDef>, record: &mut Value) {
-    let Some(obj) = record.as_object_mut() else {
-        return;
-    };
-    obj.retain(|k, _| !is_secret_key(k) && !k.starts_with("password"));
-    if let Some(entity) = entity {
-        for field in &entity.fields {
-            if field.secret {
-                obj.remove(&field.name);
+    match record {
+        Value::Object(obj) => {
+            obj.retain(|k, _| !is_secret_key(k) && !k.starts_with("password"));
+            if let Some(entity) = entity {
+                for field in &entity.fields {
+                    if field.secret {
+                        obj.remove(&field.name);
+                    }
+                }
+            }
+            for value in obj.values_mut() {
+                strip_secrets(None, value);
             }
         }
+        Value::Array(items) => {
+            for item in items {
+                strip_secrets(entity, item);
+            }
+        }
+        _ => {}
     }
+}
+
+/// Changed fields for audit / activity. Secrets are omitted.
+pub fn field_changes(old: Option<&Value>, new: Option<&Value>) -> Value {
+    let mut changes = serde_json::Map::new();
+    let old_obj = old.and_then(|v| v.as_object());
+    let new_obj = new.and_then(|v| v.as_object());
+    let mut names = std::collections::BTreeSet::new();
+    if let Some(obj) = old_obj {
+        names.extend(obj.keys().cloned());
+    }
+    if let Some(obj) = new_obj {
+        names.extend(obj.keys().cloned());
+    }
+    for name in names {
+        if is_secret_key(&name)
+            || name.starts_with("password")
+            || name.starts_with('_')
+            || name == "updated_at"
+            || name == "created_at"
+            || name == "tenant_id"
+        {
+            continue;
+        }
+        let before = old_obj
+            .and_then(|o| o.get(&name))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let after = new_obj
+            .and_then(|o| o.get(&name))
+            .cloned()
+            .unwrap_or(Value::Null);
+        if before == after {
+            continue;
+        }
+        changes.insert(name, json!({ "old": before, "new": after }));
+    }
+    Value::Object(changes)
 }
 
 pub fn contains_secret_key(record: &Value) -> bool {
@@ -112,6 +174,188 @@ pub fn person_backrefs<'a>(entities: impl IntoIterator<Item = &'a EntityDef>) ->
         fields.push(field);
     }
     fields
+}
+
+pub fn is_organization_link_field(field: &FieldDef) -> bool {
+    if field.name != ORGANIZATION_LINK_FIELD {
+        return false;
+    }
+    matches!(
+        field.relation.as_ref(),
+        Some(rel)
+            if rel.kind == RelationKind::ManyToOne && rel.target_entity == ORGANIZATION_ENTITY
+    )
+}
+
+pub fn organization_backref_name(entity: &EntityDef) -> String {
+    person_backref_name(entity)
+}
+
+pub fn organization_backref_field(entity: &EntityDef) -> FieldDef {
+    FieldDef::one_to_many(
+        organization_backref_name(entity),
+        &entity.name,
+        ORGANIZATION_LINK_FIELD,
+    )
+    .label(entity.label_plural.clone())
+}
+
+pub fn organization_backrefs<'a>(
+    entities: impl IntoIterator<Item = &'a EntityDef>,
+) -> Vec<FieldDef> {
+    let mut fields = Vec::new();
+    let mut used = std::collections::HashSet::new();
+    for entity in entities {
+        if entity.name == ORGANIZATION_ENTITY {
+            continue;
+        }
+        if !entity.fields.iter().any(is_organization_link_field) {
+            continue;
+        }
+        let mut field = organization_backref_field(entity);
+        if !used.insert(field.name.clone()) {
+            field = FieldDef::one_to_many(
+                format!("{}_{}", field.name, snake_case(&entity.name)),
+                &entity.name,
+                ORGANIZATION_LINK_FIELD,
+            )
+            .label(entity.label_plural.clone());
+            used.insert(field.name.clone());
+        }
+        fields.push(field);
+    }
+    fields
+}
+
+pub fn apply_organization_backrefs(organization: &mut EntityDef, backrefs: Vec<FieldDef>) -> bool {
+    apply_person_backrefs(organization, backrefs)
+}
+
+pub fn party_type_field() -> FieldDef {
+    FieldDef::enum_(
+        PARTY_TYPE_FIELD,
+        vec![PARTY_TYPE_PERSON, PARTY_TYPE_ORGANIZATION],
+    )
+    .nullable()
+    .label("Party type")
+    .help("Person for an individual, Organization for a company. Leave empty for unlinked records.")
+    .section("Identity")
+    .filterable()
+}
+
+pub fn person_party_field() -> FieldDef {
+    FieldDef::many_to_one(PERSON_LINK_FIELD, PERSON_ENTITY)
+        .nullable()
+        .label("Person")
+        .help("Optional. Set when this record is a known individual. When linked, Person is the source of truth for name, email, and phone.")
+        .section("Identity")
+        .filterable()
+}
+
+pub fn organization_party_field() -> FieldDef {
+    FieldDef::many_to_one(ORGANIZATION_LINK_FIELD, ORGANIZATION_ENTITY)
+        .nullable()
+        .label("Organization")
+        .help("Optional. Set when this record is a company, supplier, or partner.")
+        .section("Identity")
+        .filterable()
+}
+
+/// Add optional `party_type`, `person_id`, and `organization_id` if missing.
+pub fn apply_party_fields(entity: &mut EntityDef) -> bool {
+    let mut added = false;
+    if !entity.fields.iter().any(|f| f.name == PARTY_TYPE_FIELD) {
+        let idx = entity
+            .fields
+            .iter()
+            .position(|f| f.name == PERSON_LINK_FIELD || f.name == ORGANIZATION_LINK_FIELD)
+            .unwrap_or(0);
+        entity.fields.insert(idx, party_type_field());
+        added = true;
+    }
+    if !entity.fields.iter().any(is_person_link_field) {
+        let idx = entity
+            .fields
+            .iter()
+            .position(|f| f.name == PARTY_TYPE_FIELD)
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        entity.fields.insert(idx, person_party_field());
+        added = true;
+    }
+    if !entity.fields.iter().any(is_organization_link_field) {
+        let idx = entity
+            .fields
+            .iter()
+            .position(|f| f.name == PERSON_LINK_FIELD)
+            .map(|i| i + 1)
+            .or_else(|| {
+                entity
+                    .fields
+                    .iter()
+                    .position(|f| f.name == PARTY_TYPE_FIELD)
+                    .map(|i| i + 1)
+            })
+            .unwrap_or(entity.fields.len());
+        entity.fields.insert(idx, organization_party_field());
+        added = true;
+    }
+    if added {
+        entity.normalize();
+    }
+    added
+}
+
+fn json_id(value: Option<&Value>) -> Option<String> {
+    match value {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) if s.is_empty() => None,
+        Some(v) => Some(v.to_string()),
+    }
+}
+
+/// Validate Person / Organization party fields. Partial updates pass `current`.
+pub fn validate_party(
+    entity: &EntityDef,
+    data: &Value,
+    current: Option<&Value>,
+) -> crate::error::QefroResult<()> {
+    let has_party = entity.fields.iter().any(|f| f.name == PARTY_TYPE_FIELD)
+        || entity.fields.iter().any(is_person_link_field)
+        || entity.fields.iter().any(is_organization_link_field);
+    if !has_party {
+        return Ok(());
+    }
+    let merged = |field: &str| -> Option<&Value> {
+        data.get(field)
+            .or_else(|| current.and_then(|c| c.get(field)))
+    };
+    let party_type = merged(PARTY_TYPE_FIELD).and_then(|v| v.as_str());
+    let person = json_id(merged(PERSON_LINK_FIELD));
+    let org = json_id(merged(ORGANIZATION_LINK_FIELD));
+    if person.is_some() && org.is_some() {
+        return Err(crate::error::QefroError::bad_request(
+            "set person_id or organization_id, not both",
+        ));
+    }
+    if let Some(kind) = party_type {
+        if kind != PARTY_TYPE_PERSON && kind != PARTY_TYPE_ORGANIZATION {
+            return Err(crate::error::QefroError::bad_request(
+                "party_type must be Person or Organization",
+            ));
+        }
+        if kind == PARTY_TYPE_PERSON && org.is_some() {
+            return Err(crate::error::QefroError::bad_request(
+                "organization_id is not valid when party_type is Person",
+            ));
+        }
+        if kind == PARTY_TYPE_ORGANIZATION && person.is_some() {
+            return Err(crate::error::QefroError::bad_request(
+                "person_id is not valid when party_type is Organization",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Attach discovered `person_id` inverses onto Person. Returns whether fields were added.
@@ -251,6 +495,125 @@ pub fn person_entity() -> EntityDef {
         .build()
 }
 
+/// Tenant-scoped company / legal entity. Not a User and not a Customer/Supplier
+/// business record. Business entities optionally link via `organization_id`.
+pub fn organization_entity() -> EntityDef {
+    EntityDef::new(ORGANIZATION_ENTITY)
+        .label("Organization")
+        .label_plural("Organizations")
+        .table_name("organizations")
+        .slug_name(ORGANIZATION_SLUG)
+        .icon("building")
+        .description("Canonical organization identity once linked. Not a login (User) and not a Customer/Supplier/Partner record.")
+        .field(
+            FieldDef::string("name")
+                .required()
+                .searchable()
+                .max_length(200)
+                .filterable(),
+        )
+        .field(
+            FieldDef::string("legal_name")
+                .nullable()
+                .searchable()
+                .max_length(200)
+                .label("Legal name"),
+        )
+        .field(
+            FieldDef::string("email")
+                .nullable()
+                .email()
+                .searchable()
+                .filterable(),
+        )
+        .field(FieldDef::string("phone").nullable().phone().searchable())
+        .field(FieldDef::string("website").nullable().url())
+        .field(
+            FieldDef::text("address")
+                .nullable()
+                .list(false)
+                .label("Address"),
+        )
+        .field(
+            FieldDef::string("logo")
+                .nullable()
+                .image()
+                .list(false)
+                .label("Logo"),
+        )
+        .field(
+            FieldDef::boolean("enabled")
+                .required()
+                .default_value(json!(true))
+                .filterable()
+                .label("Enabled"),
+        )
+        .views(EntityViews {
+            list: Some(ListViewSpec {
+                columns: vec![
+                    ListColumnSpec {
+                        field: "name".into(),
+                        width: None,
+                        widget: None,
+                    },
+                    ListColumnSpec {
+                        field: "legal_name".into(),
+                        width: None,
+                        widget: None,
+                    },
+                    ListColumnSpec {
+                        field: "email".into(),
+                        width: None,
+                        widget: None,
+                    },
+                    ListColumnSpec {
+                        field: "phone".into(),
+                        width: None,
+                        widget: None,
+                    },
+                    ListColumnSpec {
+                        field: "enabled".into(),
+                        width: None,
+                        widget: None,
+                    },
+                ],
+                default_sort: Some(SortSpec {
+                    field: "name".into(),
+                    direction: Some("asc".into()),
+                }),
+                ..Default::default()
+            }),
+            card: Some(CardViewSpec {
+                title: Some("name".into()),
+                subtitle: Some("email".into()),
+                fields: vec!["phone".into(), "website".into(), "enabled".into()],
+                ..Default::default()
+            }),
+            detail: Some(DetailViewSpec {
+                sections: vec![
+                    ViewSectionSpec {
+                        title: "Identity".into(),
+                        fields: vec![
+                            "name".into(),
+                            "legal_name".into(),
+                            "email".into(),
+                            "phone".into(),
+                            "website".into(),
+                        ],
+                        visible_when: None,
+                    },
+                    ViewSectionSpec {
+                        title: "Profile".into(),
+                        fields: vec!["address".into(), "logo".into(), "enabled".into()],
+                        visible_when: None,
+                    },
+                ],
+            }),
+            ..Default::default()
+        })
+        .build()
+}
+
 /// Login principal. Table and secrets live in qefro-auth; EntityService never
 /// selects `password_hash` or session tokens.
 pub fn user_entity() -> EntityDef {
@@ -306,7 +669,7 @@ pub fn user_entity() -> EntityDef {
 }
 
 pub fn identity_entities() -> Vec<EntityDef> {
-    vec![person_entity(), user_entity()]
+    vec![person_entity(), organization_entity(), user_entity()]
 }
 
 #[cfg(test)]
@@ -399,5 +762,92 @@ mod tests {
             &mut person,
             person_backrefs([&customer])
         ));
+    }
+
+    #[test]
+    fn organization_is_tenant_owned_and_has_no_login() {
+        let org = organization_entity();
+        assert!(org.tenant_owned);
+        assert!(!org.skip_ddl);
+        assert_eq!(org.slug, ORGANIZATION_SLUG);
+        assert!(org.get_field("legal_name").is_some());
+        assert!(org.get_field("website").is_some());
+        assert!(org.get_field("enabled").unwrap().required);
+        assert!(!org.fields.iter().any(|f| f.name == "user_id"));
+        assert!(!org.fields.iter().any(|f| is_secret_key(&f.name)));
+        assert_eq!(org.to_ui_meta().schema_version, "1");
+    }
+
+    #[test]
+    fn organization_backrefs_follow_organization_id_convention() {
+        let supplier = EntityDef::new("Supplier")
+            .table_name("suppliers")
+            .slug_name("suppliers")
+            .label_plural("Suppliers")
+            .field(FieldDef::string("name").required())
+            .field(
+                FieldDef::many_to_one(ORGANIZATION_LINK_FIELD, ORGANIZATION_ENTITY)
+                    .nullable()
+                    .label("Organization"),
+            )
+            .build();
+        assert!(is_organization_link_field(
+            supplier.get_field(ORGANIZATION_LINK_FIELD).unwrap()
+        ));
+        let refs = organization_backrefs([&supplier]);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].name, "suppliers");
+        let mut org = organization_entity();
+        assert!(apply_organization_backrefs(&mut org, refs));
+        assert!(org.get_field("suppliers").is_some());
+    }
+
+    #[test]
+    fn party_fields_and_validation() {
+        let mut customer = EntityDef::new("PartyCustomer")
+            .table_name("party_customers")
+            .slug_name("party-customers")
+            .field(FieldDef::string("name").required())
+            .build();
+        assert!(apply_party_fields(&mut customer));
+        assert!(customer.get_field(PARTY_TYPE_FIELD).is_some());
+        assert!(is_person_link_field(
+            customer.get_field(PERSON_LINK_FIELD).unwrap()
+        ));
+        assert!(is_organization_link_field(
+            customer.get_field(ORGANIZATION_LINK_FIELD).unwrap()
+        ));
+        assert!(!apply_party_fields(&mut customer));
+        validate_party(
+            &customer,
+            &json!({ "party_type": "Person", "person_id": "11111111-1111-1111-1111-111111111111" }),
+            None,
+        )
+        .unwrap();
+        assert!(validate_party(
+            &customer,
+            &json!({
+                "person_id": "11111111-1111-1111-1111-111111111111",
+                "organization_id": "22222222-2222-2222-2222-222222222222"
+            }),
+            None,
+        )
+        .is_err());
+        assert!(validate_party(
+            &customer,
+            &json!({
+                "party_type": "Person",
+                "organization_id": "22222222-2222-2222-2222-222222222222"
+            }),
+            None,
+        )
+        .is_err());
+        let changes = field_changes(
+            Some(&json!({ "status": "Lead", "password_hash": "x", "phone": "1" })),
+            Some(&json!({ "status": "Qualified", "password_hash": "y", "phone": "2" })),
+        );
+        assert_eq!(changes["status"]["old"], "Lead");
+        assert_eq!(changes["status"]["new"], "Qualified");
+        assert!(changes.get("password_hash").is_none());
     }
 }

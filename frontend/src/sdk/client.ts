@@ -38,11 +38,18 @@ export type TenantConfig = {
 };
 
 export type WorkflowAction = {
+  id?: string;
   name: string;
   label?: string;
   from: string;
+  from_state?: string;
   to: string;
+  to_state?: string;
   allowed_roles?: string[];
+  permissions?: string[];
+  requires_confirmation?: boolean;
+  confirmation?: boolean;
+  confirmation_message?: string;
 };
 
 export type EntityAction = {
@@ -186,10 +193,24 @@ export class QefroClient {
     });
   workflow = (slug: string, id: string) =>
     request<{ current: string; transitions: WorkflowAction[] }>(`/api/v1/${slug}/${id}/workflow`);
-  audit = (entity: string, entityId: string) =>
-    request<{ items: Array<Record<string, unknown>> }>(
-      `/api/v1/audit?entity=${encodeURIComponent(entity)}&entity_id=${encodeURIComponent(entityId)}`,
+  getWorkflow = (slug: string, id: string) => this.workflow(slug, id);
+  audit = (entity?: string, entityId?: string) => {
+    const q = new URLSearchParams();
+    if (entity) q.set("entity", entity);
+    if (entityId) q.set("entity_id", entityId);
+    const suffix = q.toString();
+    return request<{ items: Array<Record<string, unknown>> }>(
+      `/api/v1/audit${suffix ? `?${suffix}` : ""}`,
     );
+  };
+  activity = (slug: string, id: string) =>
+    request<{ items: Array<Record<string, unknown>> }>(`/api/v1/${slug}/${id}/activity`);
+  getActivity = (slug: string, id: string) => this.activity(slug, id);
+  addComment = (slug: string, id: string, message: string) =>
+    request<Record<string, unknown>>(`/api/v1/${slug}/${id}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    });
   upload = (file: File, kind: "file" | "image" = "file", onProgress?: (n: number) => void) =>
     new Promise<{ key: string; url: string; filename: string; content_type: string; size: number }>(
       (resolve, reject) => {
@@ -324,10 +345,12 @@ export class QefroClient {
     });
   notifications = () =>
     request<{ items: Array<Record<string, unknown>>; unread: number }>("/api/v1/notifications");
+  getNotifications = () => this.notifications();
   readNotification = (id: string) =>
     request<void>(`/api/v1/notifications/${id}/read`, { method: "POST" });
   attachments = (slug: string, id: string) =>
     request<{ items: Array<Record<string, unknown>> }>(`/api/v1/${slug}/${id}/attachments`);
+  getAttachments = (slug: string, id: string) => this.attachments(slug, id);
   deleteAttachment = (id: string) => request<void>(`/api/v1/attachments/${id}`, { method: "DELETE" });
   publicForm = (tenant: string, slug: string) =>
     request<{
