@@ -1026,9 +1026,10 @@ fields:
         let unknown = EntityDef::new("Customer")
             .field(FieldDef::string("name"))
             .views(crate::ui::EntityViews {
-                form: Some(FormViewSpec::sections(vec![
-                    ViewSectionSpec::new("Contact").fields(&["name", "missing"]),
-                ])),
+                form: Some(FormViewSpec::sections(vec![ViewSectionSpec::new(
+                    "Contact",
+                )
+                .fields(&["name", "missing"])])),
                 ..Default::default()
             })
             .build();
@@ -1075,7 +1076,10 @@ fields:
             })
             .build();
         let err = section.validate_ui_layout().unwrap_err();
-        assert!(err.to_string().contains("unknown field 'party_type'"), "{err}");
+        assert!(
+            err.to_string().contains("unknown field 'party_type'"),
+            "{err}"
+        );
     }
 
     #[test]

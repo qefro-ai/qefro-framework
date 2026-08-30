@@ -87,7 +87,9 @@ impl EntityService {
             return Err(QefroError::bad_request("ids are required"));
         }
         if request.ids.len() > 200 {
-            return Err(QefroError::bad_request("bulk operations are limited to 200 records"));
+            return Err(QefroError::bad_request(
+                "bulk operations are limited to 200 records",
+            ));
         }
         let entity = self.registry.get(entity_name)?;
         self.ensure_app(ctx, &entity)?;
@@ -98,7 +100,9 @@ impl EntityService {
             "export" => self.permissions.check(ctx, &entity.name, Action::Export)?,
             "archive" | "restore" => {
                 if !entity.archives() {
-                    return Err(QefroError::bad_request("archive is not enabled for this entity"));
+                    return Err(QefroError::bad_request(
+                        "archive is not enabled for this entity",
+                    ));
                 }
                 self.permissions.check(ctx, &entity.name, Action::Update)?;
             }

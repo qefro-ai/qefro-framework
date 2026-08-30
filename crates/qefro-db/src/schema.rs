@@ -526,7 +526,8 @@ async fn apply_missing_columns(pool: &PgPool, registry: &EntityRegistry) -> Qefr
             })?;
         }
         if entity.archives() {
-            let sql = format!("ALTER TABLE {table} ADD COLUMN IF NOT EXISTS \"archived_at\" TIMESTAMPTZ");
+            let sql =
+                format!("ALTER TABLE {table} ADD COLUMN IF NOT EXISTS \"archived_at\" TIMESTAMPTZ");
             sqlx::query(&sql).execute(pool).await.map_err(|e| {
                 QefroError::database(format!("add column {}.archived_at: {e}", entity.name))
             })?;
@@ -651,17 +652,14 @@ async fn apply_enum_checks(pool: &PgPool, registry: &EntityRegistry) -> QefroRes
                 "ALTER TABLE {table} ADD CONSTRAINT {} CHECK ({col} IN ({list}))",
                 quote_ident(&constraint)?
             );
-            sqlx::query(&add)
-                .execute(pool)
-                .await
-                .or_else(|e| {
-                    let msg = e.to_string();
-                    if msg.contains("already exists") {
-                        Ok(Default::default())
-                    } else {
-                        Err(QefroError::database(e.to_string()))
-                    }
-                })?;
+            sqlx::query(&add).execute(pool).await.or_else(|e| {
+                let msg = e.to_string();
+                if msg.contains("already exists") {
+                    Ok(Default::default())
+                } else {
+                    Err(QefroError::database(e.to_string()))
+                }
+            })?;
         }
     }
     Ok(())

@@ -9,7 +9,7 @@ use qefro_core::{
     AppModule, EntityRegistry, HookRegistry, LocalBlobStore, OperationDef, StudioCatalog,
 };
 use qefro_db::{
-    apply_schema, connect, AttachmentStore, BlobMetaStore, AutomationEngine, EmailNotifyJob,
+    apply_schema, connect, AttachmentStore, AutomationEngine, BlobMetaStore, EmailNotifyJob,
     EntityService, JobHandler, JobQueue, JobRegistry, LogNotificationJob, MetadataChangeService,
     NotificationStore, OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore,
     WebhookLog,

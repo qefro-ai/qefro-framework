@@ -1101,10 +1101,7 @@ impl TenantBranding {
     }
 
     fn blank(value: &Option<String>) -> bool {
-        value
-            .as_ref()
-            .map(|s| s.trim().is_empty())
-            .unwrap_or(true)
+        value.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1336,7 +1333,10 @@ mod tests {
         assert_eq!(json["tab"], "Details");
         assert_eq!(json["columns"][0]["fields"][0], "name");
         let names = section.field_names();
-        assert_eq!(names, vec!["name", "email", "phone", "party_type", "person_id"]);
+        assert_eq!(
+            names,
+            vec!["name", "email", "phone", "party_type", "person_id"]
+        );
         let legacy: ViewSectionSpec = serde_json::from_value(json!({
             "title": "Customer",
             "fields": ["name", "email"]

@@ -9,11 +9,10 @@ use crate::repository::{record_id, EntityRepository, Page};
 use chrono::Utc;
 use qefro_auth::AuthService;
 use qefro_core::{
-    canonicalize_datetime, is_person_link_field, person_backref_field, sanitize_html,
-    strip_secrets, validate_party, validate_record, apply_entity_rules, existence_rules,
-    EntityRegistry, FieldError, FieldType,
-    HookRegistry, OpContext, OperationDef, QefroError, QefroResult, PERSON_ENTITY,
-    PERSON_LINK_FIELD, USER_ENTITY,
+    apply_entity_rules, canonicalize_datetime, existence_rules, is_person_link_field,
+    person_backref_field, sanitize_html, strip_secrets, validate_party, validate_record,
+    EntityRegistry, FieldError, FieldType, HookRegistry, OpContext, OperationDef, QefroError,
+    QefroResult, PERSON_ENTITY, PERSON_LINK_FIELD, USER_ENTITY,
 };
 use qefro_events::{DomainEvent, InProcessEventBus};
 use qefro_permissions::{Action, PermissionRegistry};
@@ -291,12 +290,7 @@ impl EntityService {
             }
         }
         validate_record(entity.business_fields(), &data, false)?;
-        apply_entity_rules(
-            entity.business_fields(),
-            &entity.validation,
-            &data,
-            false,
-        )?;
+        apply_entity_rules(entity.business_fields(), &entity.validation, &data, false)?;
         self.check_relation_existence(ctx, &entity, &data).await?;
         self.validate_child_payloads(ctx, &entity, &children, false)
             .await?;
@@ -468,12 +462,7 @@ impl EntityService {
                 dst.insert(k.clone(), v.clone());
             }
         }
-        apply_entity_rules(
-            entity.business_fields(),
-            &entity.validation,
-            &merged,
-            true,
-        )?;
+        apply_entity_rules(entity.business_fields(), &entity.validation, &merged, true)?;
         self.check_relation_existence(ctx, &entity, &merged).await?;
         self.validate_child_payloads(ctx, &entity, &children, true)
             .await?;
@@ -1339,9 +1328,10 @@ impl EntityService {
             {
                 continue;
             }
-            let link = entity.links.iter().find(|l| {
-                l.entity == spec.target.name && l.relation == spec.inverse
-            });
+            let link = entity
+                .links
+                .iter()
+                .find(|l| l.entity == spec.target.name && l.relation == spec.inverse);
             let mut query = Query::default();
             query.page_size = link.and_then(|l| l.limit).unwrap_or(50).min(50);
             query.filters.push(Filter::Eq {
@@ -2290,7 +2280,11 @@ impl EntityService {
         Ok(())
     }
 
-    pub(crate) fn ensure_app(&self, ctx: &OpContext, entity: &qefro_core::EntityDef) -> QefroResult<()> {
+    pub(crate) fn ensure_app(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+    ) -> QefroResult<()> {
         if ctx.allows_app(entity.module.as_deref()) {
             Ok(())
         } else {
@@ -2329,7 +2323,9 @@ impl EntityService {
             if value.is_none() || value == Some(&Value::Null) {
                 continue;
             }
-            let Some(id) = value.and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok())
+            let Some(id) = value
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok())
             else {
                 errors.push(FieldError::new(
                     field_name,

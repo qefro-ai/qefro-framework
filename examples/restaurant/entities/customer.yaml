@@ -3,6 +3,8 @@ label: Customer
 label_plural: Customers
 table: customers
 soft_delete: true
+lifecycle:
+  archive: true
 audit: true
 description: Guest record. Optionally link a Person; keep name, email, and phone for walk-ins.
 fields:

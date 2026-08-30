@@ -430,10 +430,8 @@ pub fn reservation() -> EntityDef {
                         "status",
                     ]),
                 ]),
-                ViewSectionSpec::new("Additional Information").fields(&[
-                    "notes",
-                    "cancellation_reason",
-                ]),
+                ViewSectionSpec::new("Additional Information")
+                    .fields(&["notes", "cancellation_reason"]),
             ])),
             detail: Some(DetailViewSpec::sections(vec![
                 ViewSectionSpec::new("Reservation").fields(&[

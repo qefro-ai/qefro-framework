@@ -415,9 +415,13 @@ mod tests {
     #[test]
     fn guard_blocks_empty_required_field() {
         let t = TransitionDef::new("confirm", "Draft", "Confirmed").requires(&["customer_id"]);
-        assert!(t.guard_allows(&serde_json::json!({ "customer_id": "" })).is_err());
         assert!(t
-            .guard_allows(&serde_json::json!({ "customer_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" }))
+            .guard_allows(&serde_json::json!({ "customer_id": "" }))
+            .is_err());
+        assert!(t
+            .guard_allows(
+                &serde_json::json!({ "customer_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" })
+            )
             .is_ok());
     }
 

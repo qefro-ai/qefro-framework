@@ -40,7 +40,7 @@ pub mod version;
 
 pub use app::{AppManifest, AppModule, AppModuleBuilder, NavItem};
 pub use automation::{
-    AssignAction, AutomationAction, AutomationDef, AutomationTrigger, ActivityAction,
+    ActivityAction, AssignAction, AutomationAction, AutomationDef, AutomationTrigger,
     CommentAction, CreateEntityAction, NotifyAction, TransitionAction, UpdateEntityAction,
     WebhookAction,
 };
@@ -78,8 +78,8 @@ pub use migration::{sql_is_destructive, AppMigration};
 pub use operation::{operation, OperationDef};
 pub use package::{extract_package, inspect_package, write_package, PackageMeta};
 pub use platform::{
-    webhook_secret, webhook_signature, ConfirmationDef, EntityActionDef, LinkDef, LinkFilter, NotificationDef,
-    PublicFormDef, WebhookDef,
+    webhook_secret, webhook_signature, ConfirmationDef, EntityActionDef, LinkDef, LinkFilter,
+    NotificationDef, PublicFormDef, WebhookDef,
 };
 pub use rate_limit::{MemoryRateLimiter, RateLimiter};
 pub use registry::EntityRegistry;
@@ -115,10 +115,10 @@ pub use version::{
 
 pub mod prelude {
     pub use crate::{
-        AppModule, AppModuleBuilder, ChildTableDef, DocumentConfig, EntityActionDef, EntityDef,
-        EntityRegistry, FieldDef, FieldType, LinkDef, NamingConfig, NotificationDef, OpContext,
-        OnDelete, PrintFormat, PublicFormDef, QefroError, QefroResult, RecordLifecycle, RelationDef,
-        RelationKind, ReportDef, RowPolicy, UiConfig, ValidationRule, ValidationRules, WebhookDef,
-        AutomationDef,
+        AppModule, AppModuleBuilder, AutomationDef, ChildTableDef, DocumentConfig, EntityActionDef,
+        EntityDef, EntityRegistry, FieldDef, FieldType, LinkDef, NamingConfig, NotificationDef,
+        OnDelete, OpContext, PrintFormat, PublicFormDef, QefroError, QefroResult, RecordLifecycle,
+        RelationDef, RelationKind, ReportDef, RowPolicy, UiConfig, ValidationRule, ValidationRules,
+        WebhookDef,
     };
 }

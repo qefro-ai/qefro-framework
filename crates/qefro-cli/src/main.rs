@@ -542,10 +542,7 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
         entity.workflow.clone().unwrap_or_else(|| "(none)".into())
     );
     println!("display_field:  {}", entity.display_field);
-    println!(
-        "lifecycle:      archive={}",
-        entity.archives()
-    );
+    println!("lifecycle:      archive={}", entity.archives());
     println!(
         "row_policy:     {}",
         entity
@@ -617,11 +614,7 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
         }) {
             println!("workflow {}:", wf.name);
             for t in &wf.transitions {
-                let guard = t
-                    .guard
-                    .as_ref()
-                    .map(|_| "  guard")
-                    .unwrap_or_default();
+                let guard = t.guard.as_ref().map(|_| "  guard").unwrap_or_default();
                 println!("  {}  {} → {}{guard}", t.name, t.from, t.to);
             }
         }
@@ -736,7 +729,11 @@ fn cmd_validate(app: &str) -> Result<()> {
         println!("warning: {w}");
     }
     if errors.is_empty() {
-        println!("ok  {} entities  {} workflows", runtime.entity_names().len(), runtime.workflows().len());
+        println!(
+            "ok  {} entities  {} workflows",
+            runtime.entity_names().len(),
+            runtime.workflows().len()
+        );
         Ok(())
     } else {
         for e in &errors {

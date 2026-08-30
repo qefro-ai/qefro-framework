@@ -978,9 +978,15 @@ mod tests {
     #[test]
     fn on_delete_and_one_to_one() {
         let restrict = FieldDef::many_to_one("customer_id", "Customer");
-        assert_eq!(restrict.relation.as_ref().unwrap().on_delete, OnDelete::Restrict);
+        assert_eq!(
+            restrict.relation.as_ref().unwrap().on_delete,
+            OnDelete::Restrict
+        );
         let cascade = FieldDef::many_to_one("order_id", "Order").on_delete(OnDelete::Cascade);
-        assert_eq!(cascade.relation.as_ref().unwrap().on_delete, OnDelete::Cascade);
+        assert_eq!(
+            cascade.relation.as_ref().unwrap().on_delete,
+            OnDelete::Cascade
+        );
         let pair = FieldDef::one_to_one("profile_id", "Profile");
         assert!(pair.unique);
         assert!(pair.relation.as_ref().unwrap().unique);
