@@ -354,6 +354,8 @@ th {
 tbody tr { transition: background 0.12s ease; }
 tbody tr:hover { background: var(--surface-hover); }
 tbody tr.is-selected { background: var(--accent-soft); }
+.data.freeze tbody tr.is-selected td:nth-child(1),
+.data.freeze tbody tr.is-selected td:nth-child(2) { background: var(--accent-soft); }
 tbody tr:last-child td { border-bottom: 0; }
 .dl { width: 100%; }
 .dl th {
@@ -1012,7 +1014,17 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 .section-block .panel-title { padding: 0 0 var(--space-2); }
 
 .search-field { position: relative; flex: 1; max-width: 320px; }
-.search-field input { padding-right: var(--space-8); }
+.search-field input { padding-left: var(--space-7); padding-right: var(--space-8); }
+.search-icon {
+  position: absolute;
+  left: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  color: var(--muted);
+  pointer-events: none;
+}
 .search-clear { position: absolute; right: var(--space-1); top: 50%; transform: translateY(-50%); width: var(--control-h-sm); min-width: var(--control-h-sm); min-height: var(--control-h-sm); padding: 0; }
 .toolbar-status { font-size: var(--text-xs); }
 .filter-chips { width: 100%; }
