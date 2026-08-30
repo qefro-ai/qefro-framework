@@ -60,6 +60,7 @@ export type EntityAction = {
   requires_confirmation?: boolean;
   confirmation_message?: string;
   icon?: string;
+  workflow_transition?: string;
 };
 
 export type FieldError = { field: string; code?: string; message: string };

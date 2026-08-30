@@ -20,9 +20,11 @@ export function ActionBar({
   onTransition?: (name: string) => void;
   compact?: boolean;
 }) {
-  const actionNames = new Set(actions.map((a) => a.name));
+  const covered = new Set(
+    actions.flatMap((a) => [a.name, a.workflow_transition].filter((v): v is string => Boolean(v))),
+  );
   const extra = (transitions ?? []).filter(
-    (t) => !actionNames.has(t.name) && !actionNames.has(t.to) && !actionNames.has(t.id || ""),
+    (t) => !covered.has(t.name) && !covered.has(t.to) && !covered.has(t.id || ""),
   );
   const primary = actions.filter((a) => a.style !== "danger").slice(0, compact ? 1 : 2);
   const rest = actions.filter((a) => !primary.includes(a));

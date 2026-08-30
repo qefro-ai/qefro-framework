@@ -74,6 +74,24 @@ describe("ActionBar", () => {
     await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(onTransition).toHaveBeenCalledWith("cancel");
   });
+
+  it("does not duplicate a transition already covered by an operation", () => {
+    render(
+      <ActionBar
+        actions={[
+          { name: "start_preparation", label: "Start Preparation", workflow_transition: "prepare" },
+        ]}
+        transitions={[
+          { name: "prepare", label: "Start Preparing", from: "Confirmed", to: "Preparing" },
+          { name: "ready", label: "Mark Ready", from: "Confirmed", to: "Ready" },
+        ]}
+        onAction={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Start Preparation" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start Preparing" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark Ready" })).toBeInTheDocument();
+  });
 });
 
 describe("AttachmentsPanel", () => {
