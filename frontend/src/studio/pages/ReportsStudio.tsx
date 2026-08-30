@@ -21,6 +21,17 @@ type CardDraft = {
 const KINDS = ["kpi", "metric", "chart", "table", "list", "activity", "workflow", "saved_view", "report"];
 const SIZES = ["sm", "md", "lg", "xl"];
 const CHARTS = ["bar", "line", "area", "pie", "donut"];
+const SECTION_KINDS = ["header", "customer", "address", "items", "totals", "notes", "terms", "footer", "text", "image"];
+const VARIANTS = ["default", "compact", "professional"];
+
+type SectionDraft = {
+  kind: string;
+  title?: string;
+  fields?: string[];
+  text?: string;
+  loop_over?: string;
+  show_when?: string;
+};
 
 export default function ReportsStudio({
   kind,
@@ -35,6 +46,9 @@ export default function ReportsStudio({
   const [html, setHtml] = useState("");
   const [error, setError] = useState("");
   const [cards, setCards] = useState<CardDraft[]>([]);
+  const [sections, setSections] = useState<SectionDraft[]>([]);
+  const [variant, setVariant] = useState("default");
+  const [body, setBody] = useState("");
 
   useEffect(() => {
     if (kind === "reports") api.studioReports().then((d) => setItems(d.reports));
@@ -59,6 +73,9 @@ export default function ReportsStudio({
       const payload = (d.dashboard ?? d.report ?? d.print_format ?? d) as Record<string, unknown>;
       const next = (payload.cards as CardDraft[] | undefined) ?? [];
       setCards(next.map((c) => ({ ...c })));
+      setSections(((payload.sections as SectionDraft[] | undefined) ?? []).map((s) => ({ ...s })));
+      setVariant(String(payload.variant || "default"));
+      setBody(String(payload.body || ""));
     });
     if (kind === "print") api.studioPrintPreview(name).then((d) => setHtml(d.html));
   }, [kind, name]);
@@ -82,7 +99,11 @@ export default function ReportsStudio({
     );
   }
 
-  const payload = { ...((detail?.[key] as Record<string, unknown>) ?? detail ?? {}), ...(kind === "dashboards" ? { cards } : {}) };
+  const payload = {
+    ...((detail?.[key] as Record<string, unknown>) ?? detail ?? {}),
+    ...(kind === "dashboards" ? { cards } : {}),
+    ...(kind === "print" ? { sections, variant, body: body || undefined } : {}),
+  };
 
   return (
     <div className="page">
@@ -93,16 +114,27 @@ export default function ReportsStudio({
       {kind === "print" && html ? (
         <iframe title="Print preview" className="print-preview" srcDoc={html} />
       ) : null}
+      {kind === "print" ? (
+        <PrintFormatEditor
+          sections={sections}
+          variant={variant}
+          body={body}
+          canEdit={can(caps, "studio.publish")}
+          onVariant={setVariant}
+          onBody={setBody}
+          onChange={setSections}
+        />
+      ) : null}
       {kind === "dashboards" ? (
         <DashboardCardEditor cards={cards} onChange={setCards} canEdit={can(caps, "studio.publish")} />
       ) : null}
       <SourceView jsonText={String(detail?.json ?? "")} yamlText={String(detail?.yaml ?? "")} />
-      {can(caps, "studio.publish") && kind !== "print" ? (
+      {can(caps, "studio.publish") ? (
         <button
           type="button"
           onClick={() =>
             publishAndReload({
-              kind: kind === "reports" ? "report" : "dashboard",
+              kind: kind === "reports" ? "report" : kind === "dashboards" ? "dashboard" : "print_format",
               target: name,
               payload,
             }).catch((e) => setError(e.message))
@@ -236,6 +268,127 @@ function DashboardCardEditor({
           Add widget
         </button>
       ) : null}
+    </div>
+  );
+}
+
+function PrintFormatEditor({
+  sections,
+  variant,
+  body,
+  canEdit,
+  onVariant,
+  onBody,
+  onChange,
+}: {
+  sections: SectionDraft[];
+  variant: string;
+  body: string;
+  canEdit: boolean;
+  onVariant: (v: string) => void;
+  onBody: (v: string) => void;
+  onChange: (sections: SectionDraft[]) => void;
+}) {
+  function update(i: number, patch: Partial<SectionDraft>) {
+    const next = sections.slice();
+    next[i] = { ...next[i], ...patch };
+    onChange(next);
+  }
+  return (
+    <div className="card">
+      <h3>Document template</h3>
+      <p className="muted">Select sections, fields, and child tables. JavaScript, SQL, and URLs are rejected.</p>
+      <label>
+        Variant
+        <select value={variant} disabled={!canEdit} onChange={(e) => onVariant(e.target.value)}>
+          {VARIANTS.map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
+        </select>
+      </label>
+      {sections.map((section, i) => (
+        <fieldset key={`${section.kind}-${i}`}>
+          <legend>{section.kind || "Section"}</legend>
+          <label>
+            Kind
+            <select
+              value={section.kind}
+              disabled={!canEdit}
+              onChange={(e) => update(i, { kind: e.target.value })}
+            >
+              {SECTION_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Title
+            <input
+              value={section.title || ""}
+              disabled={!canEdit}
+              onChange={(e) => update(i, { title: e.target.value })}
+            />
+          </label>
+          <label>
+            Fields (comma-separated paths)
+            <input
+              value={(section.fields || []).join(", ")}
+              disabled={!canEdit}
+              onChange={(e) =>
+                update(i, {
+                  fields: e.target.value
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                })
+              }
+            />
+          </label>
+          <label>
+            Child table
+            <input
+              value={section.loop_over || ""}
+              disabled={!canEdit}
+              onChange={(e) => update(i, { loop_over: e.target.value })}
+            />
+          </label>
+          <label>
+            Show when
+            <input
+              value={section.show_when || ""}
+              disabled={!canEdit}
+              placeholder="discount > 0"
+              onChange={(e) => update(i, { show_when: e.target.value })}
+            />
+          </label>
+          <label>
+            Text
+            <textarea
+              value={section.text || ""}
+              disabled={!canEdit}
+              onChange={(e) => update(i, { text: e.target.value })}
+            />
+          </label>
+          {canEdit ? (
+            <button type="button" className="ghost" onClick={() => onChange(sections.filter((_, idx) => idx !== i))}>
+              Remove
+            </button>
+          ) : null}
+        </fieldset>
+      ))}
+      {canEdit ? (
+        <button type="button" onClick={() => onChange([...sections, { kind: "text" }])}>
+          Add section
+        </button>
+      ) : null}
+      <label>
+        Optional body template
+        <textarea value={body} disabled={!canEdit} onChange={(e) => onBody(e.target.value)} />
+      </label>
     </div>
   );
 }

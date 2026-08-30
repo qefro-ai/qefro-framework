@@ -395,6 +395,8 @@ pub struct UiEntityMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<EntityCapabilities>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub print_formats: Vec<PrintFormatSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<crate::platform::EntityActionDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<crate::platform::LinkDef>,
@@ -418,6 +420,17 @@ pub struct EntityPermissions {
     pub delete: bool,
     #[serde(default)]
     pub export: bool,
+}
+
+/// Print formats advertised to the generic UI. Presentation only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PrintFormatSummary {
+    pub name: String,
+    pub title: String,
+    #[serde(default)]
+    pub variant: String,
+    #[serde(default)]
+    pub version: u32,
 }
 
 /// Which business-object surfaces the generic UI may offer. Not authorization.
@@ -447,6 +460,9 @@ pub struct EntityCapabilities {
     pub export: bool,
     #[serde(default)]
     pub bulk: bool,
+    /// Entity has at least one print format (or a document definition that can print).
+    #[serde(default)]
+    pub print: bool,
 }
 
 fn default_true_standalone() -> bool {
@@ -1126,6 +1142,14 @@ pub struct TenantBranding {
     pub company_name: Option<String>,
     #[serde(default)]
     pub app_name: Option<String>,
+    #[serde(default)]
+    pub address: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub website: Option<String>,
 }
 
 impl TenantBranding {
@@ -1145,6 +1169,10 @@ impl TenantBranding {
             && Self::blank(&self.accent_color)
             && Self::blank(&self.company_name)
             && Self::blank(&self.app_name)
+            && Self::blank(&self.address)
+            && Self::blank(&self.phone)
+            && Self::blank(&self.email)
+            && Self::blank(&self.website)
     }
 
     /// Fill empty fields from app or other defaults. Stored tenant values win.
@@ -1169,6 +1197,18 @@ impl TenantBranding {
         }
         if Self::blank(&self.app_name) {
             self.app_name = other.app_name.clone();
+        }
+        if Self::blank(&self.address) {
+            self.address = other.address.clone();
+        }
+        if Self::blank(&self.phone) {
+            self.phone = other.phone.clone();
+        }
+        if Self::blank(&self.email) {
+            self.email = other.email.clone();
+        }
+        if Self::blank(&self.website) {
+            self.website = other.website.clone();
         }
     }
 

@@ -348,4 +348,28 @@ describe("business object runtime UI", () => {
     expect(await screen.findByText("Order #1042 is ready")).toBeInTheDocument();
     expect(screen.getByText(/second|now|minute/i)).toBeInTheDocument();
   });
+
+  it("shows print and download PDF only when the entity advertises print", async () => {
+    vi.spyOn(api, "get").mockResolvedValue({
+      id: "o1",
+      name: "#1042",
+      status: "Draft",
+    });
+    vi.spyOn(api, "activity").mockResolvedValue({ items: [] });
+    vi.spyOn(api, "attachments").mockResolvedValue({ items: [] });
+    const hidden = wrap(<EntityDetail entities={[order]} />, "/orders/o1");
+    await waitFor(() => expect(screen.getByText(/Order #1042/)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Print" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download PDF" })).not.toBeInTheDocument();
+    hidden.unmount();
+
+    const printable = {
+      ...order,
+      capabilities: { ...order.capabilities, print: true },
+      attachments: true,
+    };
+    wrap(<EntityDetail entities={[printable]} />, "/orders/o1");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Print" })).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Download PDF" })).toBeInTheDocument();
+  });
 });

@@ -25,6 +25,7 @@ pub fn branding() -> TenantBranding {
         accent_color: Some("#c2410c".into()),
         company_name: None,
         app_name: Some("Qefro Kitchen".into()),
+        ..Default::default()
     }
 }
 

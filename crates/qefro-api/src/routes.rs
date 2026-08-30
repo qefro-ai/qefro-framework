@@ -2,8 +2,8 @@ use crate::error::ApiError;
 use crate::extract::Auth;
 use crate::state::AppState;
 use axum::extract::{Multipart, Path, Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
-use axum::response::IntoResponse;
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use qefro_auth::AuthToken;
@@ -748,6 +748,9 @@ async fn execute_action(
     body: Option<Json<Value>>,
 ) -> Result<Json<Value>, ApiError> {
     reject_reserved(&slug)?;
+    if is_generate_document(&name) {
+        return generate_document_action(state, ctx, slug, id, body.map(|j| j.0)).await;
+    }
     let idempotency_key = headers
         .get("idempotency-key")
         .and_then(|v| v.to_str().ok())
@@ -770,6 +773,66 @@ async fn execute_action(
             )
             .await?,
     ))
+}
+
+fn is_generate_document(name: &str) -> bool {
+    matches!(
+        name,
+        "generate_document" | "generate-document" | "generate_pdf" | "generate-pdf"
+    )
+}
+
+async fn generate_document_action(
+    state: AppState,
+    ctx: qefro_core::OpContext,
+    slug: String,
+    id: Uuid,
+    body: Option<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let format_name = body
+        .as_ref()
+        .and_then(|b| b.get("format").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+    let extra = state.print_formats_live();
+    let (format, record, items) = state
+        .entities
+        .print_document(&ctx, &slug, id, format_name.as_deref(), &extra)
+        .await?;
+    let entity = state.entities.registry().get(&slug)?;
+    let mut config = state.tenants.get_config(ctx.tenant_id).await?;
+    let tenant = state.tenants.get(ctx.tenant_id).await.ok();
+    config.branding =
+        state.resolve_branding(&ctx, &config, tenant.as_ref().map(|t| t.name.as_str()));
+    let lines = qefro_db::print::pdf_lines(&entity, &format, &record, &items, &config);
+    let bytes = qefro_db::print::render_pdf(&format.document_title(), &lines);
+    let filename = qefro_db::print::document_filename(&format, &entity, &record);
+    let message = format!("{} PDF generated", format.document_title());
+    if entity.attachments {
+        let row = state
+            .entities
+            .attach_generated_document(
+                &ctx,
+                &entity.name,
+                id,
+                &filename,
+                "application/pdf",
+                &bytes,
+                state.blob_store.as_ref(),
+                &state.attachments,
+                &message,
+            )
+            .await?;
+        return Ok(Json(json!({
+            "attachment": row.to_client_json(),
+            "filename": filename,
+            "message": message,
+        })));
+    }
+    Ok(Json(json!({
+        "filename": filename,
+        "download": format!("/api/v1/{slug}/{id}/print.pdf"),
+        "message": message,
+    })))
 }
 
 async fn get_operation_run(
@@ -1297,9 +1360,10 @@ async fn print_document(
 ) -> Result<axum::response::Html<String>, ApiError> {
     reject_reserved(&slug)?;
     let format_name = params.get("format").map(|s| s.as_str());
+    let extra = state.print_formats_live();
     let (format, record, items) = state
         .entities
-        .print_document(&ctx, &slug, id, format_name)
+        .print_document(&ctx, &slug, id, format_name, &extra)
         .await?;
     let entity = state.entities.registry().get(&slug)?;
     let mut config = state.tenants.get_config(ctx.tenant_id).await?;
@@ -1315,27 +1379,31 @@ async fn print_document_pdf(
     Auth(ctx): Auth,
     Path((slug, id)): Path<(String, Uuid)>,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     reject_reserved(&slug)?;
     let format_name = params.get("format").map(|s| s.as_str());
-    let (_format, record, items) = state
+    let extra = state.print_formats_live();
+    let (format, record, items) = state
         .entities
-        .print_document(&ctx, &slug, id, format_name)
+        .print_document(&ctx, &slug, id, format_name, &extra)
         .await?;
     let entity = state.entities.registry().get(&slug)?;
-    let lines = qefro_db::print::pdf_lines(&entity, &record, &items);
-    let bytes = qefro_db::print::render_pdf(&entity.label, &lines);
-    Ok((
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "application/pdf"),
-            (
-                header::CONTENT_DISPOSITION,
-                "inline; filename=\"document.pdf\"",
-            ),
-        ],
-        bytes,
-    ))
+    let mut config = state.tenants.get_config(ctx.tenant_id).await?;
+    let tenant = state.tenants.get(ctx.tenant_id).await.ok();
+    config.branding =
+        state.resolve_branding(&ctx, &config, tenant.as_ref().map(|t| t.name.as_str()));
+    let lines = qefro_db::print::pdf_lines(&entity, &format, &record, &items, &config);
+    let bytes = qefro_db::print::render_pdf(&format.document_title(), &lines);
+    let filename = qefro_db::print::document_filename(&format, &entity, &record);
+    let mut res = (StatusCode::OK, bytes).into_response();
+    res.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/pdf"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&format!("inline; filename=\"{filename}\"")) {
+        res.headers_mut().insert(header::CONTENT_DISPOSITION, value);
+    }
+    Ok(res)
 }
 
 async fn get_tenant_config(

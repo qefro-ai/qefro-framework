@@ -5,7 +5,7 @@ use qefro_core::ui::{
 use qefro_core::{
     CalendarViewSpec, ChildTableDef, DocumentConfig, EntityActionDef, EntityDef, EntityViews,
     FieldDef, KanbanCardSpec, KanbanViewSpec, LinkDef, ListViewSpec, NamingConfig, PrintFormat,
-    PublicFormDef, UiConfig,
+    PrintSection, PublicFormDef, UiConfig,
 };
 use serde_json::json;
 
@@ -612,9 +612,15 @@ pub fn order() -> EntityDef {
         )
         .print_format(
             PrintFormat::new("Order Standard", "Order")
-                .title("Order")
+                .title("Receipt")
                 .item_table("items")
-                .total_fields(&["subtotal", "tax", "discount", "grand_total"]),
+                .total_fields(&["subtotal", "tax", "discount", "grand_total"])
+                .filename_field("doc_no")
+                .section(PrintSection::kind("header"))
+                .section(PrintSection::kind("customer").fields(&["customer.name"]))
+                .section(PrintSection::kind("items").loop_over("items"))
+                .section(PrintSection::kind("totals"))
+                .section(PrintSection::kind("footer")),
         )
         .field(
             FieldDef::enum_values("order_type", vec!["Dine-in", "Takeaway"])

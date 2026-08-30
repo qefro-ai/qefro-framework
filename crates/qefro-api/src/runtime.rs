@@ -247,6 +247,20 @@ impl QefroRuntime {
             .collect()
     }
 
+    pub fn print_formats(&self) -> Vec<qefro_core::PrintFormat> {
+        let mut out = Vec::new();
+        for entity in qefro_core::platform_entities() {
+            out.extend(entity.print_formats);
+        }
+        for app in &self.apps {
+            out.extend(app.module.print_formats.clone());
+            for entity in &app.module.entities {
+                out.extend(entity.print_formats.clone());
+            }
+        }
+        out
+    }
+
     pub fn page(&self, name: &str) -> Option<qefro_core::PageDef> {
         self.pages()
             .into_iter()
@@ -400,6 +414,7 @@ impl QefroRuntime {
         let mut print_formats = Vec::new();
 
         for entity in qefro_core::platform_entities() {
+            print_formats.extend(entity.print_formats.clone());
             let name = entity.name.clone();
             registry.register(entity)?;
             permissions.ensure_admin(&name);

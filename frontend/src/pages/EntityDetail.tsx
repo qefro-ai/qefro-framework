@@ -40,6 +40,9 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const [commentFile, setCommentFile] = useState<File | null>(null);
   const [commentBusy, setCommentBusy] = useState(false);
   const [pending, setPending] = useState<"delete" | "archive" | "restore" | null>(null);
+  const [preview, setPreview] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [previewBusy, setPreviewBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const theme = useTenantTheme();
   const [tab, setTab] = useState(params.get("tab") || "overview");
@@ -87,7 +90,9 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const workflow = row._workflow as
     | { current?: string; transitions?: WorkflowAction[] }
     | undefined;
-  const actions = (row._actions as EntityAction[] | undefined) ?? [];
+  const actions = ((row._actions as EntityAction[] | undefined) ?? []).filter(
+    (a) => a.name !== "generate_document" && a.name !== "generate-document",
+  );
   const related = (row._related ?? {}) as Record<
     string,
     {
@@ -136,6 +141,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const showAttachments = Boolean(meta.attachments || caps?.attachments);
   const showRelated = links.length > 0 || Object.keys(related).length > 0;
   const allowArchive = Boolean(caps?.archive) && canUpdateRecord(meta, row);
+  const allowPrint = Boolean(caps?.print);
   const archived = Boolean(row.archived_at);
 
   const chrome = [
@@ -216,6 +222,34 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
                 <button type="button">Edit</button>
               </Link>
             ) : null}
+            {allowPrint ? (
+              <>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    setPreviewBusy(true);
+                    setPreview(true);
+                    api
+                      .printHtml(slug, id)
+                      .then((html) => setPreviewHtml(html))
+                      .catch((e) => setError(friendlyError(e)))
+                      .finally(() => setPreviewBusy(false));
+                  }}
+                >
+                  Print
+                </button>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() =>
+                    void api.downloadPdf(slug, id).catch((e) => setError(friendlyError(e)))
+                  }
+                >
+                  Download PDF
+                </button>
+              </>
+            ) : null}
             <ActionBar
               actions={actions}
               transitions={workflow?.transitions}
@@ -234,8 +268,36 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
             />
             <ActionMenu
               items={[
-                { key: "print", label: "Print", href: `/api/v1/${slug}/${id}/print`, target: "_blank" },
-                { key: "pdf", label: "Download PDF", href: `/api/v1/${slug}/${id}/print.pdf`, target: "_blank" },
+                {
+                  key: "print",
+                  label: "Print",
+                  hidden: !allowPrint,
+                  onSelect: () => {
+                    setPreviewBusy(true);
+                    setPreview(true);
+                    api
+                      .printHtml(slug, id)
+                      .then((html) => setPreviewHtml(html))
+                      .catch((e) => setError(friendlyError(e)))
+                      .finally(() => setPreviewBusy(false));
+                  },
+                },
+                {
+                  key: "pdf",
+                  label: "Download PDF",
+                  hidden: !allowPrint,
+                  onSelect: () => {
+                    void api.downloadPdf(slug, id).catch((e) => setError(friendlyError(e)));
+                  },
+                },
+                {
+                  key: "attach-pdf",
+                  label: "Attach PDF",
+                  hidden: !allowPrint || !showAttachments,
+                  onSelect: () => {
+                    void runAction("generate_document");
+                  },
+                },
                 {
                   key: "archive",
                   label: archived ? "Restore" : "Archive",
@@ -383,6 +445,28 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
           />
         </div>
       ) : null}
+      <ConfirmDialog
+        open={preview}
+        title={`${meta.label} preview`}
+        confirmLabel="Print"
+        cancelLabel="Close"
+        confirmDisabled={previewBusy || !previewHtml}
+        className="print-preview-dialog"
+        onCancel={() => {
+          setPreview(false);
+          setPreviewHtml("");
+        }}
+        onConfirm={() => {
+          const frame = document.querySelector<HTMLIFrameElement>("iframe.print-preview");
+          frame?.contentWindow?.focus();
+          frame?.contentWindow?.print();
+        }}
+      >
+        {previewBusy ? <p>Loading document…</p> : null}
+        {previewHtml ? (
+          <iframe title="Document preview" className="print-preview" srcDoc={previewHtml} />
+        ) : null}
+      </ConfirmDialog>
       <ConfirmDialog
         open={pending === "delete"}
         title={t("record.deleteTitle", { entity: meta.label })}

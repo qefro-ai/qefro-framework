@@ -943,7 +943,7 @@ impl EntityService {
     }
 
     fn attach_actions(&self, ctx: &OpContext, entity: &qefro_core::EntityDef, record: &mut Value) {
-        let actions: Vec<Value> = self
+        let mut actions: Vec<Value> = self
             .record_actions(ctx, &entity.name, record)
             .into_iter()
             .map(|mut d| {
@@ -972,6 +972,18 @@ impl EntityService {
             })
             .flatten()
             .collect();
+        if (!entity.print_formats.is_empty() || entity.document.is_some())
+            && self
+                .permissions
+                .allows(&ctx.roles, &entity.name, Action::Read)
+        {
+            actions.push(
+                OperationDef::new("generate_document", &entity.name)
+                    .label("Generate PDF")
+                    .description("Render this record as a PDF and attach it")
+                    .to_client_json(),
+            );
+        }
         if let Some(obj) = record.as_object_mut() {
             obj.insert("_actions".into(), json!(actions));
         }
@@ -1987,32 +1999,114 @@ impl EntityService {
         entity_name: &str,
         id: Uuid,
         format_name: Option<&str>,
+        extra_formats: &[qefro_core::PrintFormat],
     ) -> QefroResult<(qefro_core::PrintFormat, Value, Vec<Value>)> {
         let entity = self.registry.get(entity_name)?;
         self.ensure_app(ctx, &entity)?;
         self.permissions.check(ctx, &entity.name, Action::Read)?;
-        let record = self.get(ctx, entity_name, id).await?;
-        let format = entity
-            .print_formats
-            .iter()
-            .find(|f| format_name.map(|n| f.name == n).unwrap_or(true))
-            .cloned()
-            .or_else(|| {
+        let mut record = self.get(ctx, entity_name, id).await?;
+        let format = qefro_core::resolve_print_format(
+            &entity.name,
+            format_name,
+            &entity.print_formats,
+            extra_formats,
+        )
+        .or_else(|| {
+            if entity.document.is_some() {
                 Some(qefro_core::PrintFormat::new(
                     format!("{} Standard", entity.label),
                     &entity.name,
                 ))
-            })
-            .unwrap();
-        let items = entity
-            .fields
-            .iter()
-            .find(|f| f.is_child_table())
-            .and_then(|f| record.get(&f.name))
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            QefroError::not_found(format!("no document template for '{}'", entity.name))
+        })?;
+        self.hydrate_print_relations(ctx, &entity, &format, &mut record, 0)
+            .await?;
+        let table = format.item_table.as_deref().or_else(|| {
+            entity
+                .fields
+                .iter()
+                .find(|f| f.is_child_table())
+                .map(|f| f.name.as_str())
+        });
+        let items = table
+            .and_then(|name| record.get(name))
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
         Ok((format, record, items))
+    }
+
+    async fn hydrate_print_relations(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        format: &qefro_core::PrintFormat,
+        record: &mut Value,
+        depth: usize,
+    ) -> QefroResult<()> {
+        if depth >= 4 {
+            return Ok(());
+        }
+        use qefro_core::RelationKind;
+        let referenced = print_relation_aliases(format);
+        for field in &entity.fields {
+            let Some(rel) = &field.relation else {
+                continue;
+            };
+            if rel.kind != RelationKind::ManyToOne {
+                continue;
+            }
+            let alias = field
+                .name
+                .strip_suffix("_id")
+                .unwrap_or(field.name.as_str());
+            if !referenced.is_empty()
+                && !referenced.contains(&field.name)
+                && !referenced.contains(alias)
+            {
+                continue;
+            }
+            let Some(id_str) = record.get(&field.name).and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Ok(id) = Uuid::parse_str(id_str) else {
+                continue;
+            };
+            if self
+                .permissions
+                .check(ctx, &rel.target_entity, Action::Read)
+                .is_err()
+            {
+                continue;
+            }
+            let Ok(mut related) = self.get(ctx, &rel.target_entity, id).await else {
+                continue;
+            };
+            if let Ok(target) = self.registry.get(&rel.target_entity) {
+                Box::pin(self.hydrate_print_relations(
+                    ctx,
+                    &target,
+                    format,
+                    &mut related,
+                    depth + 1,
+                ))
+                .await?;
+            }
+            if let Some(obj) = record.as_object_mut() {
+                obj.insert(alias.to_string(), related.clone());
+                let expanded = obj.entry("_expanded").or_insert_with(|| json!({}));
+                if let Some(map) = expanded.as_object_mut() {
+                    map.insert(field.name.clone(), related.clone());
+                    map.insert(alias.to_string(), related);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub async fn dashboard_card_value(
@@ -2686,6 +2780,41 @@ struct RelatedSpec {
     label: String,
     target: Arc<qefro_core::EntityDef>,
     inverse: String,
+}
+
+fn print_relation_aliases(format: &qefro_core::PrintFormat) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    let mut push_path = |path: &str| {
+        if let Some(first) = path.split('.').next() {
+            let first = first.trim();
+            if !first.is_empty() {
+                names.insert(first.to_string());
+                names.insert(format!("{first}_id"));
+            }
+        }
+    };
+    if let Some(body) = &format.body {
+        for path in qefro_core::template_paths(body) {
+            push_path(&path);
+        }
+    }
+    for section in &format.sections {
+        if let Some(rel) = &section.relation {
+            push_path(rel);
+        }
+        for field in &section.fields {
+            push_path(field);
+        }
+        if let Some(text) = &section.text {
+            for path in qefro_core::template_paths(text) {
+                push_path(&path);
+            }
+        }
+        if let Some(when) = &section.show_when {
+            push_path(when.split(['>', '<', '=', '!']).next().unwrap_or(""));
+        }
+    }
+    names
 }
 
 fn relation_expansion(

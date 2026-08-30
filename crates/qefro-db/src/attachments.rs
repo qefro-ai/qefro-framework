@@ -829,6 +829,75 @@ impl EntityService {
         Ok(row)
     }
 
+    /// Attach a generated PDF. Requires Read on the source entity, not Update.
+    pub async fn attach_generated_document(
+        &self,
+        ctx: &OpContext,
+        entity_name: &str,
+        record_id: Uuid,
+        filename: &str,
+        mime: &str,
+        bytes: &[u8],
+        blobs: &dyn BlobStore,
+        store: &AttachmentStore,
+        activity_message: &str,
+    ) -> QefroResult<Attachment> {
+        let entity = self.registry().get(entity_name)?;
+        self.require_attachments(&entity)?;
+        self.permissions().check(ctx, &entity.name, Action::Read)?;
+        self.get(ctx, &entity.name, record_id).await?;
+        let filename = sanitize_filename(filename)?;
+        let mime = resolve_mime(&filename, mime, bytes)?;
+        validate_upload(&filename, &mime, bytes.len() as i64)?;
+        let id = Uuid::new_v4();
+        let key = storage_key(&entity.name, record_id, id, &filename)?;
+        self.put_blob(blobs, ctx.tenant_id, &key, bytes)?;
+        let row = Attachment {
+            id,
+            tenant_id: ctx.tenant_id,
+            entity: entity.name.clone(),
+            record_id,
+            filename: filename.clone(),
+            mime_type: mime,
+            size: bytes.len() as i64,
+            storage_key: key.clone(),
+            uploaded_by: Some(ctx.user_id),
+            created_at: chrono::Utc::now(),
+            description: Some(activity_message.chars().take(500).collect()),
+            uploaded_by_name: Some(ctx.activity_actor_name()),
+        };
+        if let Err(err) = store.insert(&row).await {
+            self.enqueue_blob_purge(ctx, &key, id).await;
+            return Err(err);
+        }
+        let meta = json!({
+            "message": activity_message,
+            "filename": filename,
+            "attachment_id": id,
+            "size": row.size,
+            "mime_type": row.mime_type,
+            "generated": true,
+        });
+        self.record_file_side_effects(
+            ctx,
+            &entity,
+            record_id,
+            "document.generated",
+            "document.generated",
+            Some("attachment.created"),
+            activity_message,
+            meta,
+            None,
+            Some(&json!({
+                "filename": filename,
+                "attachment_id": id,
+                "size": row.size,
+            })),
+        )
+        .await?;
+        Ok(row)
+    }
+
     pub async fn get_attachment(
         &self,
         ctx: &OpContext,

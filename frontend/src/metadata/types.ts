@@ -104,6 +104,7 @@ export type UiEntity = {
   singleton?: boolean;
   attachments?: boolean;
   capabilities?: EntityCapabilities;
+  print_formats?: Array<{ name: string; title?: string; variant?: string; version?: number }>;
   actions?: Array<{ name: string; label?: string; confirmation?: { required?: boolean; message?: string } }>;
   links?: Array<{
     label: string;
@@ -146,6 +147,7 @@ export type EntityCapabilities = {
   import?: boolean;
   export?: boolean;
   bulk?: boolean;
+  print?: boolean;
 };
 
 export type RecordPermissions = {

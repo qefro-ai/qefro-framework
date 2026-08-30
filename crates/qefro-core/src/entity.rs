@@ -877,7 +877,18 @@ impl EntityDef {
                 import: self.standalone && !self.singleton,
                 export: self.standalone,
                 bulk: self.standalone && !self.singleton,
+                print: !self.print_formats.is_empty() || self.document.is_some(),
             }),
+            print_formats: self
+                .print_formats
+                .iter()
+                .map(|f| crate::ui::PrintFormatSummary {
+                    name: f.name.clone(),
+                    title: f.document_title(),
+                    variant: f.variant.clone(),
+                    version: f.version,
+                })
+                .collect(),
             actions: self.actions.clone(),
             links: self.links.clone(),
             public_form: self.public_form.clone(),

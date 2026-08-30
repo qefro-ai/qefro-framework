@@ -1,7 +1,7 @@
 use qefro_core::ui::{ChartMeasureSpec, ChartViewSpec, ListColumnSpec, SortSpec};
 use qefro_core::{
     CalendarViewSpec, ChildTableDef, EntityDef, EntityViews, FieldDef, KanbanCardSpec,
-    KanbanViewSpec, ListViewSpec, UiConfig,
+    KanbanViewSpec, ListViewSpec, PrintFormat, PrintSection, UiConfig,
 };
 use serde_json::json;
 
@@ -195,6 +195,19 @@ pub fn opportunity() -> EntityDef {
         .label_plural("Opportunities")
         .table_name("opportunities")
         .workflow("opportunity")
+        .attachments()
+        .print_format(
+            PrintFormat::new("Quote", "Opportunity")
+                .title("Quote")
+                .item_table("lines")
+                .total_fields(&["amount"])
+                .filename_field("name")
+                .section(PrintSection::kind("header"))
+                .section(PrintSection::kind("customer").fields(&["customer.name"]))
+                .section(PrintSection::kind("items").loop_over("lines"))
+                .section(PrintSection::kind("totals"))
+                .section(PrintSection::kind("footer")),
+        )
         .field(FieldDef::string("name").required().searchable())
         .field(
             FieldDef::many_to_one("customer_id", "CrmCustomer")

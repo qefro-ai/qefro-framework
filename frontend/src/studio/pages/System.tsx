@@ -63,6 +63,42 @@ export default function System({ caps }: { caps: string[] }) {
             />
           </label>
           <label>
+            Address
+            <input
+              value={config.branding.address ?? ""}
+              onChange={(e) =>
+                setConfig({ ...config, branding: { ...config.branding, address: e.target.value } })
+              }
+            />
+          </label>
+          <label>
+            Phone
+            <input
+              value={config.branding.phone ?? ""}
+              onChange={(e) =>
+                setConfig({ ...config, branding: { ...config.branding, phone: e.target.value } })
+              }
+            />
+          </label>
+          <label>
+            Email
+            <input
+              value={config.branding.email ?? ""}
+              onChange={(e) =>
+                setConfig({ ...config, branding: { ...config.branding, email: e.target.value } })
+              }
+            />
+          </label>
+          <label>
+            Website
+            <input
+              value={config.branding.website ?? ""}
+              onChange={(e) =>
+                setConfig({ ...config, branding: { ...config.branding, website: e.target.value } })
+              }
+            />
+          </label>
+          <label>
             Primary color
             <input
               value={config.branding.primary_color ?? ""}

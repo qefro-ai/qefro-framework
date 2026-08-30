@@ -360,9 +360,13 @@ impl MetadataChangeService {
                 }
             }
             "print_format" => {
+                qefro_core::reject_unsafe_print_payload(payload)?;
                 let pf: PrintFormat = serde_json::from_value(payload.clone())
                     .map_err(|e| QefroError::bad_request(e.to_string()))?;
-                self.registry.get(&pf.entity)?;
+                let errors = qefro_core::validate_print_format(&pf, self.registry.as_ref());
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
+                }
             }
             _ => {}
         }
@@ -594,8 +598,13 @@ impl MetadataChangeService {
                 self.catalog.upsert_page(page);
             }
             "print_format" => {
+                qefro_core::reject_unsafe_print_payload(payload)?;
                 let pf: PrintFormat = serde_json::from_value(payload.clone())
                     .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                let errors = qefro_core::validate_print_format(&pf, self.registry.as_ref());
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
+                }
                 self.catalog.upsert_print_format(pf);
             }
             other => {
