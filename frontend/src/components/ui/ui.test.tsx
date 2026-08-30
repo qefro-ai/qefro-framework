@@ -6,6 +6,9 @@ import { PageHeader } from "./PageHeader";
 import { SectionHeader } from "./SectionHeader";
 import { SnackbarHost, showSnackbar } from "./Snackbar";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { Button } from "./Button";
+import { IconButton } from "./IconButton";
+import { Chip } from "./Chip";
 import { buttonClass } from "../../theme/tokens";
 
 describe("StatusBadge", () => {
@@ -86,6 +89,34 @@ describe("M3 buttons and snackbar", () => {
     expect(screen.getByRole("button", { name: "Text" })).toHaveClass("text");
     expect(screen.getByRole("button", { name: "More" })).toHaveClass("icon-btn");
     expect(screen.getByRole("button", { name: "Delete" })).toHaveClass("danger");
+  });
+
+  it("renders Button and IconButton primitives", () => {
+    render(
+      <>
+        <Button>Save</Button>
+        <Button variant="outlined">Export</Button>
+        <IconButton label="Close">×</IconButton>
+      </>,
+    );
+    expect(screen.getByRole("button", { name: "Save" })).toHaveClass("btn");
+    expect(screen.getByRole("button", { name: "Export" })).toHaveClass("ghost");
+    expect(screen.getByRole("button", { name: "Close" })).toHaveAttribute("title", "Close");
+  });
+
+  it("renders selectable and removable chips", async () => {
+    const onRemove = vi.fn();
+    render(
+      <>
+        <Chip selected>Status: Preparing</Chip>
+        <Chip onRemove={onRemove} removeLabel="Clear customer">
+          Customer: Ahmed
+        </Chip>
+      </>,
+    );
+    expect(screen.getByRole("button", { name: "Status: Preparing" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(screen.getByRole("button", { name: "Clear customer" }));
+    expect(onRemove).toHaveBeenCalled();
   });
 
   it("announces snackbar messages", async () => {
