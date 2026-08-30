@@ -128,4 +128,23 @@ describe("CalendarView", () => {
     await waitFor(() => expect(onError).toHaveBeenCalledWith("Cannot reschedule this record."));
     expect(api.update).not.toHaveBeenCalled();
   });
+
+  it("switches to agenda and today", () => {
+    wrap(
+      <CalendarView
+        meta={reservation}
+        entities={[reservation]}
+        slug="reservations"
+        rows={[]}
+        total={0}
+        loading={false}
+        onReload={() => undefined}
+        onError={() => undefined}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Agenda" }));
+    expect(screen.getByTestId("loc").textContent).toContain("cal=agenda");
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    expect(screen.getByRole("button", { name: "Today" })).toBeInTheDocument();
+  });
 });

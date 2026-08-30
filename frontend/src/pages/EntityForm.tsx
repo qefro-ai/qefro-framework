@@ -160,6 +160,23 @@ function EntityFormEditor({ entities }: { entities: UiEntity[] }) {
     writeDraft(slug, id, values);
   }, [slug, id, dirty, values]);
 
+  useEffect(() => {
+    const sched = meta?.scheduling;
+    const duration = sched?.duration_minutes;
+    if (!sched || !duration) return;
+    const timeName = sched.time;
+    const endName = sched.end_time;
+    if (!timeName || !endName) return;
+    const start = String(values[timeName] ?? "");
+    if (!start) return;
+    const [h, m] = start.split(":").map(Number);
+    if (Number.isNaN(h)) return;
+    const total = h * 60 + (Number.isNaN(m) ? 0 : m) + duration;
+    const next = `${String(Math.floor(total / 60) % 24).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+    if (values[endName]) return;
+    setValues((prev) => ({ ...prev, [endName]: next }));
+  }, [meta, values]);
+
   const blocker = useBlocker(({ nextLocation }) => {
     if (!dirty || saving) return false;
     if (nextLocation.search.includes("return=")) return false;
@@ -307,6 +324,17 @@ function EntityFormEditor({ entities }: { entities: UiEntity[] }) {
             });
           }}
         />
+        {meta.scheduling ? (
+          <AvailabilityPicker
+            slug={entitySlug}
+            meta={meta}
+            values={values}
+            onPick={(name, value) => {
+              setDirty(true);
+              setValues((prev) => ({ ...prev, [name]: value }));
+            }}
+          />
+        ) : null}
         {error && <ErrorState message={error} />}
         <div className="form-actions actions">
           <Link to={cancelTo}>
@@ -372,4 +400,70 @@ function coerce(field: UiField, raw: unknown): unknown {
   if (field.type === "integer" || field.type === "decimal") return Number(raw);
   if (field.type === "boolean") return Boolean(raw);
   return raw;
+}
+
+function AvailabilityPicker({
+  slug,
+  meta,
+  values,
+  onPick,
+}: {
+  slug: string;
+  meta: UiEntity;
+  values: Record<string, unknown>;
+  onPick: (name: string, value: string) => void;
+}) {
+  const sched = meta.scheduling;
+  const [slots, setSlots] = useState<Array<{ start: string; end: string; available: boolean }>>([]);
+  const dateField = sched?.start;
+  const timeField = sched?.time;
+  const resourceField = sched?.resources?.[0];
+  const date = dateField ? String(values[dateField] ?? "") : "";
+  const resource = resourceField ? String(values[resourceField] ?? "") : "";
+
+  useEffect(() => {
+    if (!sched || !date) {
+      setSlots([]);
+      return;
+    }
+    const q = new URLSearchParams();
+    q.set("date", date.slice(0, 10));
+    if (resourceField && resource) q.set(resourceField, resource);
+    if (sched.duration_minutes) q.set("duration", String(sched.duration_minutes));
+    let cancelled = false;
+    api
+      .availability(slug, q)
+      .then((result) => {
+        if (!cancelled) setSlots(result.slots ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setSlots([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, date, resource, resourceField, sched]);
+
+  if (!sched || !date || slots.length === 0) return null;
+  return (
+    <div className="card availability-slots" aria-label="Available times">
+      <p className="muted">Available times</p>
+      <div className="chips">
+        {slots.map((slot) => (
+          <button
+            key={slot.start}
+            type="button"
+            className={`chip${slot.available ? "" : " is-unavailable"}`}
+            disabled={!slot.available}
+            onClick={() => {
+              if (timeField) onPick(timeField, slot.start);
+              if (sched.end_time) onPick(sched.end_time, slot.end);
+            }}
+          >
+            {slot.start}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }

@@ -106,6 +106,7 @@ export type UiEntity = {
   capabilities?: EntityCapabilities;
   print_formats?: Array<{ name: string; title?: string; variant?: string; version?: number }>;
   communications?: Array<{ name: string; event?: string; channels?: string[]; purpose?: string }>;
+  scheduling?: SchedulingSummary;
   actions?: Array<{ name: string; label?: string; confirmation?: { required?: boolean; message?: string } }>;
   links?: Array<{
     label: string;
@@ -150,6 +151,22 @@ export type EntityCapabilities = {
   bulk?: boolean;
   print?: boolean;
   communication?: boolean;
+  scheduling?: boolean;
+};
+
+export type SchedulingSummary = {
+  start: string;
+  end?: string;
+  time?: string;
+  end_time?: string;
+  all_day?: string;
+  resources?: string[];
+  conflict?: boolean;
+  calendar?: boolean;
+  duration_minutes?: number;
+  slot_interval_minutes?: number;
+  day_start_hour?: number;
+  day_end_hour?: number;
 };
 
 export type RecordPermissions = {

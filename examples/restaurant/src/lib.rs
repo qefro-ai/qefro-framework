@@ -84,6 +84,24 @@ pub fn module() -> AppModule {
                 .count("id")
                 .chart("bar"),
         )
+        .report(
+            ReportDef::new("bookings-by-day", "Reservation")
+                .label("Bookings By Day")
+                .module("restaurant")
+                .fields(&["reservation_date"])
+                .group_by(&["reservation_date"])
+                .count("id")
+                .chart("bar"),
+        )
+        .report(
+            ReportDef::new("table-utilization", "Reservation")
+                .label("Table Utilization")
+                .module("restaurant")
+                .fields(&["table_id"])
+                .group_by(&["table_id"])
+                .count("id")
+                .chart("bar"),
+        )
         .notification(
             NotificationDef::new("reservation_confirmed", "reservation.confirmed")
                 .channels(&["in_app", "email"])
@@ -122,6 +140,17 @@ pub fn module() -> AppModule {
                 .purpose(PURPOSE_TRANSACTIONAL)
                 .subject("Reservation confirmed")
                 .body("Hello {{ customer.name }},\nyour reservation is confirmed.")
+                .recipient_path("customer")
+                .preferred_channel_field("communication_channel")
+                .opt_out_field("marketing_opt_out")
+                .module("restaurant"),
+        )
+        .communication(
+            CommunicationDef::new("reservation_reminder", "reservation.reminder", "Reservation")
+                .channels(&[CHANNEL_WHATSAPP, CHANNEL_EMAIL, CHANNEL_IN_APP])
+                .purpose(PURPOSE_TRANSACTIONAL)
+                .subject("Reservation reminder")
+                .body("Hello {{ customer.name }},\nthis is a reminder of your reservation.")
                 .recipient_path("customer")
                 .preferred_channel_field("communication_channel")
                 .opt_out_field("marketing_opt_out")

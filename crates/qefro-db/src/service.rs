@@ -135,6 +135,15 @@ impl EntityService {
         self.outbox.dispatch_pending(&self.events, 100).await
     }
 
+    pub async fn availability(
+        &self,
+        ctx: &OpContext,
+        entity_name: &str,
+        params: &std::collections::HashMap<String, String>,
+    ) -> QefroResult<Value> {
+        crate::scheduling::availability(self, ctx, entity_name, params).await
+    }
+
     pub async fn execute(
         &self,
         ctx: &OpContext,
@@ -349,6 +358,20 @@ impl EntityService {
             .begin()
             .await
             .map_err(|e| QefroError::database(e.to_string()))?;
+        if let Err(e) = crate::scheduling::enforce_in_tx(
+            &mut tx,
+            &self.repo,
+            &self.registry,
+            ctx,
+            &entity,
+            &data,
+            None,
+        )
+        .await
+        {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
         if let Some(naming) = &entity.naming {
             if naming.assign_on != "submit" {
                 let number = crate::numbering::allocate(
@@ -467,6 +490,13 @@ impl EntityService {
             let _ = tx.rollback().await;
             return Err(e);
         }
+        if let Err(e) =
+            crate::scheduling::enqueue_reminder_tx(&self.jobs, &mut tx, ctx, &entity, &created)
+                .await
+        {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
         tx.commit()
             .await
             .map_err(|e| QefroError::database(e.to_string()))?;
@@ -538,6 +568,7 @@ impl EntityService {
             }
         }
         apply_entity_rules(entity.business_fields(), &entity.validation, &merged, true)?;
+        crate::scheduling::prepare_record(&entity, &mut merged, &ctx.timezone);
         self.check_relation_existence(ctx, &entity, &merged).await?;
         self.check_assignment(ctx, &entity, &merged).await?;
         self.validate_child_payloads(ctx, &entity, &children, true)
@@ -552,6 +583,20 @@ impl EntityService {
             .begin()
             .await
             .map_err(|e| QefroError::database(e.to_string()))?;
+        if let Err(e) = crate::scheduling::enforce_in_tx(
+            &mut tx,
+            &self.repo,
+            &self.registry,
+            ctx,
+            &entity,
+            &merged,
+            Some(id),
+        )
+        .await
+        {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
         let updated = match self.repo.update_tx(&mut tx, &entity, ctx, id, patch).await {
             Ok(v) => v,
             Err(e) => {
@@ -652,6 +697,13 @@ impl EntityService {
         if let Err(e) = self
             .enqueue_due_reminder_tx(&mut tx, ctx, &entity, &updated)
             .await
+        {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+        if let Err(e) =
+            crate::scheduling::enqueue_reminder_tx(&self.jobs, &mut tx, ctx, &entity, &updated)
+                .await
         {
             let _ = tx.rollback().await;
             return Err(e);
@@ -2908,6 +2960,7 @@ fn prepare_record(entity: &qefro_core::EntityDef, data: &mut Value, ctx: &OpCont
     apply_defaults(entity, data, ctx);
     canonicalize_values(entity, data, ctx);
     sanitize_values(entity, data);
+    crate::scheduling::prepare_record(entity, data, &ctx.timezone);
 }
 
 fn apply_defaults(entity: &qefro_core::EntityDef, data: &mut Value, ctx: &OpContext) {

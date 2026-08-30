@@ -805,6 +805,43 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
             println!("  {}  {}  {}", fmt.document_title(), fmt.variant, fmt.name);
         }
     }
+    if let Some(sched) = &entity.scheduling {
+        println!("Scheduling");
+        println!("  Start     {}", sched.start_field);
+        if let Some(time) = &sched.time_field {
+            println!("  Time      {time}");
+        }
+        if let Some(end) = &sched.end_field {
+            println!("  End       {end}");
+        }
+        if let Some(end_time) = &sched.end_time_field {
+            println!("  End time  {end_time}");
+        }
+        if sched.resources.is_empty() {
+            println!("  Resource  (none)");
+        } else {
+            println!("  Resource  {}", sched.resources.join(", "));
+        }
+        println!(
+            "  Calendar  {}",
+            if sched.calendar {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+        println!(
+            "  Conflict  {}",
+            if sched.conflict {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+        if let Some(mins) = sched.duration_minutes {
+            println!("  Duration  {mins} minutes");
+        }
+    }
     let comms: Vec<_> = runtime
         .communications()
         .into_iter()
@@ -903,6 +940,11 @@ fn cmd_validate(app: &str) -> Result<()> {
     }
     for def in runtime.communications() {
         for err in qefro_core::validate_communication(&def, &registry) {
+            errors.push(err);
+        }
+    }
+    for entity in runtime.entities() {
+        for err in qefro_core::validate_scheduling(&entity, Some(&registry)) {
             errors.push(err);
         }
     }

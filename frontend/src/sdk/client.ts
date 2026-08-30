@@ -563,6 +563,13 @@ export class QefroClient {
       metric: string;
       series: Array<{ label: string; value: number }>;
     }>(`/api/v1/${slug}/aggregates?${params}`);
+  availability = (slug: string, params: URLSearchParams) =>
+    request<{
+      entity: string;
+      date: string;
+      duration_minutes: number;
+      slots: Array<{ start: string; end: string; available: boolean }>;
+    }>(`/api/v1/${slug}/availability?${params}`);
   settings = (slug: string) => request<Record<string, unknown>>(`/api/v1/settings/${slug}`);
   saveSettings = (slug: string, body: unknown) =>
     request<Record<string, unknown>>(`/api/v1/settings/${slug}`, {

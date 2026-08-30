@@ -34,6 +34,7 @@ pub mod rate_limit;
 pub mod registry;
 pub mod sanitize;
 pub mod schedule;
+pub mod scheduling;
 pub mod seed;
 pub mod storage;
 pub mod studio;
@@ -133,6 +134,11 @@ pub use rate_limit::{MemoryRateLimiter, RateLimiter};
 pub use registry::EntityRegistry;
 pub use sanitize::sanitize_html;
 pub use schedule::{next_run_after, parse_cron, parse_timezone, schedule_slot_key, CronExpr};
+pub use scheduling::{
+    apply_default_end, conflict_message, generate_slots, intervals_overlap, is_blackout, lock_key,
+    parse_date, parse_window, validate_scheduling, window_within_working_hours, AvailabilitySlot,
+    SchedulingConfig, SchedulingSummary, TimeWindow, WorkingHours,
+};
 pub use seed::SeedBatch;
 pub use storage::{BlobStore, LocalBlobStore};
 pub use studio::{
@@ -178,7 +184,7 @@ pub mod prelude {
         AppModule, AppModuleBuilder, AutomationDef, ChildTableDef, DocumentConfig, EntityActionDef,
         EntityDef, EntityRegistry, FieldDef, FieldType, LinkDef, NamingConfig, NotificationDef,
         OnDelete, OpContext, PageDef, PrintFormat, PublicFormDef, QefroError, QefroResult,
-        RecordLifecycle, RelationDef, RelationKind, ReportDef, RowPolicy, UiConfig, ValidationRule,
-        ValidationRules, WebhookDef,
+        RecordLifecycle, RelationDef, RelationKind, ReportDef, RowPolicy, SchedulingConfig,
+        UiConfig, ValidationRule, ValidationRules, WebhookDef,
     };
 }

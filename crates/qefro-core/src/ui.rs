@@ -398,6 +398,8 @@ pub struct UiEntityMeta {
     pub print_formats: Vec<PrintFormatSummary>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub communications: Vec<CommunicationSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduling: Option<crate::scheduling::SchedulingSummary>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<crate::platform::EntityActionDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -468,6 +470,9 @@ pub struct EntityCapabilities {
     /// Entity has at least one communication template.
     #[serde(default)]
     pub communication: bool,
+    /// Entity opted into the scheduling capability.
+    #[serde(default)]
+    pub scheduling: bool,
 }
 
 /// Templates advertised to the generic UI. Presentation only.

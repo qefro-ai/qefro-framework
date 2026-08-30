@@ -3,6 +3,7 @@ use crate::error::{QefroError, QefroResult};
 use crate::field::{ChildTableDef, FieldDef, FieldType, RelationKind};
 use crate::ident::to_plural_slug;
 use crate::platform::{EntityActionDef, LinkDef, PublicFormDef};
+use crate::scheduling::SchedulingConfig;
 use crate::ui::{UiEntityMeta, UiFieldView, UI_SCHEMA_VERSION};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -102,6 +103,9 @@ pub struct EntityDef {
     /// Server-side declarative rules. Complements per-field ValidationRules.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub validation: Vec<crate::validation::ValidationRule>,
+    /// Opt-in generic scheduling (start/end, resources, conflicts, calendar).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduling: Option<SchedulingConfig>,
     /// Schema is owned elsewhere (auth `users` table). EntityService still
     /// exposes this entity; `apply_schema` does not emit DDL for it.
     #[serde(default)]
@@ -150,6 +154,7 @@ impl EntityDef {
             public_form: None,
             views: None,
             validation: Vec::new(),
+            scheduling: None,
             skip_ddl: false,
         }
     }
@@ -274,6 +279,11 @@ impl EntityDef {
 
     pub fn print_format(mut self, format: PrintFormat) -> Self {
         self.print_formats.push(format);
+        self
+    }
+
+    pub fn scheduling(mut self, config: SchedulingConfig) -> Self {
+        self.scheduling = Some(config);
         self
     }
 
@@ -546,6 +556,9 @@ impl EntityDef {
         }
         self.validate_ui_layout()?;
         self.validate_rules()?;
+        for err in crate::scheduling::validate_scheduling(self, None) {
+            return Err(QefroError::bad_request(err));
+        }
         Ok(())
     }
 
@@ -879,6 +892,7 @@ impl EntityDef {
                 bulk: self.standalone && !self.singleton,
                 print: !self.print_formats.is_empty() || self.document.is_some(),
                 communication: false,
+                scheduling: self.scheduling.is_some(),
             }),
             print_formats: self
                 .print_formats
@@ -891,6 +905,7 @@ impl EntityDef {
                 })
                 .collect(),
             communications: Vec::new(),
+            scheduling: self.scheduling.as_ref().map(|s| s.to_summary()),
             actions: self.actions.clone(),
             links: self.links.clone(),
             public_form: self.public_form.clone(),

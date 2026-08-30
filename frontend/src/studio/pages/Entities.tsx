@@ -9,6 +9,7 @@ import FormPreview from "../preview/FormPreview";
 import ViewsPreview from "../preview/ViewsPreview";
 import ViewsEditor from "../editors/ViewsEditor";
 import LayoutEditor from "../editors/LayoutEditor";
+import SchedulingEditor from "../editors/SchedulingEditor";
 
 type EntityPayload = {
   entity?: Record<string, unknown>;
@@ -95,6 +96,7 @@ export default function Entities({ caps }: { caps: string[] }) {
           <li><label><input type="checkbox" checked={Boolean(def.activity)} readOnly /> Activity</label></li>
           <li><label><input type="checkbox" checked={Boolean(def.audit)} readOnly /> Audit</label></li>
           <li><label><input type="checkbox" checked={Boolean(def.workflow)} readOnly /> Workflow</label></li>
+          <li><label><input type="checkbox" checked={Boolean(def.scheduling)} readOnly /> Scheduling</label></li>
         </ul>
       ) : null}
       {detail?.source_managed ? <p className="muted">Custom Rust operations remain source-managed.</p> : null}
@@ -105,7 +107,7 @@ export default function Entities({ caps }: { caps: string[] }) {
         </p>
       ) : null}
       <div className="studio-tabs">
-        {["fields", "relations", "child tables", "computed", "actions", "links", "public form", "layout", "views", "preview", "source"].map((name) => (
+        {["fields", "relations", "child tables", "computed", "actions", "links", "public form", "layout", "views", "scheduling", "preview", "source"].map((name) => (
           <button
             key={name}
             className={tab === name ? "" : "ghost"}
@@ -258,6 +260,18 @@ export default function Entities({ caps }: { caps: string[] }) {
           />
           <ViewsPreview entity={ui} />
         </>
+      )}
+      {tab === "scheduling" && (
+        <SchedulingEditor
+          entity={entity}
+          def={def}
+          ui={ui}
+          canPublish={can(caps, "studio.publish")}
+          onSaved={async () => {
+            setDetail(await api.studioEntity(entity));
+            setMessage("Published scheduling.");
+          }}
+        />
       )}
       {tab === "preview" && ui && <FormPreview entity={ui} />}
       {tab === "source" && (

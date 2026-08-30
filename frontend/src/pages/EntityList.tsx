@@ -134,7 +134,7 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
         const to = new Date(cursor);
         if (cal === "day") {
           /* same day */
-        } else if (cal === "week") {
+        } else if (cal === "week" || cal === "agenda") {
           const day = (from.getDay() + 6) % 7;
           from.setDate(from.getDate() - day);
           to.setDate(from.getDate() + 6);
