@@ -164,7 +164,7 @@ async fn staff_token(
 }
 
 async fn drain_jobs(state: &qefro_api::AppState) {
-    for _ in 0..200 {
+    for _ in 0..500 {
         match state
             .entities
             .job_queue()
@@ -172,7 +172,8 @@ async fn drain_jobs(state: &qefro_api::AppState) {
             .await
         {
             Ok(true) => {}
-            _ => break,
+            Ok(false) => break,
+            Err(_) => {}
         }
     }
 }

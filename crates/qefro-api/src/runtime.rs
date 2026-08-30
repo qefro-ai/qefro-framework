@@ -218,12 +218,12 @@ impl QefroRuntime {
     }
 
     pub fn dashboards(&self) -> Vec<qefro_core::DashboardDef> {
-        let mut cards = vec![qefro_core::task_dashboard()];
-        cards.extend(
-            self.apps
-                .iter()
-                .flat_map(|a| a.module.dashboards.clone()),
-        );
+        let mut cards: Vec<qefro_core::DashboardDef> = self
+            .apps
+            .iter()
+            .flat_map(|a| a.module.dashboards.clone())
+            .collect();
+        cards.push(qefro_core::task_dashboard());
         cards
     }
 
@@ -401,7 +401,7 @@ impl QefroRuntime {
                 print_formats.extend(entity.print_formats.clone());
             }
         }
-        dashboards.insert(0, qefro_core::task_dashboard());
+        dashboards.push(qefro_core::task_dashboard());
 
         registry.wire_identity_inverses()?;
 
@@ -575,8 +575,7 @@ impl QefroRuntime {
                 })
             })
             .collect();
-        default_nav_items.insert(
-            0,
+        default_nav_items.push(
             qefro_core::WorkspaceNavItem {
                 label: "Tasks".into(),
                 entity: qefro_core::TASK_ENTITY.into(),

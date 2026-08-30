@@ -5,6 +5,8 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 fn db_url() -> String {
     std::env::var("DATABASE_URL").expect(
         "DATABASE_URL is required for integration tests. Run scripts/setup-postgres.sh, then export DATABASE_URL=postgres://qefro:qefro@127.0.0.1:5432/qefro",
@@ -41,6 +43,7 @@ impl JobHandler for Succeed {
 
 #[tokio::test]
 async fn jobs_execute_retry_fail_and_preserve_tenant() {
+    let _lock = TEST_LOCK.lock().await;
     let url = db_url();
     let pool = connect(&url).await.unwrap();
     apply_schema(&pool, &qefro_core::EntityRegistry::new())
@@ -129,12 +132,19 @@ async fn process_until(
     id: Uuid,
     want: &str,
 ) {
-    for _ in 0..30 {
+    for _ in 0..50 {
         sqlx::query("UPDATE jobs SET run_at = now() WHERE id = $1")
             .bind(id)
             .execute(pool)
             .await
             .ok();
+        sqlx::query(
+            "UPDATE jobs SET run_at = now() + interval '1 hour' WHERE status = 'pending' AND id <> $1 AND run_at <= now()",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .ok();
         let _ = queue.process_one(registry).await.unwrap();
         let job = queue.get(tenant_id, id).await.unwrap();
         if job.status == want && (want != "pending" || job.attempts > 0) {
@@ -154,6 +164,7 @@ async fn process_until(
 
 #[tokio::test]
 async fn reclaim_running_jobs_after_crash() {
+    let _lock = TEST_LOCK.lock().await;
     let url = db_url();
     let pool = connect(&url).await.unwrap();
     apply_schema(&pool, &qefro_core::EntityRegistry::new())
