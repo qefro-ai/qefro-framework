@@ -7,6 +7,7 @@ import { ErrorState, Skeleton } from "../components/ui/EmptyState";
 import { PageHeader } from "../components/ui/PageHeader";
 import { showSnackbar } from "../components/ui/Snackbar";
 import { friendlyError } from "../friendlyError";
+import { t } from "../i18n";
 import { previewFormula } from "../metadata/formula";
 import { displayValue } from "../metadata/views";
 import { useBreadcrumbRecord } from "../components/shell/breadcrumbContext";
@@ -73,6 +74,8 @@ function EntityFormEditor({ entities }: { entities: UiEntity[] }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
   const [focusField, setFocusField] = useState<string | null>(null);
   const [focusSeq, setFocusSeq] = useState(0);
   const { setRecord } = useBreadcrumbRecord();
@@ -117,6 +120,8 @@ function EntityFormEditor({ entities }: { entities: UiEntity[] }) {
             if (q) next[field.name] = q;
           }
           setValues(next);
+          setUpdatedAt(typeof row.updated_at === "string" ? row.updated_at : null);
+          setConflict(false);
           setDirty(Boolean(draft));
           if (meta) setRecord({ id, label: displayValue(row, meta.display_field) || id });
         })
@@ -187,6 +192,7 @@ function EntityFormEditor({ entities }: { entities: UiEntity[] }) {
       setSaved(false);
       let createdId = id;
       if (id) {
+        if (updatedAt) body._expected_updated_at = updatedAt;
         if (isSingleton) await api.saveSettings(entitySlug, body);
         else await api.update(entitySlug, id, body);
       } else if (isSingleton) {
@@ -217,7 +223,10 @@ function EntityFormEditor({ entities }: { entities: UiEntity[] }) {
         navigate(`/${entitySlug}/${createdId}`);
       }
     } catch (err) {
-      if (err instanceof ApiError) {
+      if (err instanceof ApiError && err.status === 409 && /another user/i.test(err.message)) {
+        setConflict(true);
+        setError(err.message);
+      } else if (err instanceof ApiError) {
         setError(friendlyError(err));
         const next: Record<string, string> = {};
         for (const fe of err.fields) next[fe.field] = fe.message;
@@ -319,6 +328,35 @@ function EntityFormEditor({ entities }: { entities: UiEntity[] }) {
         onConfirm={() => {
           if (slug) clearDraft(slug, id);
           blocker.proceed?.();
+        }}
+      />
+      <ConfirmDialog
+        open={conflict}
+        title={t("conflict.title")}
+        message={t("conflict.message")}
+        cancelLabel={t("conflict.stay")}
+        confirmLabel={t("conflict.reload")}
+        onCancel={() => setConflict(false)}
+        onConfirm={() => {
+          void (async () => {
+            if (!slug || !id) return;
+            clearDraft(slug, id);
+            try {
+              const row = await api.get(slug, id);
+              const next: Record<string, unknown> = {};
+              for (const field of fields) {
+                next[field.name] = row[field.name] ?? "";
+              }
+              setValues(next);
+              setUpdatedAt(typeof row.updated_at === "string" ? row.updated_at : null);
+              setDirty(false);
+              setConflict(false);
+              setError("");
+              setSaved(false);
+            } catch (err) {
+              setError(friendlyError(err));
+            }
+          })();
         }}
       />
     </div>

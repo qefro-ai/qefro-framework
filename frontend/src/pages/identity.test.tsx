@@ -108,6 +108,7 @@ function wrap(ui: ReactElement, path: string) {
           { path: "/:slug", element: ui },
           { path: "/:slug/new", element: ui },
           { path: "/:slug/:id", element: ui },
+          { path: "/:slug/:id/edit", element: ui },
         ],
       },
     ],
@@ -161,6 +162,29 @@ describe("identity generic UI", () => {
     expect(await screen.findByLabelText("Name *")).toBeInTheDocument();
     expect(screen.getByLabelText("Password")).toHaveAttribute("type", "password");
     expect(screen.queryByText("password_hash")).not.toBeInTheDocument();
+  });
+
+  it("asks to reload when another user changed the record", async () => {
+    vi.spyOn(api, "get").mockResolvedValue({
+      id: "u1",
+      name: "Ada",
+      email: "ada@ex.com",
+      updated_at: "2026-01-01T00:00:00Z",
+    });
+    vi.spyOn(api, "update").mockRejectedValue(
+      new ApiError("Record changed by another user. Reload before saving.", 409),
+    );
+    wrap(<EntityForm entities={[userEntity]} />, "/users/u1/edit");
+    expect(await screen.findByLabelText("Name *")).toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText("Name *"));
+    await userEvent.type(screen.getByLabelText("Name *"), "Ada Lovelace");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent(/another user/i);
+    expect(api.update).toHaveBeenCalledWith(
+      "users",
+      "u1",
+      expect.objectContaining({ _expected_updated_at: "2026-01-01T00:00:00Z" }),
+    );
   });
 
   it("offers a person → user relation and create-account checkbox", async () => {

@@ -9,11 +9,10 @@ use crate::repository::{record_id, EntityRepository, Page};
 use chrono::Utc;
 use qefro_auth::AuthService;
 use qefro_core::{
-    canonicalize_datetime, is_person_link_field, person_backref_field, sanitize_html,
-    strip_secrets, validate_party, validate_record, apply_entity_rules, existence_rules,
-    EntityRegistry, FieldError, FieldType,
-    HookRegistry, OpContext, OperationDef, QefroError, QefroResult, PERSON_ENTITY,
-    PERSON_LINK_FIELD, USER_ENTITY,
+    apply_entity_rules, canonicalize_datetime, existence_rules, is_person_link_field,
+    person_backref_field, sanitize_html, strip_secrets, validate_party, validate_record,
+    EntityRegistry, FieldError, FieldType, HookRegistry, OpContext, OperationDef, QefroError,
+    QefroResult, PERSON_ENTITY, PERSON_LINK_FIELD, USER_ENTITY,
 };
 use qefro_events::{DomainEvent, InProcessEventBus};
 use qefro_permissions::{Action, PermissionRegistry};
@@ -29,13 +28,13 @@ use uuid::Uuid;
 /// audit all happen here — never in the transport.
 #[derive(Clone)]
 pub struct EntityService {
-    registry: Arc<EntityRegistry>,
-    repo: Arc<EntityRepository>,
-    permissions: Arc<PermissionRegistry>,
+    pub(crate) registry: Arc<EntityRegistry>,
+    pub(crate) repo: Arc<EntityRepository>,
+    pub(crate) permissions: Arc<PermissionRegistry>,
     workflows: Arc<WorkflowRegistry>,
     hooks: Arc<HookRegistry>,
     events: InProcessEventBus,
-    audit: Arc<AuditLogger>,
+    pub(crate) audit: Arc<AuditLogger>,
     pub(crate) activity: Arc<crate::activity::ActivityStore>,
     operations: Arc<OperationRegistry>,
     jobs: Arc<JobQueue>,
@@ -223,7 +222,8 @@ impl EntityService {
         if entity.name == USER_ENTITY {
             return self.list_users(ctx, query).await;
         }
-        let query = query.sanitize(&entity)?;
+        let mut query = query.sanitize(&entity)?;
+        self.apply_row_policy_filters(ctx, &entity, &mut query);
         let mut page = self.repo.list(&entity, ctx, &query).await?;
         for item in &mut page.items {
             coerce_numeric_json(&entity, item);
@@ -248,6 +248,7 @@ impl EntityService {
             return self.present(ctx, &entity, record).await;
         }
         let record = self.repo.get(&entity, ctx, id).await?;
+        self.enforce_row_policy(ctx, &entity, &record)?;
         self.present(ctx, &entity, record).await
     }
 
@@ -289,12 +290,7 @@ impl EntityService {
             }
         }
         validate_record(entity.business_fields(), &data, false)?;
-        apply_entity_rules(
-            entity.business_fields(),
-            &entity.validation,
-            &data,
-            false,
-        )?;
+        apply_entity_rules(entity.business_fields(), &entity.validation, &data, false)?;
         self.check_relation_existence(ctx, &entity, &data).await?;
         self.validate_child_payloads(ctx, &entity, &children, false)
             .await?;
@@ -426,6 +422,22 @@ impl EntityService {
         canonicalize_values(&entity, &mut patch, ctx);
         sanitize_values(&entity, &mut patch);
         let current = self.repo.get(&entity, ctx, id).await?;
+        self.enforce_row_policy(ctx, &entity, &current)?;
+        if let Some(expected) = patch
+            .as_object_mut()
+            .and_then(|o| o.remove("_expected_updated_at"))
+        {
+            let current_ts = current
+                .get("updated_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let expected = expected.as_str().unwrap_or("");
+            if !expected.is_empty() && current_ts != expected {
+                return Err(QefroError::conflict(
+                    "Record changed by another user. Reload before saving.",
+                ));
+            }
+        }
         validate_party(&entity, &patch, Some(&current))?;
         if let Some(doc) = &entity.document {
             let status = current.get("status").and_then(|v| v.as_str()).unwrap_or("");
@@ -450,12 +462,7 @@ impl EntityService {
                 dst.insert(k.clone(), v.clone());
             }
         }
-        apply_entity_rules(
-            entity.business_fields(),
-            &entity.validation,
-            &merged,
-            true,
-        )?;
+        apply_entity_rules(entity.business_fields(), &entity.validation, &merged, true)?;
         self.check_relation_existence(ctx, &entity, &merged).await?;
         self.validate_child_payloads(ctx, &entity, &children, true)
             .await?;
@@ -583,6 +590,7 @@ impl EntityService {
             return self.delete_user(ctx, id).await;
         }
         let current = self.repo.get(&entity, ctx, id).await?;
+        self.enforce_row_policy(ctx, &entity, &current)?;
         self.hooks
             .before_delete(ctx, &entity.name, &current)
             .await?;
@@ -673,6 +681,7 @@ impl EntityService {
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Update)?;
         let current = self.repo.get(&entity, ctx, id).await?;
+        self.enforce_row_policy(ctx, &entity, &current)?;
         let wf = self
             .workflows
             .for_entity(&entity.name)
@@ -682,6 +691,9 @@ impl EntityService {
             .and_then(|v| v.as_str())
             .unwrap_or(&wf.initial)
             .to_string();
+        if let Some(t) = wf.find_transition(&from, transition) {
+            t.guard_allows(&current)?;
+        }
         let to = self.workflows.apply(&entity.name, &from, transition, ctx)?;
         let patch = json!({ wf.field.clone(): to.clone() });
         let mut tx = self
@@ -1316,9 +1328,10 @@ impl EntityService {
             {
                 continue;
             }
-            let link = entity.links.iter().find(|l| {
-                l.entity == spec.target.name && l.relation == spec.inverse
-            });
+            let link = entity
+                .links
+                .iter()
+                .find(|l| l.entity == spec.target.name && l.relation == spec.inverse);
             let mut query = Query::default();
             query.page_size = link.and_then(|l| l.limit).unwrap_or(50).min(50);
             query.filters.push(Filter::Eq {
@@ -2267,7 +2280,11 @@ impl EntityService {
         Ok(())
     }
 
-    fn ensure_app(&self, ctx: &OpContext, entity: &qefro_core::EntityDef) -> QefroResult<()> {
+    pub(crate) fn ensure_app(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+    ) -> QefroResult<()> {
         if ctx.allows_app(entity.module.as_deref()) {
             Ok(())
         } else {
@@ -2275,7 +2292,7 @@ impl EntityService {
         }
     }
 
-    fn reject_worker_crud(&self, ctx: &OpContext) -> QefroResult<()> {
+    pub(crate) fn reject_worker_crud(&self, ctx: &OpContext) -> QefroResult<()> {
         if ctx.is_automation() {
             return Ok(());
         }
@@ -2306,7 +2323,9 @@ impl EntityService {
             if value.is_none() || value == Some(&Value::Null) {
                 continue;
             }
-            let Some(id) = value.and_then(|v| v.as_str()).and_then(|s| Uuid::parse_str(s).ok())
+            let Some(id) = value
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok())
             else {
                 errors.push(FieldError::new(
                     field_name,

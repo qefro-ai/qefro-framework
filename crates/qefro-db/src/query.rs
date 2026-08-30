@@ -146,6 +146,11 @@ pub fn apply_filters(
         qb.push(quote_ident("deleted_at")?);
         qb.push(" IS NULL");
     }
+    if entity.archives() && !query.include_archived {
+        qb.push(" AND ");
+        qb.push(quote_ident("archived_at")?);
+        qb.push(" IS NULL");
+    }
     for filter in &query.filters {
         qb.push(" AND ");
         apply_filter(qb, entity, filter)?;

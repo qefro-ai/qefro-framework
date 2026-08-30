@@ -432,6 +432,8 @@ pub struct EntityPermissions {
     pub read: bool,
     pub update: bool,
     pub delete: bool,
+    #[serde(default)]
+    pub export: bool,
 }
 
 /// Which business-object surfaces the generic UI may offer. Not authorization.
@@ -451,6 +453,16 @@ pub struct EntityCapabilities {
     pub relations: bool,
     #[serde(default)]
     pub actions: bool,
+    #[serde(default)]
+    pub archive: bool,
+    #[serde(default)]
+    pub assignment: bool,
+    #[serde(default)]
+    pub import: bool,
+    #[serde(default)]
+    pub export: bool,
+    #[serde(default)]
+    pub bulk: bool,
 }
 
 fn default_true_standalone() -> bool {
@@ -1089,10 +1101,7 @@ impl TenantBranding {
     }
 
     fn blank(value: &Option<String>) -> bool {
-        value
-            .as_ref()
-            .map(|s| s.trim().is_empty())
-            .unwrap_or(true)
+        value.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1324,7 +1333,10 @@ mod tests {
         assert_eq!(json["tab"], "Details");
         assert_eq!(json["columns"][0]["fields"][0], "name");
         let names = section.field_names();
-        assert_eq!(names, vec!["name", "email", "phone", "party_type", "person_id"]);
+        assert_eq!(
+            names,
+            vec!["name", "email", "phone", "party_type", "person_id"]
+        );
         let legacy: ViewSectionSpec = serde_json::from_value(json!({
             "title": "Customer",
             "fields": ["name", "email"]

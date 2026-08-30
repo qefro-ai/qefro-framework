@@ -121,6 +121,7 @@ pub fn customer() -> EntityDef {
                 .columns(&["guest_name", "reservation_date", "status"])
                 .limit(20),
         )
+        .with_archive()
         .build()
 }
 
@@ -429,10 +430,8 @@ pub fn reservation() -> EntityDef {
                         "status",
                     ]),
                 ]),
-                ViewSectionSpec::new("Additional Information").fields(&[
-                    "notes",
-                    "cancellation_reason",
-                ]),
+                ViewSectionSpec::new("Additional Information")
+                    .fields(&["notes", "cancellation_reason"]),
             ])),
             detail: Some(DetailViewSpec::sections(vec![
                 ViewSectionSpec::new("Reservation").fields(&[

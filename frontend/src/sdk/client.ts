@@ -218,6 +218,35 @@ export class QefroClient {
       body: JSON.stringify(body),
     });
   remove = (slug: string, id: string) => request<void>(`/api/v1/${slug}/${id}`, { method: "DELETE" });
+  bulk = (
+    slug: string,
+    body: { action: string; ids: string[]; fields?: Record<string, unknown> },
+  ) =>
+    request<{
+      action: string;
+      succeeded: number;
+      failed: number;
+      results: Array<{ id: string; ok: boolean; error?: string }>;
+    }>(`/api/v1/${slug}/bulk`, { method: "POST", body: JSON.stringify(body) });
+  exportCsv = async (slug: string, params: URLSearchParams) => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    const res = await fetch(`/api/v1/${slug}/export?${params}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new ApiError(data.message || data.error || res.statusText, res.status);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const disposition = res.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/);
+    link.href = url;
+    link.download = match?.[1] || `${slug}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
   transition = (slug: string, id: string, transition: string) =>
     request<Record<string, unknown>>(`/api/v1/${slug}/${id}/transition`, {
       method: "POST",

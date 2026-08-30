@@ -89,6 +89,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/reports/{name}", get(get_report))
         .route("/api/v1/reports/{name}/run", post(run_report))
         .route("/api/v1/{slug}/aggregates", get(entity_aggregates))
+        .route("/api/v1/{slug}/bulk", post(bulk_entities))
+        .route("/api/v1/{slug}/export", get(export_entities))
         .route("/api/v1/{slug}/{id}/print", get(print_document))
         .route("/api/v1/{slug}/{id}/print.pdf", get(print_document_pdf))
         .route("/api/v1/{slug}/{id}/preview", get(print_document))
@@ -319,15 +321,18 @@ async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<
                 read: permissions.allows(&ctx.roles, &e.name, Action::Read),
                 update: permissions.allows(&ctx.roles, &e.name, Action::Update),
                 delete: permissions.allows(&ctx.roles, &e.name, Action::Delete),
+                export: permissions.allows(&ctx.roles, &e.name, Action::Export),
             });
             let ops = state.entities.operations().for_entity(&e.name);
             if let Some(cap) = meta.capabilities.as_mut() {
                 cap.actions = cap.actions || !ops.is_empty();
             }
             for binding in ops {
-                if meta.actions.iter().any(|a| {
-                    a.name == binding.def.name || a.operation == binding.def.name
-                }) {
+                if meta
+                    .actions
+                    .iter()
+                    .any(|a| a.name == binding.def.name || a.operation == binding.def.name)
+                {
                     continue;
                 }
                 let mut action = qefro_core::EntityActionDef::new(&binding.def.name)
@@ -541,12 +546,62 @@ fn reject_reserved(slug: &str) -> Result<(), ApiError> {
         "realtime",
         "public",
         "workspace",
+        "bulk",
+        "export",
     ];
     if RESERVED.contains(&slug) {
         Err(QefroError::not_found(format!("entity '{slug}' not found")).into())
     } else {
         Ok(())
     }
+}
+
+async fn bulk_entities(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(slug): Path<String>,
+    Json(body): Json<qefro_db::BulkRequest>,
+) -> Result<Json<Value>, ApiError> {
+    reject_reserved(&slug)?;
+    Ok(Json(state.entities.bulk(&ctx, &slug, body).await?))
+}
+
+async fn export_entities(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(slug): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, ApiError> {
+    reject_reserved(&slug)?;
+    let entity = state.entities.registry().get(&slug)?;
+    let ids = params.get("ids").and_then(|raw| {
+        let parsed: Vec<Uuid> = raw
+            .split(',')
+            .filter_map(|part| Uuid::parse_str(part.trim()).ok())
+            .collect();
+        if parsed.is_empty() {
+            None
+        } else {
+            Some(parsed)
+        }
+    });
+    let raw: Vec<(String, String)> = params.into_iter().filter(|(key, _)| key != "ids").collect();
+    let query = parse_query(&entity, &raw)?;
+    let (filename, csv) = state
+        .entities
+        .export_csv(&ctx, &entity.name, query, ids)
+        .await?;
+    let disposition = format!(
+        "attachment; filename=\"{}\"",
+        filename.replace(['"', '/', '\\'], "")
+    );
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        csv,
+    ))
 }
 
 async fn list_entities(
@@ -1166,9 +1221,7 @@ async fn get_branding(
     let config = state.tenants.get_config(ctx.tenant_id).await?;
     let tenant = state.tenants.get(ctx.tenant_id).await.ok();
     let branding = state.resolve_branding(&ctx, &config, tenant.as_ref().map(|t| t.name.as_str()));
-    Ok(Json(
-        serde_json::to_value(branding).unwrap_or(json!({})),
-    ))
+    Ok(Json(serde_json::to_value(branding).unwrap_or(json!({}))))
 }
 
 async fn patch_branding(
