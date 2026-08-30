@@ -46,7 +46,7 @@ describe("ActionBar", () => {
       />,
     );
     expect(screen.getByText("Confirm")).toBeInTheDocument();
-    expect(screen.getByText("More")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "More" })).toBeInTheDocument();
   });
 
   it("asks for confirmation before a workflow transition", async () => {

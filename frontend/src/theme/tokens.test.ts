@@ -9,6 +9,11 @@ import {
   MD_MOTION_TOKENS,
   MD_SHAPE_TOKENS,
   MD_TYPE_TOKENS,
+  QEFRO_COLOR_ROLES,
+  QEFRO_ELEVATION_TOKENS,
+  QEFRO_MOTION_TOKENS,
+  QEFRO_SHAPE_TOKENS,
+  QEFRO_TYPE_TOKENS,
   buttonClass,
 } from "./tokens";
 
@@ -17,6 +22,11 @@ const css = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../st
 describe("M3 token layer", () => {
   it("defines color roles, shape, elevation, type, and motion in CSS", () => {
     for (const token of [
+      ...QEFRO_COLOR_ROLES,
+      ...QEFRO_SHAPE_TOKENS,
+      ...QEFRO_ELEVATION_TOKENS,
+      ...QEFRO_TYPE_TOKENS,
+      ...QEFRO_MOTION_TOKENS,
       ...MD_COLOR_ROLES,
       ...MD_SHAPE_TOKENS,
       ...MD_ELEVATION_TOKENS,
