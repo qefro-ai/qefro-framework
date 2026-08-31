@@ -60,10 +60,11 @@ pub use accounting::{
 };
 pub use app::{AppManifest, AppModule, AppModuleBuilder, NavItem};
 pub use automation::{
-    parse_wait_duration, reject_unsafe_automation_payload, validate_automation, ActivityAction,
-    AssignAction, AutomationAction, AutomationDef, AutomationStep, AutomationTrigger,
-    CommentAction, CommunicationAction, CreateEntityAction, NotifyAction, PrintDocumentAction,
-    TransitionAction, UpdateEntityAction, WaitSpec, WebhookAction, DEFAULT_AUTOMATION_DEPTH,
+    is_privileged_automation_role, parse_wait_duration, reject_unsafe_automation_payload,
+    sanitize_automation_roles, validate_automation, ActivityAction, AssignAction, AutomationAction,
+    AutomationDef, AutomationStep, AutomationTrigger, CommentAction, CommunicationAction,
+    CreateEntityAction, NotifyAction, PrintDocumentAction, TransitionAction, UpdateEntityAction,
+    WaitSpec, WebhookAction, DEFAULT_AUTOMATION_DEPTH,
 };
 pub use bundle::AppBundle;
 pub use catalog::{
@@ -92,7 +93,9 @@ pub use communication::{
     COMM_SENT, COMM_SKIPPED, PURPOSE_MARKETING, PURPOSE_TRANSACTIONAL,
 };
 pub use condition::Condition;
-pub use context::{OpContext, ROLE_PUBLIC, ROLE_WORKER};
+pub use context::{
+    is_privileged_role, OpContext, ROLE_ADMIN, ROLE_PUBLIC, ROLE_SYSTEM, ROLE_WORKER,
+};
 pub use custom::{
     core_fields_of, custom_fields_of, custom_type_allowed, custom_types_compatible,
     flatten_nested_custom, is_reserved_custom_name, merge_custom_fields, pack_custom_values,

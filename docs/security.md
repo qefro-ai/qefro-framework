@@ -24,7 +24,7 @@ COMMIT
 Event (realtime, notification, webhook, job)
 ```
 
-Workers are not on this path. See [Jobs](jobs.md).
+Workers are not on this path. See [Jobs](jobs.md). Full boundary inventory: [security-audit.md](security-audit.md).
 
 ## Tenant isolation
 
@@ -61,7 +61,14 @@ Do not log passwords, access tokens, `DATABASE_URL`, or JWT secrets. HTTP 5xx us
 
 Limits: list page size ≤ 200, max 20 filters, max 3 sort fields, search ≤ 200 characters, CSV/JSON import ≤ 10 MiB (max 100,000 rows / 64 columns), attachments ≤ 10 MiB, request body ≤ 12 MiB.
 
-See also [threat-model.md](threat-model.md) and [v1-compatibility.md](v1-compatibility.md).
+## Production gates
+
+- `JWT_SECRET` must be non-default and at least 16 characters when `QEFRO_ENV=production`.
+- `QEFRO_ALLOW_REGISTER` defaults to false in production.
+- `QEFRO_CORS_ORIGINS` must not be `*`. Unset uses the origin of `QEFRO_PUBLIC_URL`.
+- Authentication is the `Authorization: Bearer` header, not cookies. Cookie CSRF tokens are not used. Logout revokes the session row; tenant switch revokes the previous session.
+
+See also [threat-model.md](threat-model.md), [security-audit.md](security-audit.md), and [v1-compatibility.md](v1-compatibility.md).
 
 ## Field permissions
 

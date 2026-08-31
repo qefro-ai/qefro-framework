@@ -177,6 +177,9 @@ async fn register(
     State(state): State<AppState>,
     Json(body): Json<RegisterBody>,
 ) -> Result<Json<AuthToken>, ApiError> {
+    if !state.allow_register {
+        return Err(QefroError::forbidden("registration is disabled").into());
+    }
     let token = state
         .auth
         .register(
@@ -248,7 +251,7 @@ async fn switch_tenant(
 ) -> Result<Json<AuthToken>, ApiError> {
     let token = state
         .auth
-        .switch_tenant(ctx.user_id, body.tenant_id)
+        .switch_tenant(ctx.user_id, body.tenant_id, ctx.session_id)
         .await?;
     Ok(Json(token))
 }

@@ -50,6 +50,7 @@ pub struct AppState {
     pub communications: Arc<CommunicationStore>,
     pub communication_defs: Vec<qefro_core::CommunicationDef>,
     pub communication_hub: Arc<CommunicationHub>,
+    pub allow_register: bool,
 }
 
 impl AppState {

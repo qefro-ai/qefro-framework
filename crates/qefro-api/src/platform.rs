@@ -645,11 +645,29 @@ async fn realtime(
     let tenant = ctx.tenant_id;
     let entity_filter = q.entity;
     let record_filter = q.record_id;
+    let allowed_entities: std::collections::HashSet<String> = state
+        .entities
+        .registry()
+        .list()
+        .into_iter()
+        .filter(|entity| {
+            state
+                .entities
+                .permissions()
+                .check(&ctx, &entity.name, Action::Read)
+                .is_ok()
+        })
+        .map(|entity| entity.name.clone())
+        .collect();
     let stream = BroadcastStream::new(rx).filter_map(move |msg| {
         let entity_filter = entity_filter.clone();
+        let allowed_entities = allowed_entities.clone();
         async move {
             let Ok(msg) = msg else { return None };
             if msg.tenant_id != tenant {
+                return None;
+            }
+            if !allowed_entities.contains(&msg.entity) {
                 return None;
             }
             if let Some(entity) = &entity_filter {

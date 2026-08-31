@@ -1,6 +1,7 @@
 //! Declarative automation metadata. Execution lives in EntityService / JobQueue.
 
 use crate::condition::Condition;
+use crate::context::{is_privileged_role, ROLE_PUBLIC};
 use crate::ident::snake_case;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -629,6 +630,14 @@ pub fn validate_automation(
     if def.name.trim().is_empty() {
         errors.push("automation is missing a name".into());
     }
+    for role in &def.as_roles {
+        if is_privileged_automation_role(role) {
+            errors.push(format!(
+                "automation '{}': as_roles cannot include privileged role '{role}'",
+                def.name
+            ));
+        }
+    }
     if def.trigger.is_scheduled() {
         if def.trigger.schedule.as_deref().unwrap_or("").is_empty() {
             errors.push(format!(
@@ -657,6 +666,19 @@ pub fn validate_automation(
     errors
 }
 
+/// Admin / System / Public must never be used as automation execution roles.
+pub fn is_privileged_automation_role(role: &str) -> bool {
+    is_privileged_role(role) || role.eq_ignore_ascii_case(ROLE_PUBLIC)
+}
+
+/// Drop privileged roles. Empty result means the caller should use Worker.
+pub fn sanitize_automation_roles(roles: Vec<String>) -> Vec<String> {
+    roles
+        .into_iter()
+        .filter(|role| !is_privileged_automation_role(role))
+        .collect()
+}
+
 /// Studio payloads must not carry credentials. Secrets stay in server config.
 pub fn reject_unsafe_automation_payload(payload: &Value) -> crate::error::QefroResult<()> {
     fn walk(value: &Value, errors: &mut Vec<String>) {
@@ -673,6 +695,22 @@ pub fn reject_unsafe_automation_payload(payload: &Value) -> crate::error::QefroR
                         || key.contains("jwt")
                     {
                         errors.push(format!("automation metadata must not contain '{k}'"));
+                    }
+                    if key == "as_roles" {
+                        let roles: Vec<&str> = match v {
+                            Value::Array(items) => {
+                                items.iter().filter_map(|item| item.as_str()).collect()
+                            }
+                            Value::String(s) => s.split(',').map(str::trim).collect(),
+                            _ => Vec::new(),
+                        };
+                        for role in roles {
+                            if is_privileged_automation_role(role) {
+                                errors.push(format!(
+                                    "automation as_roles cannot include privileged role '{role}'"
+                                ));
+                            }
+                        }
                     }
                     walk(v, errors);
                 }
@@ -859,5 +897,21 @@ steps:
         let err = reject_unsafe_automation_payload(&json!({"api_key": "x"}));
         assert!(err.is_err());
         assert!(reject_unsafe_automation_payload(&json!({"name": "ok"})).is_ok());
+        let admin = reject_unsafe_automation_payload(&json!({"as_roles": ["Admin"]}));
+        assert!(admin.is_err(), "{admin:?}");
+    }
+
+    #[test]
+    fn validate_rejects_admin_as_roles() {
+        let def = AutomationDef::new("priv", AutomationTrigger::event("entity.created"))
+            .as_roles(&["Admin"])
+            .action(AutomationAction::create_activity("x"));
+        let errs = validate_automation(&def, None);
+        assert!(errs.iter().any(|e| e.contains("privileged")), "{errs:?}");
+        assert!(
+            sanitize_automation_roles(vec!["Admin".into(), "Staff".into()])
+                .iter()
+                .eq(["Staff"])
+        );
     }
 }

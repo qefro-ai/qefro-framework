@@ -1,6 +1,6 @@
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { clearToken, type UiEntity } from "../../api";
+import { api, clearToken, type UiEntity } from "../../api";
 import type { WorkspaceNavItem } from "../../metadata/types";
 import { workspaceItemHref } from "../../metadata/navigation";
 import { usePrefs } from "../../prefsContext";
@@ -150,7 +150,12 @@ export function AppShell({
                 <button
                   type="button"
                   className="ghost"
-                  onClick={() => {
+                  onClick={async () => {
+                    try {
+                      await api.logout();
+                    } catch {
+                      /* still drop the local token */
+                    }
                     clearToken();
                     navigate("/login");
                   }}

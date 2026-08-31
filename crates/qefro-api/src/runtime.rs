@@ -3,6 +3,9 @@ use crate::realtime::{RealtimeFanout, RealtimeHub};
 use crate::routes;
 use crate::state::AppState;
 use anyhow::Context;
+use axum::http::{header, HeaderValue, Method, Request};
+use axum::middleware::Next;
+use axum::response::Response;
 use qefro_agent::ToolRegistry;
 use qefro_auth::AuthService;
 use qefro_core::{
@@ -24,7 +27,7 @@ use qefro_workflow::{WorkflowDef, WorkflowRegistry};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 #[derive(Clone, Debug)]
@@ -40,6 +43,12 @@ pub struct Config {
     /// When true, the HTTP process also polls jobs. Production compose runs
     /// `qefro worker` separately and sets this false.
     pub embed_worker: bool,
+    /// Open self-service tenant registration. Default true in development,
+    /// false in production unless `QEFRO_ALLOW_REGISTER=true`.
+    pub allow_register: bool,
+    /// Allowed browser origins. Empty in development means any origin.
+    /// Production never uses `*`; unset falls back to `public_url`.
+    pub cors_origins: Vec<String>,
 }
 
 impl Default for Config {
@@ -54,6 +63,8 @@ impl Default for Config {
             storage_path: "./var/qefro-storage".into(),
             auto_migrate: true,
             embed_worker: true,
+            allow_register: true,
+            cors_origins: Vec::new(),
         }
     }
 }
@@ -61,10 +72,24 @@ impl Default for Config {
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         let env = std::env::var("QEFRO_ENV").unwrap_or_else(|_| "development".into());
+        let production = env.eq_ignore_ascii_case("production");
         let auto_migrate = match std::env::var("QEFRO_AUTO_MIGRATE") {
             Ok(v) => matches!(v.as_str(), "1" | "true" | "TRUE" | "yes"),
-            Err(_) => env != "production",
+            Err(_) => !production,
         };
+        let allow_register = match std::env::var("QEFRO_ALLOW_REGISTER") {
+            Ok(v) => matches!(v.as_str(), "1" | "true" | "TRUE" | "yes"),
+            Err(_) => !production,
+        };
+        let cors_origins = std::env::var("QEFRO_CORS_ORIGINS")
+            .ok()
+            .map(|raw| {
+                raw.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         Ok(Self {
             database_url: std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgres://qefro:qefro@127.0.0.1:5432/qefro".into()),
@@ -80,10 +105,26 @@ impl Config {
             auto_migrate,
             embed_worker: match std::env::var("QEFRO_EMBED_WORKER") {
                 Ok(v) => matches!(v.as_str(), "1" | "true" | "TRUE" | "yes"),
-                Err(_) => env != "production",
+                Err(_) => !production,
             },
+            allow_register,
+            cors_origins,
             env,
         })
+    }
+
+    pub fn is_production(&self) -> bool {
+        self.env.eq_ignore_ascii_case("production")
+    }
+
+    fn cors_origin_list(&self) -> Vec<String> {
+        if !self.cors_origins.is_empty() {
+            return self.cors_origins.clone();
+        }
+        if self.is_production() {
+            return vec![origin_from_public_url(&self.public_url)];
+        }
+        Vec::new()
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
@@ -93,6 +134,9 @@ impl Config {
             }
             if self.database_url.is_empty() {
                 anyhow::bail!("DATABASE_URL is required");
+            }
+            if self.cors_origins.iter().any(|o| o == "*") {
+                anyhow::bail!("QEFRO_CORS_ORIGINS must not be '*' in production");
             }
         }
         if self.bind.parse::<std::net::SocketAddr>().is_err() {
@@ -914,15 +958,14 @@ impl QefroRuntime {
             communications: Arc::new(communication_store),
             communication_defs,
             communication_hub,
+            allow_register: self.config.allow_register,
         };
 
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any);
+        let cors = cors_layer(&self.config);
 
         let router = routes::router(state.clone())
             .layer(cors)
+            .layer(axum::middleware::from_fn(security_headers))
             .layer(TraceLayer::new_for_http())
             .layer(axum::middleware::from_fn(crate::metrics::track))
             .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024));
@@ -1019,4 +1062,71 @@ async fn shutdown_signal() {
     {
         let _ = ctrl_c.await;
     }
+}
+
+fn origin_from_public_url(url: &str) -> String {
+    match url.split_once("://") {
+        Some((scheme, rest)) => {
+            let host = rest.split('/').next().unwrap_or(rest);
+            format!("{scheme}://{host}")
+        }
+        None => url.trim_end_matches('/').to_string(),
+    }
+}
+
+fn cors_layer(config: &Config) -> CorsLayer {
+    let methods = [
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::PATCH,
+        Method::DELETE,
+        Method::OPTIONS,
+        Method::HEAD,
+    ];
+    let headers = [
+        header::AUTHORIZATION,
+        header::CONTENT_TYPE,
+        header::ACCEPT,
+        header::HeaderName::from_static("x-request-id"),
+    ];
+    let origins = config.cors_origin_list();
+    let any = !config.is_production() && (origins.is_empty() || origins.iter().any(|o| o == "*"));
+    if any {
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::any())
+            .allow_methods(methods)
+            .allow_headers(headers)
+    } else {
+        let parsed: Vec<HeaderValue> = origins.into_iter().filter_map(|o| o.parse().ok()).collect();
+        CorsLayer::new()
+            .allow_origin(parsed)
+            .allow_methods(methods)
+            .allow_headers(headers)
+    }
+}
+
+async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let headers = res.headers_mut();
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        header::HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'none'; script-src 'self' https://unpkg.com 'unsafe-inline'; style-src 'self' https://unpkg.com 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+        ),
+    );
+    res
 }

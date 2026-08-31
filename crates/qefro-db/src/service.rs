@@ -2039,6 +2039,7 @@ impl EntityService {
         let mut query = qefro_search::Query::default();
         query.filters = parsed;
         query.page_size = 500;
+        self.apply_row_policy_filters(ctx, &entity, &mut query);
         let rows = crate::reports::execute_report(
             self.pool(),
             &entity,
@@ -2230,7 +2231,8 @@ impl EntityService {
             })
             .collect();
         raw.push(("page_size".into(), "1".into()));
-        let query = parse_query(&entity, &raw)?;
+        let mut query = parse_query(&entity, &raw)?;
+        self.apply_row_policy_filters(ctx, &entity, &mut query);
         if matches!(kind.as_str(), "chart" | "status_breakdown" | "workflow") {
             let group_by = card
                 .group_by
@@ -2338,11 +2340,12 @@ impl EntityService {
         group_by: &str,
         metric: &str,
         field: Option<&str>,
-        query: Query,
+        mut query: Query,
     ) -> QefroResult<Value> {
         let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_app(ctx, &entity)?;
         self.permissions.check(ctx, &entity.name, Action::List)?;
+        self.apply_row_policy_filters(ctx, &entity, &mut query);
         if entity.get_field(group_by).is_some_and(|f| f.custom)
             || (entity.get_field(group_by).is_none() && !entity.has_column(group_by))
         {
