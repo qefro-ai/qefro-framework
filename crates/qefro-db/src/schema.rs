@@ -591,8 +591,7 @@ pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
 
 pub async fn apply_schema(pool: &PgPool, registry: &EntityRegistry) -> QefroResult<()> {
     for stmt in split_sql(SYSTEM_DDL) {
-        sqlx::query(stmt)
-            .execute(pool)
+        execute_ddl_ignore_exists(pool, stmt)
             .await
             .map_err(|e| QefroError::database(format!("system schema: {e}")))?;
     }
@@ -618,8 +617,7 @@ pub async fn apply_schema(pool: &PgPool, registry: &EntityRegistry) -> QefroResu
         }
         let ddl = entity_ddl(&entity)?;
         for stmt in split_sql(&ddl).into_iter().skip(1) {
-            sqlx::query(stmt)
-                .execute(pool)
+            execute_ddl_ignore_exists(pool, stmt)
                 .await
                 .map_err(|e| QefroError::database(format!("schema {}: {e}", entity.name)))?;
         }
@@ -664,8 +662,7 @@ async fn apply_missing_columns(pool: &PgPool, registry: &EntityRegistry) -> Qefr
             "CREATE INDEX IF NOT EXISTS {}_qefro_custom_gin ON {table} USING GIN (\"qefro_custom\")",
             entity.table
         );
-        sqlx::query(&gin)
-            .execute(pool)
+        execute_ddl_ignore_exists(pool, &gin)
             .await
             .map_err(|e| QefroError::database(format!("gin {}.qefro_custom: {e}", entity.name)))?;
     }
@@ -892,6 +889,24 @@ fn split_sql(ddl: &str) -> Vec<&str> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+/// `CREATE INDEX IF NOT EXISTS` still races under parallel apply_schema.
+async fn execute_ddl_ignore_exists(pool: &PgPool, sql: &str) -> Result<(), sqlx::Error> {
+    match sqlx::query(sql).execute(pool).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("already exists")
+                || msg.contains("duplicate key")
+                || msg.contains("pg_class_relname_nsp_index")
+            {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+    }
 }
 
 pub(crate) fn ident_check(name: &str) -> QefroResult<()> {
