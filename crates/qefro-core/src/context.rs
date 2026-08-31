@@ -46,9 +46,12 @@ pub struct OpContext {
     /// Display name of the acting user. Never agent chain-of-thought.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor_name: Option<String>,
-    /// `user` (default), `agent`, `worker`, or `system`.
+    /// `user` (default), `agent`, `worker`, `system`, or `automation`.
     #[serde(default)]
     pub source: String,
+    /// Nested automation chain length. Event-triggered child runs increment this.
+    #[serde(default)]
+    pub automation_depth: u32,
 }
 
 impl OpContext {
@@ -75,6 +78,7 @@ impl OpContext {
             plan: None,
             actor_name: None,
             source: String::new(),
+            automation_depth: 0,
         }
     }
 
@@ -120,7 +124,7 @@ impl OpContext {
             return "Qefro Agent".into();
         }
         if self.is_automation() {
-            return "Automation".into();
+            return "Qefro Automation".into();
         }
         if self.is_worker() || self.source.eq_ignore_ascii_case("system") {
             return "System".into();
@@ -205,5 +209,7 @@ mod tests {
         assert_eq!(ctx.activity_actor_name(), "Ahmed");
         ctx.source = "agent".into();
         assert_eq!(ctx.activity_actor_name(), "Qefro Agent");
+        ctx.source = "automation".into();
+        assert_eq!(ctx.activity_actor_name(), "Qefro Automation");
     }
 }

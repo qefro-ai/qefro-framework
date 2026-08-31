@@ -7,6 +7,7 @@ import SourceView from "./components/SourceView";
 import Permissions from "./pages/Permissions";
 import Workflows from "./pages/Workflows";
 import CommandPalette from "./components/CommandPalette";
+import AutomationsStudio from "./pages/AutomationsStudio";
 import type { UiEntity } from "../api";
 import { TenantThemeContext } from "../metadata/context";
 import "../widgets";
@@ -85,6 +86,41 @@ beforeEach(() => {
       }
       if (url.includes("/studio/validate") || url.includes("/studio/publish")) {
         return json({ ok: true, impact: "safe", migration_required: false, warnings: [], diff: ["~ status.label"] });
+      }
+      if (url.includes("/studio/automations/") && url.includes("/runs")) {
+        return json({ runs: [{ execution_id: "1", automation_id: "order_confirmed_followup", status: "completed", steps: [] }] });
+      }
+      if (url.includes("/studio/automations/") && url.includes("/preview")) {
+        return json({ automation: "order_confirmed_followup", dry_run: true, would_execute: [{ kind: "notify" }], side_effects: false });
+      }
+      if (url.includes("/studio/automations/") && !url.endsWith("/automations")) {
+        return json({
+          automation: {
+            name: "order_confirmed_followup",
+            enabled: true,
+            description: "Follow up",
+            version: 1,
+            status: "published",
+            trigger: { type: "event", event: "order.confirmed" },
+            steps: [
+              { kind: "send_communication", action: { send_communication: { template: "order_confirmed" } } },
+              { kind: "wait", wait: "30m", label: "wait 30m" },
+              {
+                kind: "condition",
+                condition: { field: "status", equals: "Preparing" },
+                then: [{ kind: "notify", action: { notify: { role: "Manager" } } }],
+                else: [],
+              },
+            ],
+          },
+          json: "{}",
+          yaml: "name: order_confirmed_followup\n",
+        });
+      }
+      if (url.includes("/studio/automations")) {
+        return json({
+          automations: [{ name: "order_confirmed_followup", status: "published", version: 1 }],
+        });
       }
       return json({});
     }),
@@ -229,5 +265,22 @@ describe("Studio UI", () => {
     expect(await screen.findByLabelText("Studio command palette")).toBeInTheDocument();
     fireEvent.change(screen.getByPlaceholderText(/Search metadata/), { target: { value: "Order" } });
     await waitFor(() => expect(screen.getByText(/entity: Order/i)).toBeInTheDocument());
+  });
+
+  it("edits automation nodes and shows validation", async () => {
+    render(
+      <MemoryRouter initialEntries={["/order_confirmed_followup"]}>
+        <Routes>
+          <Route path="/:name" element={<AutomationsStudio caps={["studio.view", "studio.publish"]} />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByDisplayValue("order.confirmed")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Follow up")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add wait" }));
+    expect(screen.getAllByText("Wait").length).toBeGreaterThan(1);
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    expect(screen.getByRole("button", { name: "Disable" })).toBeInTheDocument();
+    expect(screen.getByText(/Automation Runs|No automation runs|completed/i)).toBeTruthy();
   });
 });

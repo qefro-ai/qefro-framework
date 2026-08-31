@@ -11,6 +11,7 @@ import PagesStudio from "./pages/PagesStudio";
 import CommunicationsStudio from "./pages/CommunicationsStudio";
 import System from "./pages/System";
 import Platform from "./pages/Platform";
+import AutomationsStudio from "./pages/AutomationsStudio";
 import CommandPalette from "./components/CommandPalette";
 
 export default function StudioApp() {
@@ -89,7 +90,8 @@ export default function StudioApp() {
           <Route path="permissions/:entity" element={<Permissions caps={caps} />} />
           <Route path="notifications" element={<Platform kind="notifications" />} />
           <Route path="webhooks" element={<Platform kind="webhooks" />} />
-          <Route path="automations" element={<Platform kind="automations" />} />
+          <Route path="automations" element={<AutomationsStudio caps={caps} />} />
+          <Route path="automations/:name" element={<AutomationsStudio caps={caps} />} />
           <Route path="public-forms" element={<Platform kind="public-forms" />} />
           <Route path="reports" element={<ReportsStudio kind="reports" caps={caps} />} />
           <Route path="reports/:name" element={<ReportsStudio kind="reports" caps={caps} />} />

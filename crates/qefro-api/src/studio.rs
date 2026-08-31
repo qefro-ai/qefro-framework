@@ -49,7 +49,12 @@ pub fn router() -> Router<AppState> {
         .route("/notifications", get(list_notifications))
         .route("/webhooks", get(list_webhooks))
         .route("/automations", get(list_automations))
+        .route("/automations/runs", get(list_automation_runs))
         .route("/automations/{name}", get(get_automation))
+        .route("/automations/{name}/preview", post(preview_automation))
+        .route("/automations/{name}/runs", get(list_named_automation_runs))
+        .route("/automations/{name}/disable", post(disable_automation))
+        .route("/automations/{name}/enable", post(enable_automation))
         .route("/public-forms", get(list_public_forms))
         .route("/drafts", get(list_drafts).post(create_draft))
         .route("/drafts/{id}", get(get_draft))
@@ -774,9 +779,8 @@ async fn get_automation(
     Path(name): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     require(&ctx, &state.env, CAP_VIEW)?;
-    let def = state
-        .automation
-        .defs()
+    let defs = state.automation.defs();
+    let def = defs
         .iter()
         .find(|d| d.name == name || d.id_key() == name)
         .ok_or_else(|| QefroError::not_found(format!("automation '{name}' not found")))?;
@@ -785,6 +789,132 @@ async fn get_automation(
         "json": serde_json::to_string_pretty(def).unwrap_or_default(),
         "yaml": to_yaml(def)?,
     })))
+}
+
+#[derive(Debug, Deserialize)]
+struct AutomationPreviewBody {
+    #[serde(default)]
+    event: Option<String>,
+    #[serde(default)]
+    entity: Option<String>,
+    #[serde(default)]
+    record_id: Option<Uuid>,
+    #[serde(default)]
+    payload: Value,
+}
+
+async fn preview_automation(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+    Json(body): Json<AutomationPreviewBody>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let def = state
+        .automation
+        .defs()
+        .into_iter()
+        .find(|d| d.name == name || d.id_key() == name)
+        .ok_or_else(|| QefroError::not_found(format!("automation '{name}' not found")))?;
+    let event_name = body
+        .event
+        .or(def.trigger.event.clone())
+        .unwrap_or_else(|| "entity.updated".into());
+    let entity = body.entity.unwrap_or_default();
+    let mut event = qefro_events::DomainEvent::new(
+        event_name,
+        entity,
+        body.record_id.unwrap_or(Uuid::nil()),
+        ctx.tenant_id,
+        body.payload,
+    );
+    event.user_id = Some(ctx.user_id);
+    let plan = state.automation.preview(&ctx, &name, &event).await?;
+    Ok(Json(plan))
+}
+
+async fn list_automation_runs(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let automation_id = params.get("automation").map(|s| s.as_str());
+    let entity = params.get("entity").map(|s| s.as_str());
+    let record_id = params
+        .get("record_id")
+        .and_then(|s| Uuid::parse_str(s).ok());
+    let runs = state
+        .automation
+        .list_runs(&ctx, automation_id, entity, record_id, 50)
+        .await?;
+    Ok(Json(json!({ "runs": runs })))
+}
+
+async fn list_named_automation_runs(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let runs = state
+        .automation
+        .list_runs(&ctx, Some(&name), None, None, 50)
+        .await?;
+    Ok(Json(json!({ "runs": runs })))
+}
+
+async fn disable_automation(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_PUBLISH)?;
+    set_automation_enabled(&state, &ctx, &name, false).await
+}
+
+async fn enable_automation(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_PUBLISH)?;
+    set_automation_enabled(&state, &ctx, &name, true).await
+}
+
+async fn set_automation_enabled(
+    state: &AppState,
+    ctx: &qefro_core::OpContext,
+    name: &str,
+    enabled: bool,
+) -> Result<Json<Value>, ApiError> {
+    let mut def = state
+        .automation
+        .defs()
+        .into_iter()
+        .find(|d| d.name == name || d.id_key() == name)
+        .ok_or_else(|| QefroError::not_found(format!("automation '{name}' not found")))?;
+    def.enabled = enabled;
+    let payload = serde_json::to_value(&def).unwrap_or(json!({}));
+    let result = state
+        .studio
+        .publish(
+            ctx,
+            PublishRequest {
+                draft_id: None,
+                kind: "automation".into(),
+                target: def.name.clone(),
+                payload,
+                confirm_migration: false,
+                summary: if enabled {
+                    format!("Enable automation {}", def.name)
+                } else {
+                    format!("Disable automation {}", def.name)
+                },
+            },
+        )
+        .await?;
+    Ok(Json(result))
 }
 
 async fn list_public_forms(

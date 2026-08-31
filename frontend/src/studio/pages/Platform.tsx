@@ -5,11 +5,10 @@ import { api } from "../../api";
 export default function Platform({
   kind,
 }: {
-  kind: "notifications" | "webhooks" | "public-forms" | "automations";
+  kind: "notifications" | "webhooks" | "public-forms";
 }) {
   if (kind === "notifications") return <NotificationsPage />;
   if (kind === "webhooks") return <WebhooksPage />;
-  if (kind === "automations") return <AutomationsPage />;
   return <PublicFormsPage />;
 }
 
@@ -127,52 +126,6 @@ function PublicFormsPage() {
           <p>Fields: {Array.isArray(f.fields) ? f.fields.join(", ") : ""}</p>
         </div>
       ))}
-    </div>
-  );
-}
-
-function AutomationsPage() {
-  const [items, setItems] = useState<Array<Record<string, unknown>>>([]);
-  const [yaml, setYaml] = useState("");
-  const [selected, setSelected] = useState("");
-  useEffect(() => {
-    api.studioAutomations().then((d) => setItems(d.automations)).catch(() => setItems([]));
-  }, []);
-  return (
-    <div className="page">
-      <h2>Automations</h2>
-      <p className="muted">
-        Rules run after COMMIT through EntityService, notifications, and webhooks. Secrets are never shown.
-      </p>
-      {items.length === 0 ? <p className="empty">No automations.</p> : null}
-      {items.map((a) => (
-        <div key={String(a.id || a.name)} className="card">
-          <h3>{String(a.name)}</h3>
-          <p>Enabled: {a.enabled === false ? "No" : "Yes"}</p>
-          <p>Module: {String(a.module ?? "")}</p>
-          <p>
-            Trigger:{" "}
-            {String(
-              (a.trigger as { event?: string; schedule?: string; type?: string } | undefined)?.event ||
-                (a.trigger as { schedule?: string } | undefined)?.schedule ||
-                (a.trigger as { type?: string } | undefined)?.type ||
-                "",
-            )}
-          </p>
-          <button
-            type="button"
-            className="ghost"
-            onClick={() => {
-              const name = String(a.name);
-              setSelected(name);
-              api.studioAutomation(name).then((d) => setYaml(d.yaml)).catch(() => setYaml(""));
-            }}
-          >
-            Source
-          </button>
-        </div>
-      ))}
-      {selected && yaml ? <pre className="card">{yaml}</pre> : null}
     </div>
   );
 }

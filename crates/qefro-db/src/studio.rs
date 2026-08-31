@@ -19,7 +19,7 @@ use qefro_workflow::WorkflowDef;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -82,6 +82,7 @@ pub struct MetadataChangeService {
     catalog: Arc<StudioCatalog>,
     audit: AuditLogger,
     env: String,
+    automation: OnceLock<Arc<crate::automation::AutomationEngine>>,
 }
 
 impl MetadataChangeService {
@@ -101,7 +102,12 @@ impl MetadataChangeService {
             permissions,
             catalog,
             env,
+            automation: OnceLock::new(),
         }
+    }
+
+    pub fn bind_automation(&self, engine: Arc<crate::automation::AutomationEngine>) {
+        let _ = self.automation.set(engine);
     }
 
     pub fn env(&self) -> &str {
@@ -255,7 +261,7 @@ impl MetadataChangeService {
                 analysis.diff.push(format!("~ permissions {target}"));
                 Ok(analysis)
             }
-            "report" | "dashboard" | "page" | "print_format" | "communication" => {
+            "report" | "dashboard" | "page" | "print_format" | "communication" | "automation" => {
                 let mut analysis = ChangeAnalysis::safe();
                 analysis.diff.push(format!("~ {kind} {target}"));
                 Ok(analysis)
@@ -383,6 +389,15 @@ impl MetadataChangeService {
                 let def: qefro_core::CommunicationDef = serde_json::from_value(payload.clone())
                     .map_err(|e| QefroError::bad_request(e.to_string()))?;
                 let errors = qefro_core::validate_communication(&def, self.registry.as_ref());
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
+                }
+            }
+            "automation" => {
+                qefro_core::reject_unsafe_automation_payload(payload)?;
+                let def: qefro_core::AutomationDef = serde_json::from_value(payload.clone())
+                    .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                let errors = qefro_core::validate_automation(&def, Some(self.registry.as_ref()));
                 if let Some(err) = errors.into_iter().next() {
                     return Err(QefroError::bad_request(err));
                 }
@@ -554,6 +569,17 @@ impl MetadataChangeService {
                 .catalog
                 .communication(target)
                 .and_then(|c| serde_json::to_value(c).ok()),
+            "automation" => self
+                .catalog
+                .automation(target)
+                .or_else(|| {
+                    self.automation.get().and_then(|eng| {
+                        eng.defs()
+                            .into_iter()
+                            .find(|d| d.name == target || d.id_key() == target)
+                    })
+                })
+                .and_then(|a| serde_json::to_value(a).ok()),
             _ => None,
         }
     }
@@ -648,6 +674,27 @@ impl MetadataChangeService {
                     return Err(QefroError::bad_request(err));
                 }
                 self.catalog.upsert_communication(def);
+            }
+            "automation" => {
+                qefro_core::reject_unsafe_automation_payload(payload)?;
+                let mut def: qefro_core::AutomationDef = serde_json::from_value(payload.clone())
+                    .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                if def.name.trim().is_empty() {
+                    def.name = target.to_string();
+                }
+                let errors = qefro_core::validate_automation(&def, Some(self.registry.as_ref()));
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
+                }
+                if let Some(existing) = self.catalog.automation(&def.name) {
+                    if def.version <= existing.version {
+                        def.version = existing.version.saturating_add(1);
+                    }
+                }
+                self.catalog.upsert_automation(def.clone());
+                if let Some(engine) = self.automation.get() {
+                    engine.overlay_put(def);
+                }
             }
             other => {
                 return Err(QefroError::bad_request(format!(
