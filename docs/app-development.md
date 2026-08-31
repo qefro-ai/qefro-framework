@@ -2,6 +2,8 @@
 
 Two ways to ship a Qefro app. Both use the same generic UI (`frontend/`). Do not create a React app per Qefro application or entity.
 
+How to use every feature (entities, workflows, views, dashboards, automation, agents, …): **[App Developer Guide](developer-guide.md)**. Catalog: [documentation index](README.md).
+
 Walkthrough from `qefro app new` through running the UI: [Create an application](creating-an-app.md). Full shop example: [Build a fullstack application](fullstack.md).
 
 ## YAML application

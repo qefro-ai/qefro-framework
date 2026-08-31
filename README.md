@@ -4,7 +4,7 @@ Rust-native, metadata-driven framework for building secure, multi-tenant busines
 
 Define entities, workflows, permissions, and **business operations**. The runtime generates PostgreSQL schema, REST APIs, validation, audit logs, a generic UI, agent tools, events, and a Postgres job queue. Authorization always runs on the server. Agents never get a database connection.
 
-**V1.3** adds search, reports, dashboards, saved views, declarative validation, computed strings, and `AutomationDef` on the same EntityService path. See [Getting started](docs/getting-started.md), [Business object runtime](docs/business-object-runtime.md), [Automation](docs/automation.md), [Validation](docs/validation.md), [Identity](docs/identity.md), and [V1 compatibility](docs/v1-compatibility.md).
+**V1.3** adds search, reports, dashboards, saved views, declarative validation, computed strings, and `AutomationDef` on the same EntityService path. App developers: [App Developer Guide](docs/developer-guide.md) (every feature) and the [documentation index](docs/README.md). Also [Getting started](docs/getting-started.md), [Business object runtime](docs/business-object-runtime.md), [Automation](docs/automation.md), [Validation](docs/validation.md), [Identity](docs/identity.md), and [V1 compatibility](docs/v1-compatibility.md).
 
 ## Install
 
@@ -222,60 +222,14 @@ Or `make check`. Integration tests require `DATABASE_URL` (they fail closed if i
 
 ## Docs
 
-- [Benchmarks](docs/benchmarks.md)
-- [Create an application](docs/creating-an-app.md)
-- [V1 compatibility](docs/v1-compatibility.md)
-- [Build a fullstack application](docs/fullstack.md)
-- [Qefro Studio](docs/studio.md)
-- [Studio publishing](docs/studio-publishing.md)
-- [Applications](docs/apps.md)
-- [App packaging](docs/app-packaging.md)
-- [App lifecycle](docs/app-lifecycle.md)
-- [App dependencies](docs/app-dependencies.md)
-- [App development](docs/app-development.md)
-- [Architecture](docs/architecture.md)
-- [Entities](docs/entities.md)
-- [Operations](docs/operations.md)
-- [Workflows](docs/workflows.md)
-- [Events](docs/events.md)
-- [Jobs](docs/jobs.md)
-- [UI](docs/ui.md)
-- [UI 2.1 views](docs/views.md)
-- [UI widgets](docs/ui-widgets.md)
-- [Forms](docs/forms.md)
-- [Layouts](docs/layouts.md)
-- [Dashboards](docs/dashboards.md)
-- [Child tables](docs/child-tables.md)
-- [Formulas](docs/formulas.md)
-- [Documents](docs/documents.md)
-- [Numbering](docs/numbering.md)
-- [Print formats](docs/print-formats.md)
-- [Reports](docs/reports.md)
-- [Agents](docs/agents.md)
-- [Multi-tenancy](docs/multitenancy.md)
-- [Identity (Person ≠ User ≠ Organization ≠ business)](docs/identity.md)
-- [Business object runtime](docs/business-object-runtime.md)
-- [Activity](docs/activity.md)
-- [Audit](docs/audit.md)
-- [Tenants](docs/tenants.md)
-- [Permissions](docs/permissions.md)
-- [Security](docs/security.md)
-- [Threat model](docs/threat-model.md)
-- [Connectors / SDK](docs/connectors.md)
-- [Licenses](docs/licenses.md)
-- [Release](docs/release.md)
-- [Singletons](docs/singletons.md)
-- [Field permissions](docs/field-permissions.md)
-- [Allow on submit](docs/allow-on-submit.md)
-- [Actions and links](docs/actions-links.md)
-- [Attachments](docs/attachments.md)
-- [Notifications](docs/notifications.md)
-- [Webhooks](docs/webhooks.md)
-- [CSV import](docs/imports.md)
-- [Search](docs/search.md)
-- [Realtime](docs/realtime.md)
-- [Public forms](docs/public-forms.md)
-- [Deployment](docs/deployment.md)
-- [Configuration](docs/configuration.md)
-- [API](docs/api.md)
-- [Examples](docs/examples.md)
+**Start here:** [Documentation index](docs/README.md) · [App Developer Guide](docs/developer-guide.md) (every feature, with YAML/Rust examples)
+
+| Path | Doc |
+| --- | --- |
+| Install and first run | [Getting started](docs/getting-started.md) |
+| Scaffold a YAML app | [Create an application](docs/creating-an-app.md) |
+| Shop tutorial | [Build a fullstack application](docs/fullstack.md) |
+| YAML vs Rust | [App development](docs/app-development.md) |
+| Architecture | [Architecture](docs/architecture.md) |
+| Feature catalog | [docs/README.md](docs/README.md) |
+| Examples | [Examples](docs/examples.md) |
