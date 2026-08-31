@@ -243,7 +243,7 @@ export function FilterBar({
               </span>
             );
           })}
-          <button type="button" className="ghost filter-reset" onClick={reset}>
+          <button type="button" className="text filter-reset" onClick={reset}>
             Reset
           </button>
         </div>

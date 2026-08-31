@@ -56,6 +56,16 @@ impl AppState {
         self.catalog.merge_dashboards(&self.dashboards)
     }
 
+    /// Application dashboards win over platform ones (e.g. Task) when the tenant
+    /// has not set `default_dashboard`.
+    pub fn default_dashboard_name(&self, ctx: &OpContext) -> Option<String> {
+        let live = self.dashboards_live();
+        live.iter()
+            .find(|d| d.module.is_some() && ctx.allows_app(d.module.as_deref()))
+            .or_else(|| live.iter().find(|d| ctx.allows_app(d.module.as_deref())))
+            .map(|d| d.name.clone())
+    }
+
     pub fn print_formats_live(&self) -> Vec<PrintFormat> {
         self.catalog.merge_print_formats(&self.print_formats)
     }

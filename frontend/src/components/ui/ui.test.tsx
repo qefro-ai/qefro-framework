@@ -5,6 +5,10 @@ import { EmptyState, ErrorState, Skeleton } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { SectionHeader } from "./SectionHeader";
 import { SnackbarHost, showSnackbar } from "./Snackbar";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { Button } from "./Button";
+import { IconButton } from "./IconButton";
+import { Chip } from "./Chip";
 import { buttonClass } from "../../theme/tokens";
 
 describe("StatusBadge", () => {
@@ -87,6 +91,34 @@ describe("M3 buttons and snackbar", () => {
     expect(screen.getByRole("button", { name: "Delete" })).toHaveClass("danger");
   });
 
+  it("renders Button and IconButton primitives", () => {
+    render(
+      <>
+        <Button>Save</Button>
+        <Button variant="outlined">Export</Button>
+        <IconButton label="Close">×</IconButton>
+      </>,
+    );
+    expect(screen.getByRole("button", { name: "Save" })).toHaveClass("btn");
+    expect(screen.getByRole("button", { name: "Export" })).toHaveClass("ghost");
+    expect(screen.getByRole("button", { name: "Close" })).toHaveAttribute("title", "Close");
+  });
+
+  it("renders selectable and removable chips", async () => {
+    const onRemove = vi.fn();
+    render(
+      <>
+        <Chip selected>Status: Preparing</Chip>
+        <Chip onRemove={onRemove} removeLabel="Clear customer">
+          Customer: Ahmed
+        </Chip>
+      </>,
+    );
+    expect(screen.getByRole("button", { name: "Status: Preparing" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(screen.getByRole("button", { name: "Clear customer" }));
+    expect(onRemove).toHaveBeenCalled();
+  });
+
   it("announces snackbar messages", async () => {
     render(<SnackbarHost />);
     await act(async () => {
@@ -95,5 +127,26 @@ describe("M3 buttons and snackbar", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Saved");
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+});
+
+describe("ConfirmDialog", () => {
+  it("renders in-app copy and does not call confirm until accepted", async () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        open
+        title="Archive 1 customer?"
+        message="Archived records leave this list."
+        confirmLabel="Archive"
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />,
+    );
+    expect(screen.getByRole("dialog", { name: "Archive 1 customer?" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalled();
   });
 });

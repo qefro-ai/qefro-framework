@@ -90,4 +90,16 @@ describe("FieldValue", () => {
     );
     expect(screen.getByText("$12.50")).toBeInTheDocument();
   });
+
+  it("shows a derived due chip on due_at", () => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    wrap(
+      <FieldValue
+        row={{ due_at: yesterday.toISOString(), status: "Open" }}
+        field={field({ name: "due_at", widget: "datetime", type: "datetime" })}
+      />,
+    );
+    expect(screen.getByText("Overdue")).toBeInTheDocument();
+  });
 });

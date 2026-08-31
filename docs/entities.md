@@ -43,7 +43,7 @@ When `person_id` is set, Person is the source of truth for name/email/phone. The
 
 `label`, `description`, `placeholder`, `help` / `help_text`, `hidden`, `disabled`, `readonly`, `required`, `list_visible` / `list`, `form_visible` / `form`, `detail_visible` / `detail`, `searchable`, `sortable`, `filterable`, `width`, `widget`, `widget_options`, `section`, `tab`, `order`, `visible_when`, `readonly_when`, `permission_level`, `allow_on_submit`.
 
-`EntityDef::single("RestaurantSettings")` marks a singleton (one row per tenant). `.attachments()`, `.action()`, `.link()`, and `.public_form()` add V0.9 primitives without a second registry. See [singletons](singletons.md) and [field permissions](field-permissions.md). Framework Person and User are also `EntityDef`s — see [identity](identity.md).
+`EntityDef::single("RestaurantSettings")` marks a singleton (one row per tenant). `.attachments()`, `.action()`, `.link()`, and `.public_form()` add V0.9 primitives without a second registry. See [singletons](singletons.md) and [field permissions](field-permissions.md). Framework Person and User are also `EntityDef`s — see [identity](identity.md). `.with_tasks()` adds a Related-panel link to the platform Task entity — see [tasks](tasks.md).
 
 Data types: `string`, `text`, `integer`, `decimal`, `boolean`, `date`, `time`, `datetime`, `uuid`, `enum`, `json`, `relation`, `child_table`. Convenience builders `email()`, `phone()`, `url()`, `color()`, `FieldDef::currency("amount")`, `percentage()` keep the storage type and set validation + widget. `.computed("quantity * rate")` marks a server-calculated field.
 

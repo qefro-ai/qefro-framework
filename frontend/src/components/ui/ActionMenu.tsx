@@ -44,13 +44,15 @@ export function ActionMenu({
     <div className="more-menu action-menu" ref={root}>
       <button
         type="button"
-        className="ghost"
+        className="ghost icon-btn"
         aria-expanded={open}
         aria-haspopup="menu"
         aria-controls={menuId}
+        aria-label={label}
+        title={label}
         onClick={() => setOpen((value) => !value)}
       >
-        {label}
+        ⋮
       </button>
       {open ? (
         <ul id={menuId} className="menu-list" role="menu">

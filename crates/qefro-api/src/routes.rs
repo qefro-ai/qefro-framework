@@ -383,11 +383,7 @@ async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<
         {
             config.ui_config.default_dashboard.clone()
         } else {
-            state
-                .dashboards_live()
-                .into_iter()
-                .find(|d| ctx.allows_app(d.module.as_deref()))
-                .map(|d| d.name)
+            state.default_dashboard_name(&ctx)
         },
         "reports": state
             .reports_live()
@@ -823,11 +819,7 @@ fn workspace_payload(
     {
         config.ui_config.default_dashboard.clone()
     } else {
-        state
-            .dashboards_live()
-            .into_iter()
-            .find(|d| ctx.allows_app(d.module.as_deref()))
-            .map(|d| d.name)
+        state.default_dashboard_name(ctx)
     };
     let mut shortcuts = Vec::new();
     let mut seen_create = std::collections::HashSet::new();
