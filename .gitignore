@@ -11,3 +11,6 @@ frontend/.vite
 .vscode
 .qefro
 var/
+site/
+.cache/
+.venv-docs/

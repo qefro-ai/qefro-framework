@@ -1,12 +1,12 @@
 # V1.0 compatibility contract
 
-Qefro Framework **1.0.0** is a stable, production-ready release. This document is the compatibility contract. Anything marked **Stable** will not change incompatibly without a new major version. Current crate/runtime is **1.2.0** (business object runtime); apps still declare `framework_version = ">=1.0,<2.0"`.
+Qefro Framework **1.0.0** is a stable, production-ready release. This document is the compatibility contract. Anything marked **Stable** will not change incompatibly without a new major version. Current crate/runtime is **1.3.0** (search, reports, dashboards, saved views, and the 1.2 business object runtime); apps still declare `framework_version = ">=1.0,<2.0"`.
 
 Current versions:
 
 | Surface | Version |
 | --- | --- |
-| Qefro Framework | `1.2.0` (`FRAMEWORK_VERSION`) |
+| Qefro Framework | `1.3.0` (`FRAMEWORK_VERSION`) |
 | Metadata schema | `1` (`METADATA_SCHEMA_VERSION`) |
 | UI schema | `1` (`UI_SCHEMA_VERSION`) |
 | REST API | `v1` (`API_VERSION`, paths under `/api/v1`) |

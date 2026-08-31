@@ -4,7 +4,9 @@ Rust-native, metadata-driven framework for building secure, multi-tenant busines
 
 Define entities, workflows, permissions, and **business operations**. The runtime generates PostgreSQL schema, REST APIs, validation, audit logs, a generic UI, agent tools, events, and a Postgres job queue. Authorization always runs on the server. Agents never get a database connection.
 
+
 **V1.3** adds search, reports, dashboards, saved views, **composed pages**, declarative validation, computed strings, and `AutomationDef` on the same EntityService path. See [Getting started](docs/getting-started.md), [Pages](docs/pages.md), [Business object runtime](docs/business-object-runtime.md), [Business rules](docs/business-rules.md), [Accounting](docs/accounting.md), [Commerce](docs/commerce.md), [Automation](docs/automation.md), [Validation](docs/validation.md), [Identity](docs/identity.md), and [V1 compatibility](docs/v1-compatibility.md).
+
 
 ## Install
 
@@ -221,6 +223,7 @@ cd frontend && npm test
 Or `make check`. Integration tests require `DATABASE_URL` (they fail closed if it is unset). See [Benchmarks](docs/benchmarks.md).
 
 ## Docs
+
 
 - [Benchmarks](docs/benchmarks.md)
 - [Create an application](docs/creating-an-app.md)

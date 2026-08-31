@@ -4,7 +4,7 @@ Qefro is a modular monolith. One HTTP process, an optional dedicated worker, one
 
 **V1.0** freezes this architecture. It hardens security, migrations, observability, and compatibility. It does not add a second metadata registry, UI engine, ORM, or broker.
 
-Building an app end to end: [Create an application](creating-an-app.md), [Getting started](getting-started.md), and [Build a fullstack application](fullstack.md). Compatibility: [v1-compatibility.md](v1-compatibility.md).
+Building an app end to end: [Create an application](creating-an-app.md), [App Developer Guide](developer-guide.md), [Getting started](getting-started.md), and [Build a fullstack application](fullstack.md). Compatibility: [v1-compatibility.md](v1-compatibility.md).
 
 V0.9 adds reusable business-platform primitives on the same runtime: singletons, field permissions, allow-on-submit, actions/links, attachments, notifications, webhooks, CSV import, global search, SSE realtime, and public forms. None of these create a second metadata registry, UI engine, or mutation path.
 

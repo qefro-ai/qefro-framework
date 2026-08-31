@@ -1,4 +1,4 @@
-.PHONY: qefro install install-dev uninstall help check postgres
+.PHONY: qefro install install-dev uninstall help check postgres docs docs-serve
 
 # cargo install puts the `qefro` binary in $(CARGO_HOME)/bin, usually ~/.cargo/bin
 CARGO_BIN ?= $(HOME)/.cargo/bin
@@ -11,6 +11,8 @@ help:
 	@echo "make qefro        build target/debug/qefro without installing"
 	@echo "make postgres     create/verify the qefro role and database"
 	@echo "make check        workspace tests + frontend tests (requires Postgres)"
+	@echo "make docs         build the MkDocs site into ./site"
+	@echo "make docs-serve   serve the docs locally on http://127.0.0.1:8000"
 
 qefro:
 	cargo build -p qefro-cli
@@ -35,3 +37,13 @@ install-dev:
 
 uninstall:
 	cargo uninstall qefro-cli
+
+docs:
+	python3 -m venv .venv-docs
+	.venv-docs/bin/pip install -q -r requirements-docs.txt
+	.venv-docs/bin/mkdocs build --strict
+
+docs-serve:
+	python3 -m venv .venv-docs
+	.venv-docs/bin/pip install -q -r requirements-docs.txt
+	.venv-docs/bin/mkdocs serve

@@ -22,7 +22,7 @@ qefro doctor
 
 ## Create an application
 
-Step-by-step (scaffold, entities, permissions, views, run the generic UI): **[Create an application](creating-an-app.md)**.
+Step-by-step (scaffold, entities, permissions, views, run the generic UI): **[Create an application](creating-an-app.md)**. Every feature: **[App Developer Guide](developer-guide.md)**.
 
 ```bash
 qefro app new myshop
@@ -49,12 +49,16 @@ cd frontend && npm install && npm run dev
 
 ## Documentation map
 
+The full catalog (every feature with a one-line description) is the [documentation index](index.md). How to use each feature while building an app: [App Developer Guide](developer-guide.md).
+
 | Topic | Doc |
 | --- | --- |
+| App developer handbook | [developer-guide.md](developer-guide.md) |
+| Feature catalog | [index.md](index.md) |
 | Architecture | [architecture.md](architecture.md) |
 | Compatibility | [v1-compatibility.md](v1-compatibility.md) |
 | Create an app | [creating-an-app.md](creating-an-app.md) |
-| Building apps | [app-development.md](app-development.md) |
+| YAML vs Rust | [app-development.md](app-development.md) |
 | Entities | [entities.md](entities.md) |
 | Fields / relations | [entities.md](entities.md), [child-tables.md](child-tables.md) |
 | Documents | [documents.md](documents.md) |
