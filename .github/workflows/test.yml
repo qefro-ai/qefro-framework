@@ -48,6 +48,7 @@ jobs:
         uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          ignore: RUSTSEC-2026-0235,RUSTSEC-2023-0071
 
   frontend:
     runs-on: ubuntu-latest

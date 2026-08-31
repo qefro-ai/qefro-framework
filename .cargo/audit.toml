@@ -1,0 +1,8 @@
+# Unused optional crates in Cargo.lock (not on the Linux runtime graph).
+# See docs/security-audit.md.
+
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0235",
+    "RUSTSEC-2023-0071",
+]

@@ -257,4 +257,4 @@ TLS terminates at the reverse proxy. The app assumes `X-Forwarded-For` is set by
 - `crates/qefro-api/tests/identity.rs` (escalation, disable)
 - `crates/qefro-core` outbound URL / rate-limit / automation privileged-role tests
 - `frontend` FieldValue XSS / CSS tests
-- CI: `cargo test --workspace`, `npm test`, `cargo audit` (non-blocking)
+- CI: `cargo test --workspace`, `npm test`, `cargo audit` (non-blocking; `.cargo/audit.toml` ignores unused-optional rkyv/rsa)
