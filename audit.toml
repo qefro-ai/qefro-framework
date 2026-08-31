@@ -1,5 +1,12 @@
 # cargo-audit ignore list. Each entry is an accepted residual until a
 # safe upgrade exists. See docs/security-audit.md.
+#
+# These crates appear in Cargo.lock as unused optional dependencies
+# (rust_decimal's rkyv feature, sqlx-mysql). `cargo tree -i rkyv` and
+# `cargo tree -i rsa` print nothing on the Linux runtime graph.
 
 [advisories]
-ignore = []
+ignore = [
+    "RUSTSEC-2026-0235", # rkyv 0.7 via rust_decimal optional; not enabled
+    "RUSTSEC-2023-0071", # rsa Marvin via sqlx-mysql; postgres-only build
+]

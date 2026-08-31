@@ -74,7 +74,7 @@ Follow-up to the 3.7 audit. No second auth stack, no second permission system, E
 | Entity tables without RLS | Pooling / query-path complexity | Tenant predicates + RowPolicy; activity RLS pilot | Expand RLS table-by-table with `SET LOCAL` |
 | SSE event metadata without row policy | Cost of `get()` per event | Entity Read filter; record subscribe uses `get()` | Optional per-event get |
 | Webhook DNS rebinding | reqwest resolves again after our check | Block literals/private names; no redirects | Pin IPs / egress firewall |
-| `rkyv` / `rsa` rustsec | Previously pulled by rust_decimal / sqlx-mysql optionals | `default-features = false` on those crates | Re-run `cargo audit` when adding features |
+| `rkyv` / `rsa` rustsec in `Cargo.lock` | Unused optionals of rust_decimal / sqlx-mysql; not in `cargo tree` on Linux | `default-features = false`; `audit.toml` ignores with rationale | Re-run `cargo audit` when enabling those features |
 | Public `/metrics` `/docs` | Operator surfaces | Do not expose API port without edge authz | Optional auth on docs |
 | Register email uniqueness timing | Unique index | Uniform error text | Accept |
 
