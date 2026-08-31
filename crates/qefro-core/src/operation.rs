@@ -44,6 +44,14 @@ pub struct OperationDef {
     /// When true, a Worker principal may execute this operation. Default false.
     #[serde(default)]
     pub worker_safe: bool,
+    /// `sync` (default) runs in the HTTP request transaction. `async` enqueues
+    /// `qefro.operation.execute` on JobQueue and returns a run record.
+    #[serde(default = "default_execution")]
+    pub execution: String,
+    /// When true, an `Idempotency-Key` is required and replays return the
+    /// original result instead of mutating again.
+    #[serde(default)]
+    pub idempotent: bool,
 }
 
 fn default_style() -> String {
@@ -54,6 +62,9 @@ fn default_true() -> bool {
 }
 fn default_kind() -> String {
     "action".into()
+}
+fn default_execution() -> String {
+    "sync".into()
 }
 
 impl OperationDef {
@@ -79,6 +90,8 @@ impl OperationDef {
             kind: "action".into(),
             tool_name,
             worker_safe: false,
+            execution: default_execution(),
+            idempotent: false,
             name,
             entity,
         }
@@ -170,6 +183,21 @@ impl OperationDef {
         self
     }
 
+    pub fn async_execution(mut self) -> Self {
+        self.execution = "async".into();
+        self.worker_safe = true;
+        self
+    }
+
+    pub fn idempotent(mut self) -> Self {
+        self.idempotent = true;
+        self
+    }
+
+    pub fn is_async(&self) -> bool {
+        self.execution.eq_ignore_ascii_case("async")
+    }
+
     pub fn role_allowed(&self, ctx: &crate::OpContext) -> bool {
         if ctx.is_admin() {
             return true;
@@ -196,6 +224,8 @@ impl OperationDef {
             "input_schema": self.input_schema,
             "workflow_transition": self.workflow_transition,
             "event": self.event,
+            "execution": self.execution,
+            "idempotent": self.idempotent,
         })
     }
 }

@@ -1,6 +1,6 @@
 # Business operations
 
-CRUD is generated from entity metadata. Real processes — confirm a reservation, convert a lead — are **business operations**.
+CRUD is generated from entity metadata. Real processes — confirm a reservation, convert a lead — are **business operations**. Multi-entity transactions use the same `OperationDef` + `OperationHandler` path; see [business-operations.md](business-operations.md). There is no second engine.
 
 ```
 Define Entity

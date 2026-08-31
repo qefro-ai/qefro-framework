@@ -146,14 +146,21 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
     { id: "activity", label: "Activity", hide: !showActivity },
   ].filter((t) => !t.hide);
 
-  async function runAction(name: string) {
+  async function runAction(name: string, action?: EntityAction, input: Record<string, unknown> = {}) {
     if (!slug || !id) return;
     try {
-      await api.action(slug, id, name);
+      const result = await api.action(slug, id, name, input);
       setError("");
+      const nav = result._operation as
+        | { navigate?: { slug?: string; id?: string }; message?: string; status?: string }
+        | undefined;
+      if (nav?.navigate?.slug && nav.navigate.id) {
+        showSnackbar(nav.message || (action?.label ? `${action.label} done` : "Done"));
+        navigate(`/${nav.navigate.slug}/${nav.navigate.id}`);
+        return;
+      }
       await load();
-      const action = actions.find((a) => a.name === name);
-      showSnackbar(action?.label ? `${action.label} done` : "Done");
+      showSnackbar(nav?.message || (action?.label ? `${action.label} done` : "Done"));
     } catch (e) {
       setError(friendlyError(e));
     }
@@ -212,7 +219,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
             <ActionBar
               actions={actions}
               transitions={workflow?.transitions}
-              onAction={(name) => void runAction(name)}
+              onAction={(name, action, input) => void runAction(name, action, input)}
               onTransition={async (name) => {
                 try {
                   const next = await api.transition(slug, id, name);

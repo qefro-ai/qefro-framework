@@ -515,9 +515,9 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
                                 2,
                               )
                             }
-                            onAction={async (name) => {
+                            onAction={async (name, _action, input) => {
                               try {
-                                await api.action(meta.slug, String(row.id), name);
+                                await api.action(meta.slug, String(row.id), name, input ?? {});
                                 setTick((n) => n + 1);
                               } catch (err) {
                                 setError(friendlyError(err));

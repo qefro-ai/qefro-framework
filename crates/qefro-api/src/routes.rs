@@ -2,7 +2,7 @@ use crate::error::ApiError;
 use crate::extract::Auth;
 use crate::state::AppState;
 use axum::extract::{Multipart, Path, Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -44,6 +44,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/audit", get(list_audit))
         .route("/api/v1/tools", get(list_tools))
         .route("/api/v1/operations", get(list_operations))
+        .route("/api/v1/operation-runs/{id}", get(get_operation_run))
         .route("/api/v1/agent/tools", get(list_tools))
         .route("/api/v1/agent/tools/{name}/invoke", post(invoke_tool))
         .route("/api/v1/events", get(list_events))
@@ -528,6 +529,7 @@ fn reject_reserved(slug: &str) -> Result<(), ApiError> {
         "dashboards",
         "settings",
         "operations",
+        "operation-runs",
         "jobs",
         "files",
         "saved-filters",
@@ -739,21 +741,41 @@ async fn execute_action(
     State(state): State<AppState>,
     Auth(ctx): Auth,
     Path((slug, id, name)): Path<(String, Uuid, String)>,
+    headers: HeaderMap,
     body: Option<Json<Value>>,
 ) -> Result<Json<Value>, ApiError> {
     reject_reserved(&slug)?;
+    let idempotency_key = headers
+        .get("idempotency-key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     Ok(Json(
         state
             .entities
-            .execute(
+            .execute_with(
                 &ctx,
                 &slug,
                 id,
                 &name,
                 body.map(|j| j.0).unwrap_or_else(|| json!({})),
+                qefro_db::ExecuteOpts {
+                    idempotency_key,
+                    force_sync: false,
+                    operation_id: None,
+                },
             )
             .await?,
     ))
+}
+
+async fn get_operation_run(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let run = state.entities.get_operation_run(&ctx, id).await?;
+    Ok(Json(run.to_client_json()))
 }
 
 async fn get_workflow_state(

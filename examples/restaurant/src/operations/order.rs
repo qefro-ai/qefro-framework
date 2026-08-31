@@ -142,7 +142,32 @@ pub struct CompleteOrder;
 impl OperationHandler for CompleteOrder {
     async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> QefroResult<Value> {
         ctx.apply_transition("complete")?;
-        ctx.emit("order.completed", json!({ "entity_id": ctx.record_id()? }));
+        let id = ctx.record_id()?;
+        let number = ctx
+            .record
+            .get("number")
+            .and_then(|v| v.as_str())
+            .unwrap_or("order");
+        let task = ctx
+            .create(
+                "Task",
+                json!({
+                    "title": format!("Follow up on {number}"),
+                    "description": "Thank the guest and collect feedback.",
+                    "entity_type": "Order",
+                    "entity_id": id,
+                    "priority": "normal",
+                }),
+            )
+            .await?;
+        ctx.emit(
+            "order.completed",
+            json!({
+                "entity_id": id,
+                "task_id": task.get("id"),
+            }),
+        );
+        ctx.set_message("Order completed");
         Ok(ctx.record.clone())
     }
 }

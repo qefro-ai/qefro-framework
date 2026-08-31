@@ -774,4 +774,18 @@ async fn takeaway_walk_in_and_scheduled_pickup() {
     .await;
     assert_eq!(status, StatusCode::OK, "{completed}");
     assert_eq!(completed["status"], "Completed");
+    let (status, follow_ups) = json(
+        clone_router(&router),
+        get("/api/v1/tasks", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{follow_ups}");
+    assert!(
+        follow_ups["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["entity_id"] == booked_id && t["entity_type"] == "Order"),
+        "complete order should create a related task: {follow_ups}"
+    );
 }

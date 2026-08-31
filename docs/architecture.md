@@ -20,7 +20,7 @@ V0.4 extends V0.3. It does not rewrite CRUD, operations, or the agent boundary. 
 
 ## Metadata is the source of truth
 
-`EntityDef` describes fields, validation, relations, UI, audit, and workflow binding. `OperationDef` describes named business actions. Together they drive:
+`EntityDef` describes fields, validation, relations, UI, audit, and workflow binding. `OperationDef` describes named business actions, including multi-entity transactions on one SQLx connection ([business-operations.md](business-operations.md)). Together they drive:
 
 - DDL generation
 - CRUD SQL (parameterized; identifiers allowlisted)

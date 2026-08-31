@@ -61,6 +61,24 @@ export type EntityAction = {
   confirmation_message?: string;
   icon?: string;
   workflow_transition?: string;
+  input_schema?: {
+    type?: string;
+    properties?: Record<string, { type?: string; title?: string; description?: string; enum?: string[] }>;
+    required?: string[];
+  };
+};
+
+export type OperationResult = {
+  id?: string;
+  _operation?: {
+    id?: string;
+    operation?: string;
+    name?: string;
+    status?: string;
+    progress?: number;
+    message?: string | null;
+    navigate?: { entity?: string; slug?: string; id?: string } | null;
+  };
 };
 
 export type FieldError = { field: string; code?: string; message: string };
@@ -290,11 +308,22 @@ export class QefroClient {
       method: "POST",
       body: JSON.stringify({ transition }),
     });
-  action = (slug: string, id: string, name: string, body: unknown = {}) =>
+  action = (
+    slug: string,
+    id: string,
+    name: string,
+    body: unknown = {},
+    opts?: { idempotencyKey?: string },
+  ) =>
     request<Record<string, unknown>>(`/api/v1/${slug}/${id}/actions/${name}`, {
       method: "POST",
       body: JSON.stringify(body ?? {}),
+      headers: opts?.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : undefined,
     });
+  execute = (
+    args: { entity: string; id: string; action: string; inputs?: unknown; idempotencyKey?: string },
+  ) => this.action(args.entity, args.id, args.action, args.inputs ?? {}, { idempotencyKey: args.idempotencyKey });
+  operationRun = (id: string) => request<Record<string, unknown>>(`/api/v1/operation-runs/${id}`);
   workflow = (slug: string, id: string) =>
     request<{ current: string; transitions: WorkflowAction[] }>(`/api/v1/${slug}/${id}/workflow`);
   getWorkflow = (slug: string, id: string) => this.workflow(slug, id);

@@ -19,6 +19,7 @@ pub mod jobs;
 pub mod notifications;
 pub mod numbering;
 pub mod operation;
+pub mod operation_run;
 pub mod outbox;
 pub mod pool;
 pub mod print;
@@ -45,8 +46,13 @@ pub use import::{ImportMapping, ImportPreview, ImportResult};
 pub use jobs::{JobHandler, JobQueue, JobRecord, JobRegistry, LogNotificationJob};
 pub use notifications::{EmailNotifyJob, InAppNotification, NotificationStore, PlatformDispatcher};
 pub use operation::{
-    available_for_record, crud_operation_defs, execute_operation, operation_allowed,
-    NoopOperationHandler, OperationBinding, OperationCtx, OperationHandler, OperationRegistry,
+    available_for_record, crud_operation_defs, execute_operation, execute_operation_with,
+    operation_allowed, ExecuteOpts, NoopOperationHandler, OperationBinding, OperationCtx,
+    OperationExecuteJob, OperationHandler, OperationRegistry,
+};
+pub use operation_run::{
+    OperationRun, OperationRunStore, OPERATION_EXECUTE_JOB, STATUS_COMPLETED as RUN_COMPLETED,
+    STATUS_FAILED as RUN_FAILED, STATUS_QUEUED as RUN_QUEUED, STATUS_RUNNING as RUN_RUNNING,
 };
 pub use outbox::Outbox;
 pub use pool::{connect, DbPool};
