@@ -356,6 +356,13 @@ CREATE INDEX IF NOT EXISTS qefro_automation_exec_status_idx
     ON qefro_automation_executions (tenant_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS qefro_automation_exec_event_idx
     ON qefro_automation_executions (event_id);
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS step_index INT NOT NULL DEFAULT 0;
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS cursor JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS steps_log JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS def_snapshot JSONB;
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS entity TEXT;
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS record_id UUID;
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
 
 CREATE TABLE IF NOT EXISTS qefro_activity (

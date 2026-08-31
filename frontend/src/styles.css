@@ -872,6 +872,19 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 .source-view { background: #0f172a; color: #e2e8f0; padding: var(--space-4); border-radius: var(--radius); overflow: auto; max-height: 28rem; }
 .studio-preview { display: grid; gap: var(--space-4); }
 .studio-preview section { margin-top: var(--space-4); }
+.auto-editor { grid-template-columns: 18rem 1fr; }
+.auto-flow { display: flex; flex-direction: column; align-items: stretch; max-width: 40rem; }
+.auto-edge { width: 2px; height: 14px; background: var(--line); margin: 0 auto; }
+.auto-node {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: var(--space-3); box-shadow: var(--shadow-sm);
+}
+.auto-node h3 { margin: 0 0 var(--space-2); font-size: var(--text-sm); }
+.auto-node-trigger { border-color: var(--accent); }
+.auto-node-end { color: var(--muted); }
+.auto-branch { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-top: var(--space-2); }
+.auto-runs { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.auto-run-steps { margin: var(--space-2) 0 0; padding-left: var(--space-5); font-size: var(--text-sm); }
 
 .palette-backdrop {
   position: fixed; inset: 0; background: var(--qefro-scrim);

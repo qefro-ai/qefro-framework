@@ -3088,6 +3088,14 @@ fn mutation_events(
     framework: &str,
 ) -> Vec<DomainEvent> {
     strip_secrets(None, &mut payload);
+    if ctx.is_automation() {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert(
+                "_automation_depth".into(),
+                json!(ctx.automation_depth.saturating_add(1)),
+            );
+        }
+    }
     let specific_name = if specific.contains('.') {
         specific.to_string()
     } else {

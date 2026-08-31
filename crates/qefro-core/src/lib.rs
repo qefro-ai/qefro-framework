@@ -59,9 +59,10 @@ pub use accounting::{
 };
 pub use app::{AppManifest, AppModule, AppModuleBuilder, NavItem};
 pub use automation::{
-    ActivityAction, AssignAction, AutomationAction, AutomationDef, AutomationTrigger,
-    CommentAction, CommunicationAction, CreateEntityAction, NotifyAction, TransitionAction,
-    UpdateEntityAction, WebhookAction,
+    parse_wait_duration, reject_unsafe_automation_payload, validate_automation, ActivityAction,
+    AssignAction, AutomationAction, AutomationDef, AutomationStep, AutomationTrigger,
+    CommentAction, CommunicationAction, CreateEntityAction, NotifyAction, PrintDocumentAction,
+    TransitionAction, UpdateEntityAction, WaitSpec, WebhookAction, DEFAULT_AUTOMATION_DEPTH,
 };
 pub use bundle::AppBundle;
 pub use catalog::{

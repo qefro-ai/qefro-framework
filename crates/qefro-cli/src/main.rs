@@ -97,7 +97,8 @@ enum Commands {
         #[arg(default_value = "all")]
         app: String,
     },
-    /// Inspect an entity or composed page (`qefro inspect page sales_workspace`)
+    /// Inspect an entity, composed page, or automation
+    /// (`qefro inspect automation order_confirmation`)
     Inspect {
         name: String,
         target: Option<String>,
@@ -527,11 +528,73 @@ fn cmd_inspect(app: &str, name: &str, target: Option<&str>) -> Result<()> {
             target.ok_or_else(|| anyhow::anyhow!("usage: qefro inspect page <name>"))?;
         return cmd_page_show(app, page_name);
     }
+    if name.eq_ignore_ascii_case("automation") {
+        let auto_name =
+            target.ok_or_else(|| anyhow::anyhow!("usage: qefro inspect automation <name>"))?;
+        return cmd_automation_show(app, auto_name);
+    }
     let runtime = runtime_for(app)?;
+    if runtime
+        .automations()
+        .iter()
+        .any(|a| a.name.eq_ignore_ascii_case(name))
+    {
+        return cmd_automation_show(app, name);
+    }
     if runtime.page(name).is_some() {
         return cmd_page_show(app, name);
     }
     cmd_entity_show(app, name)
+}
+
+fn cmd_automation_show(app: &str, name: &str) -> Result<()> {
+    let runtime = runtime_for(app)?;
+    let Some(def) = runtime
+        .automations()
+        .into_iter()
+        .find(|a| a.name.eq_ignore_ascii_case(name) || a.id_key().eq_ignore_ascii_case(name))
+    else {
+        let known: Vec<String> = runtime.automations().into_iter().map(|a| a.name).collect();
+        let hint = suggest_similar(name, known.iter().map(|s| s.as_str()))
+            .map(|s| format!(" Did you mean '{s}'?"))
+            .unwrap_or_default();
+        bail!("automation '{name}' not found.{hint}");
+    };
+    println!("name:           {}", def.name);
+    println!(
+        "status:         {}",
+        if def.enabled { "published" } else { "disabled" }
+    );
+    println!("version:        {}", def.version);
+    println!("module:         {}", def.module.clone().unwrap_or_default());
+    println!("description:    {}", def.description);
+    println!(
+        "trigger:        {}",
+        def.trigger
+            .event
+            .clone()
+            .or(def.trigger.schedule.clone())
+            .unwrap_or_else(|| def.trigger.kind.clone())
+    );
+    if let Some(cond) = &def.conditions {
+        println!(
+            "conditions:     {}",
+            serde_json::to_string(cond).unwrap_or_default()
+        );
+    }
+    println!("steps:");
+    for step in def.effective_steps() {
+        println!("  {}  {}", step.kind(), step.label());
+    }
+    if !def.actions.is_empty() && def.steps.is_empty() {
+        println!("actions:");
+        for action in &def.actions {
+            println!("  {}", action.kind());
+        }
+    }
+    println!("max_depth:      {}", def.depth_limit());
+    println!("max_attempts:   {}", def.attempt_limit());
+    Ok(())
 }
 
 fn cmd_page_show(app: &str, name: &str) -> Result<()> {
@@ -949,15 +1012,8 @@ fn cmd_validate(app: &str) -> Result<()> {
         }
     }
     for auto in runtime.automations() {
-        for action in &auto.actions {
-            if let Some(entity) = action_entity(action) {
-                if registry.try_get(entity).is_none() {
-                    errors.push(format!(
-                        "automation '{}' references unknown entity '{entity}'",
-                        auto.name
-                    ));
-                }
-            }
+        for err in qefro_core::validate_automation(&auto, Some(&registry)) {
+            errors.push(err);
         }
     }
     for w in &warnings {
@@ -975,20 +1031,6 @@ fn cmd_validate(app: &str) -> Result<()> {
             eprintln!("error: {e}");
         }
         bail!("validation failed ({} errors)", errors.len());
-    }
-}
-
-fn action_entity(action: &qefro_core::AutomationAction) -> Option<&str> {
-    match action {
-        qefro_core::AutomationAction::CreateEntity { create_entity } => {
-            Some(create_entity.entity.as_str())
-        }
-        qefro_core::AutomationAction::UpdateEntity { update_entity } => {
-            update_entity.entity.as_deref()
-        }
-        qefro_core::AutomationAction::Transition { transition } => transition.entity.as_deref(),
-        qefro_core::AutomationAction::Assign { assign } => assign.entity.as_deref(),
-        _ => None,
     }
 }
 

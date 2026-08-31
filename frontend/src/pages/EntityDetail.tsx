@@ -10,6 +10,7 @@ import {
 import { ActionBar } from "../components/actions/ActionBar";
 import { AttachmentsPanel } from "../components/attachments/AttachmentsPanel";
 import { Timeline } from "../components/timeline/Timeline";
+import AutomationRuns from "../components/automation/AutomationRuns";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
@@ -502,6 +503,8 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
             timezone={theme.timezone}
             locale={theme.locale}
           />
+          <SectionHeader title="Automation Runs" />
+          <AutomationRuns entity={meta.entity} recordId={id} />
         </div>
       ) : null}
       <ConfirmDialog

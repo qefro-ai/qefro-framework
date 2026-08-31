@@ -67,6 +67,8 @@ pub fn module() -> AppModule {
             )
             .description("Send a customer onboarding message when an opportunity is won")
             .action(AutomationAction::send_communication("opportunity_won"))
+            .action(AutomationAction::create_task("Onboard customer"))
+            .action(AutomationAction::notify("Manager"))
             .action(AutomationAction::create_activity("Customer onboarding message queued")),
         )
         .build()

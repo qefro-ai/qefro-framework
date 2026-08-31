@@ -550,6 +550,7 @@ pub struct StudioCatalog {
     pages: RwLock<HashMap<String, PageDef>>,
     print_formats: RwLock<HashMap<String, PrintFormat>>,
     communications: RwLock<HashMap<String, crate::communication::CommunicationDef>>,
+    automations: RwLock<HashMap<String, crate::automation::AutomationDef>>,
 }
 
 impl StudioCatalog {
@@ -583,6 +584,12 @@ impl StudioCatalog {
         }
     }
 
+    pub fn upsert_automation(&self, def: crate::automation::AutomationDef) {
+        if let Ok(mut g) = self.automations.write() {
+            g.insert(def.name.clone(), def);
+        }
+    }
+
     pub fn report(&self, name: &str) -> Option<ReportDef> {
         self.reports.read().ok()?.get(name).cloned()
     }
@@ -601,6 +608,10 @@ impl StudioCatalog {
 
     pub fn communication(&self, name: &str) -> Option<crate::communication::CommunicationDef> {
         self.communications.read().ok()?.get(name).cloned()
+    }
+
+    pub fn automation(&self, name: &str) -> Option<crate::automation::AutomationDef> {
+        self.automations.read().ok()?.get(name).cloned()
     }
 
     pub fn merge_reports(&self, base: &[ReportDef]) -> Vec<ReportDef> {
@@ -631,6 +642,15 @@ impl StudioCatalog {
     ) -> Vec<crate::communication::CommunicationDef> {
         merge_named(base, self.communications.read().ok().as_deref(), |c| {
             c.name.clone()
+        })
+    }
+
+    pub fn merge_automations(
+        &self,
+        base: &[crate::automation::AutomationDef],
+    ) -> Vec<crate::automation::AutomationDef> {
+        merge_named(base, self.automations.read().ok().as_deref(), |a| {
+            a.name.clone()
         })
     }
 }

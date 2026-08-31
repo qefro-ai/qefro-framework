@@ -652,6 +652,27 @@ export class QefroClient {
     request<{ automation: Record<string, unknown>; yaml: string; json: string }>(
       `/api/v1/studio/automations/${name}`,
     );
+  studioAutomationPreview = (name: string, body: Record<string, unknown>) =>
+    request<{ automation: string; dry_run: boolean; would_execute: Array<Record<string, unknown>>; side_effects: boolean }>(
+      `/api/v1/studio/automations/${name}/preview`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  studioAutomationRuns = (name?: string, opts?: { entity?: string; recordId?: string }) => {
+    if (name) {
+      return request<{ runs: Array<Record<string, unknown>> }>(
+        `/api/v1/studio/automations/${encodeURIComponent(name)}/runs`,
+      );
+    }
+    const query = new URLSearchParams();
+    if (opts?.entity) query.set("entity", opts.entity);
+    if (opts?.recordId) query.set("record_id", opts.recordId);
+    const suffix = query.toString() ? `?${query}` : "";
+    return request<{ runs: Array<Record<string, unknown>> }>(`/api/v1/studio/automations/runs${suffix}`);
+  };
+  studioAutomationDisable = (name: string) =>
+    request<Record<string, unknown>>(`/api/v1/studio/automations/${name}/disable`, { method: "POST" });
+  studioAutomationEnable = (name: string) =>
+    request<Record<string, unknown>>(`/api/v1/studio/automations/${name}/enable`, { method: "POST" });
   studioPublicForms = () =>
     request<{ public_forms: Array<Record<string, unknown>> }>("/api/v1/studio/public-forms");
   importPreview = (slug: string, csv: string, mapping?: Array<{ column: string; field?: string | null; default?: unknown }>) =>

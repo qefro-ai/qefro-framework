@@ -103,12 +103,17 @@ impl JobQueue {
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|d| d.with_timezone(&Utc))
             .unwrap_or_else(Utc::now);
+        let max_attempts = payload
+            .get("max_attempts")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(5)
+            .clamp(1, 20) as i32;
         sqlx::query(
             r#"
             INSERT INTO jobs (
                 id, tenant_id, user_id, name, payload, status, attempts, max_attempts,
                 run_at, created_at, updated_at, idempotency_key
-            ) VALUES ($1,$2,$3,$4,$5,'pending',0,5, $7, now(), now(), $6)
+            ) VALUES ($1,$2,$3,$4,$5,'pending',0,$8, $7, now(), now(), $6)
             "#,
         )
         .bind(id)
@@ -118,6 +123,7 @@ impl JobQueue {
         .bind(payload)
         .bind(key.as_deref())
         .bind(run_at)
+        .bind(max_attempts)
         .execute(&mut **tx)
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
@@ -199,11 +205,16 @@ impl JobQueue {
             }
             Err(err) => {
                 let attempts = job.attempts + 1;
+                let msg = err.public_message();
                 let (status, run_at) = if attempts >= job.max_attempts {
                     ("failed", job.run_at)
                 } else {
-                    let backoff = 2i64.pow(attempts as u32).min(300);
-                    ("pending", Utc::now() + Duration::seconds(backoff))
+                    let backoff = job
+                        .payload
+                        .get("backoff_seconds")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or_else(|| 2i64.pow(attempts as u32).min(300));
+                    ("pending", Utc::now() + Duration::seconds(backoff.max(1)))
                 };
                 sqlx::query(
                     r#"
@@ -216,7 +227,7 @@ impl JobQueue {
                 .bind(status)
                 .bind(attempts)
                 .bind(run_at)
-                .bind(err.to_string())
+                .bind(msg)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| QefroError::database(e.to_string()))?;

@@ -7,13 +7,15 @@ use crate::notifications::NotificationStore;
 use crate::service::EntityService;
 use async_trait::async_trait;
 use qefro_core::{
-    next_run_after, parse_cron, schedule_slot_key, strip_secrets, AutomationAction, AutomationDef,
-    CommunicationDef, NotificationDef, OpContext, QefroError, QefroResult, WebhookDef, ROLE_WORKER,
+    next_run_after, parse_cron, parse_wait_duration, schedule_slot_key, strip_secrets,
+    AutomationAction, AutomationDef, AutomationStep, CommunicationDef, NotificationDef, OpContext,
+    QefroError, QefroResult, WaitSpec, WebhookDef, ROLE_WORKER,
 };
 use qefro_events::{DomainEvent, EventHandler};
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock, RwLock};
 use uuid::Uuid;
 
 const JOB_RUN: &str = "automation.run";
@@ -29,6 +31,7 @@ pub struct AutomationEngine {
     comm_store: CommunicationStore,
     store: NotificationStore,
     entities: OnceLock<Arc<EntityService>>,
+    overlays: RwLock<HashMap<String, AutomationDef>>,
 }
 
 impl AutomationEngine {
@@ -50,6 +53,7 @@ impl AutomationEngine {
             webhooks,
             communications,
             entities: OnceLock::new(),
+            overlays: RwLock::new(HashMap::new()),
         }
     }
 
@@ -57,8 +61,41 @@ impl AutomationEngine {
         let _ = self.entities.set(entities);
     }
 
-    pub fn defs(&self) -> &[AutomationDef] {
-        &self.defs
+    pub fn overlay_put(&self, def: AutomationDef) {
+        if let Ok(mut g) = self.overlays.write() {
+            g.insert(def.name.clone(), def);
+        }
+    }
+
+    pub fn overlay_disable(&self, name: &str, enabled: bool) -> Option<AutomationDef> {
+        let mut def = self.def_by_id(name)?;
+        def.enabled = enabled;
+        self.overlay_put(def.clone());
+        Some(def)
+    }
+
+    pub fn defs(&self) -> Vec<AutomationDef> {
+        let overlay = self.overlays.read().ok();
+        let mut map: HashMap<String, AutomationDef> = self
+            .defs
+            .iter()
+            .cloned()
+            .map(|d| (d.name.clone(), d))
+            .collect();
+        if let Some(overlay) = overlay.as_ref() {
+            for (k, v) in overlay.iter() {
+                map.insert(k.clone(), v.clone());
+            }
+        }
+        let mut out: Vec<_> = map.into_values().collect();
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
+    }
+
+    fn def_by_id(&self, automation_id: &str) -> Option<AutomationDef> {
+        self.defs()
+            .into_iter()
+            .find(|d| d.id_key() == automation_id || d.name == automation_id)
     }
 
     fn entities(&self) -> QefroResult<&EntityService> {
@@ -70,8 +107,20 @@ impl AutomationEngine {
 
     pub async fn enqueue_for_event(&self, event: &DomainEvent) -> QefroResult<()> {
         let view = event_view(event);
-        for def in &self.defs {
+        let depth = view
+            .get("_automation_depth")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        for def in self.defs() {
             if !def.matches_event(&event.name) {
+                continue;
+            }
+            if depth >= def.depth_limit() {
+                tracing::warn!(
+                    automation = %def.id_key(),
+                    depth,
+                    "automation depth limit reached; skipping to prevent a loop"
+                );
                 continue;
             }
             if let Some(cond) = &def.conditions {
@@ -90,6 +139,7 @@ impl AutomationEngine {
                 "execution_id": execution_id,
                 "event_id": event.id,
                 "event": event.to_public_json(),
+                "max_attempts": def.attempt_limit(),
             });
             // After COMMIT (outbox). In-app notify/activity run here like NotificationDef.
             // Failures enqueue automation.run onto JobQueue for retry; success is a no-op for the job.
@@ -110,7 +160,7 @@ impl AutomationEngine {
         .map_err(|e| QefroError::database(e.to_string()))?;
         let now = chrono::Utc::now();
         let mut n = 0;
-        for def in &self.defs {
+        for def in self.defs() {
             if !def.enabled || !def.trigger.is_scheduled() {
                 continue;
             }
@@ -158,6 +208,7 @@ impl AutomationEngine {
                             "timezone": tz,
                             "schedule": cron,
                             "next_run": next.to_rfc3339(),
+                            "max_attempts": def.attempt_limit(),
                         }),
                     )
                     .await?;
@@ -172,17 +223,9 @@ impl AutomationEngine {
             .get("automation_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| QefroError::bad_request("automation_id required"))?;
-        let def = self
-            .defs
-            .iter()
-            .find(|d| d.id_key() == automation_id || d.name == automation_id)
-            .ok_or_else(|| {
-                QefroError::not_found(format!("automation '{automation_id}' not found"))
-            })?
-            .clone();
-        if !def.enabled {
-            return Ok(());
-        }
+        let live = self.def_by_id(automation_id).ok_or_else(|| {
+            QefroError::not_found(format!("automation '{automation_id}' not found"))
+        })?;
         let execution_id = payload
             .get("execution_id")
             .and_then(|v| v.as_str())
@@ -199,6 +242,17 @@ impl AutomationEngine {
                     .map(uuid_from_key)
                     .unwrap_or_else(Uuid::new_v4)
             });
+        let prior = self
+            .peek_status(ctx.tenant_id, &live.id_key(), event_id)
+            .await?;
+        let resuming = matches!(
+            prior.as_deref(),
+            Some("waiting" | "failed" | "pending" | "retrying")
+        );
+        if !live.enabled && !resuming {
+            return Ok(());
+        }
+        let def = live;
         if !self
             .claim_execution(ctx.tenant_id, &def.id_key(), event_id, execution_id)
             .await?
@@ -212,31 +266,124 @@ impl AutomationEngine {
             );
             return Ok(());
         }
-        let event = payload
+        let mut event = payload
             .get("event")
             .cloned()
             .map(event_from_json)
             .unwrap_or_else(|| scheduled_event(ctx, &def, event_id));
+        self.remember_execution(ctx.tenant_id, &def, event_id, &event)
+            .await?;
+        let stored = self
+            .load_execution(ctx.tenant_id, &def.id_key(), event_id)
+            .await?;
+        let def = stored
+            .as_ref()
+            .and_then(|s| s.snapshot.clone())
+            .unwrap_or(def);
+        let start_cursor = stored
+            .as_ref()
+            .map(|s| s.cursor.clone())
+            .unwrap_or_default();
+        let mut log = stored
+            .as_ref()
+            .map(|s| s.log.clone())
+            .unwrap_or_else(|| json!([]));
         let mut run_ctx = self.action_context(ctx, &def, &event, execution_id).await;
-        let result = self.execute_actions(&mut run_ctx, &def, &event).await;
-        let status = if result.is_ok() {
-            "completed"
-        } else {
-            "failed"
-        };
-        let err = result.as_ref().err().map(|e| e.to_string());
-        sqlx::query(
-            "UPDATE qefro_automation_executions SET status = $2, error = $3 WHERE tenant_id = $1 AND automation_id = $4 AND event_id = $5",
+        run_ctx.automation_depth = event
+            .payload
+            .get("_automation_depth")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let mut cursor = start_cursor.clone();
+        let result = self
+            .execute_steps(
+                &mut run_ctx,
+                &def,
+                &mut event,
+                start_cursor.clone(),
+                &mut log,
+                &mut cursor,
+            )
+            .await;
+        match result {
+            Ok(StepResult::Waiting { run_at, cursor }) => {
+                self.persist_execution(
+                    ctx.tenant_id,
+                    &def.id_key(),
+                    event_id,
+                    "waiting",
+                    None,
+                    &cursor,
+                    &log,
+                )
+                .await?;
+                let mut resume = payload.clone();
+                if let Some(obj) = resume.as_object_mut() {
+                    obj.insert("run_at".into(), json!(run_at.to_rfc3339()));
+                    obj.insert("max_attempts".into(), json!(def.attempt_limit()));
+                    obj.insert(
+                        "idempotency_key".into(),
+                        json!(format!(
+                            "{}:{}:{}:step:{}",
+                            ctx.tenant_id,
+                            def.id_key(),
+                            event_id,
+                            cursor
+                                .iter()
+                                .map(|i| i.to_string())
+                                .collect::<Vec<_>>()
+                                .join(".")
+                        )),
+                    );
+                }
+                self.jobs.enqueue(ctx, JOB_RUN, resume).await?;
+                Ok(())
+            }
+            Ok(StepResult::Done) => {
+                self.persist_execution(
+                    ctx.tenant_id,
+                    &def.id_key(),
+                    event_id,
+                    "completed",
+                    None,
+                    &[],
+                    &log,
+                )
+                .await?;
+                Ok(())
+            }
+            Err(e) => {
+                let msg = e.public_message();
+                self.persist_execution(
+                    ctx.tenant_id,
+                    &def.id_key(),
+                    event_id,
+                    "retrying",
+                    Some(&msg),
+                    &cursor,
+                    &log,
+                )
+                .await?;
+                Err(QefroError::business("automation_failed", msg))
+            }
+        }
+    }
+
+    async fn peek_status(
+        &self,
+        tenant_id: Uuid,
+        automation_id: &str,
+        event_id: Uuid,
+    ) -> QefroResult<Option<String>> {
+        sqlx::query_scalar(
+            "SELECT status FROM qefro_automation_executions WHERE tenant_id = $1 AND automation_id = $2 AND event_id = $3",
         )
-        .bind(ctx.tenant_id)
-        .bind(status)
-        .bind(err.as_deref())
-        .bind(def.id_key())
+        .bind(tenant_id)
+        .bind(automation_id)
         .bind(event_id)
-        .execute(&self.pool)
+        .fetch_optional(&self.pool)
         .await
-        .map_err(|e| QefroError::database(e.to_string()))?;
-        result.map_err(|e| QefroError::business("automation_failed", e.to_string()))
+        .map_err(|e| QefroError::database(e.to_string()))
     }
 
     async fn claim_execution(
@@ -276,19 +423,26 @@ impl AutomationEngine {
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
         match status.as_deref() {
-            Some("completed") | Some("succeeded") => Ok(false),
+            Some("completed") | Some("succeeded") | Some("cancelled") => Ok(false),
+            Some("running") => Ok(false),
             _ => {
-                sqlx::query(
-                    "UPDATE qefro_automation_executions SET status = 'running', execution_id = $4, error = NULL WHERE tenant_id = $1 AND automation_id = $2 AND event_id = $3 AND status <> 'completed' AND status <> 'succeeded'",
+                let updated = sqlx::query_scalar::<_, Uuid>(
+                    r#"
+                    UPDATE qefro_automation_executions
+                    SET status = 'running', execution_id = $4, error = NULL, updated_at = now()
+                    WHERE tenant_id = $1 AND automation_id = $2 AND event_id = $3
+                      AND status IN ('waiting', 'failed', 'pending', 'retrying')
+                    RETURNING id
+                    "#,
                 )
                 .bind(tenant_id)
                 .bind(automation_id)
                 .bind(event_id)
                 .bind(execution_id)
-                .execute(&self.pool)
+                .fetch_optional(&self.pool)
                 .await
                 .map_err(|e| QefroError::database(e.to_string()))?;
-                Ok(true)
+                Ok(updated.is_some())
             }
         }
     }
@@ -327,14 +481,329 @@ impl AutomationEngine {
         ctx
     }
 
-    async fn execute_actions(
+    async fn remember_execution(
+        &self,
+        tenant_id: Uuid,
+        def: &AutomationDef,
+        event_id: Uuid,
+        event: &DomainEvent,
+    ) -> QefroResult<()> {
+        let snapshot = serde_json::to_value(def).unwrap_or(json!({}));
+        sqlx::query(
+            r#"
+            UPDATE qefro_automation_executions
+            SET def_snapshot = COALESCE(def_snapshot, $4),
+                entity = COALESCE(entity, $5),
+                record_id = COALESCE(record_id, $6),
+                updated_at = now()
+            WHERE tenant_id = $1 AND automation_id = $2 AND event_id = $3
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(def.id_key())
+        .bind(event_id)
+        .bind(snapshot)
+        .bind(&event.entity)
+        .bind(event.entity_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn load_execution(
+        &self,
+        tenant_id: Uuid,
+        automation_id: &str,
+        event_id: Uuid,
+    ) -> QefroResult<Option<StoredExecution>> {
+        let row = sqlx::query_as::<_, (Value, Value, Option<Value>)>(
+            "SELECT cursor, steps_log, def_snapshot FROM qefro_automation_executions WHERE tenant_id = $1 AND automation_id = $2 AND event_id = $3",
+        )
+        .bind(tenant_id)
+        .bind(automation_id)
+        .bind(event_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok(row.map(|(cursor, log, snap)| StoredExecution {
+            cursor: cursor_from_value(&cursor),
+            log,
+            snapshot: snap.and_then(|v| serde_json::from_value(v).ok()),
+        }))
+    }
+
+    async fn persist_execution(
+        &self,
+        tenant_id: Uuid,
+        automation_id: &str,
+        event_id: Uuid,
+        status: &str,
+        error: Option<&str>,
+        cursor: &[usize],
+        log: &Value,
+    ) -> QefroResult<()> {
+        sqlx::query(
+            r#"
+            UPDATE qefro_automation_executions
+            SET status = $2, error = $3, cursor = $4, steps_log = $5, updated_at = now()
+            WHERE tenant_id = $1 AND automation_id = $6 AND event_id = $7
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(status)
+        .bind(error)
+        .bind(json!(cursor))
+        .bind(log)
+        .bind(automation_id)
+        .bind(event_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub async fn list_runs(
+        &self,
+        ctx: &OpContext,
+        automation_id: Option<&str>,
+        entity: Option<&str>,
+        record_id: Option<Uuid>,
+        limit: i64,
+    ) -> QefroResult<Vec<Value>> {
+        let resolved = automation_id.map(|name| {
+            self.def_by_id(name)
+                .map(|d| d.id_key())
+                .unwrap_or_else(|| name.to_string())
+        });
+        let rows = sqlx::query_as::<_, (Uuid, String, Uuid, String, Option<String>, Option<String>, Option<Uuid>, Value, chrono::DateTime<chrono::Utc>)>(
+            r#"
+            SELECT execution_id, automation_id, event_id, status, error, entity, record_id, steps_log, created_at
+            FROM qefro_automation_executions
+            WHERE tenant_id = $1
+              AND ($2::text IS NULL OR automation_id = $2)
+              AND ($3::text IS NULL OR entity = $3)
+              AND ($4::uuid IS NULL OR record_id = $4)
+            ORDER BY created_at DESC
+            LIMIT $5
+            "#,
+        )
+        .bind(ctx.tenant_id)
+        .bind(resolved.as_deref())
+        .bind(entity)
+        .bind(record_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(eid, aid, ev, status, error, entity, record_id, log, at)| {
+                    json!({
+                        "execution_id": eid,
+                        "automation_id": aid,
+                        "event_id": ev,
+                        "status": status,
+                        "error": error,
+                        "entity": entity,
+                        "record_id": record_id,
+                        "steps": log,
+                        "created_at": at.to_rfc3339(),
+                    })
+                },
+            )
+            .collect())
+    }
+
+    pub async fn preview(
+        &self,
+        ctx: &OpContext,
+        name: &str,
+        event: &DomainEvent,
+    ) -> QefroResult<Value> {
+        let def = self
+            .def_by_id(name)
+            .ok_or_else(|| QefroError::not_found(format!("automation '{name}' not found")))?;
+        let steps = self.plan_steps(&def, event);
+        let _ = ctx;
+        Ok(json!({
+            "automation": def.name,
+            "dry_run": true,
+            "would_execute": steps,
+            "side_effects": false,
+        }))
+    }
+
+    fn plan_steps(&self, def: &AutomationDef, event: &DomainEvent) -> Vec<Value> {
+        let view = event_view(event);
+        plan_walk(&def.effective_steps(), &view)
+    }
+
+    async fn execute_steps(
         &self,
         ctx: &mut OpContext,
         def: &AutomationDef,
+        event: &mut DomainEvent,
+        start: Vec<usize>,
+        log: &mut Value,
+        out_cursor: &mut Vec<usize>,
+    ) -> QefroResult<StepResult> {
+        let steps = def.effective_steps();
+        self.walk_steps(ctx, def, event, &steps, &[], start, log, out_cursor)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn walk_steps(
+        &self,
+        ctx: &mut OpContext,
+        def: &AutomationDef,
+        event: &mut DomainEvent,
+        steps: &[AutomationStep],
+        prefix: &[usize],
+        start: Vec<usize>,
+        log: &mut Value,
+        out_cursor: &mut Vec<usize>,
+    ) -> QefroResult<StepResult> {
+        let mut index = start.first().copied().unwrap_or(0);
+        while index < steps.len() {
+            let mut here = prefix.to_vec();
+            here.push(index);
+            *out_cursor = here.clone();
+            let rest = if start.len() > 1 && index == start.first().copied().unwrap_or(0) {
+                start[1..].to_vec()
+            } else {
+                Vec::new()
+            };
+            match &steps[index] {
+                AutomationStep::End { .. } => {
+                    push_log(log, "end", "ok", "End");
+                    return Ok(StepResult::Done);
+                }
+                AutomationStep::Wait { wait } => {
+                    self.refresh_event(ctx, event).await?;
+                    let run_at = self.resolve_wait(wait, event, &ctx.timezone)?;
+                    if run_at <= chrono::Utc::now() + chrono::Duration::seconds(1) {
+                        push_log(log, "wait", "ok", &wait.label());
+                        index += 1;
+                        continue;
+                    }
+                    push_log(log, "wait", "waiting", &wait.label());
+                    let mut next = prefix.to_vec();
+                    next.push(index + 1);
+                    return Ok(StepResult::Waiting {
+                        run_at,
+                        cursor: next,
+                    });
+                }
+                AutomationStep::Branch {
+                    condition,
+                    then,
+                    otherwise,
+                } => {
+                    let (which, inner_start) = if rest.len() >= 2 {
+                        (rest[0], rest[1..].to_vec())
+                    } else if rest.len() == 1 {
+                        (rest[0], Vec::new())
+                    } else {
+                        self.refresh_event(ctx, event).await?;
+                        let view = event_view(event);
+                        let ok = condition.matches(&view);
+                        push_log(log, "condition", "ok", if ok { "then" } else { "else" });
+                        (if ok { 0 } else { 1 }, Vec::new())
+                    };
+                    let branch = if which == 0 {
+                        then.as_slice()
+                    } else {
+                        otherwise.as_slice()
+                    };
+                    let mut nested_prefix = here.clone();
+                    nested_prefix.push(which);
+                    match Box::pin(self.walk_steps(
+                        ctx,
+                        def,
+                        event,
+                        branch,
+                        &nested_prefix,
+                        inner_start,
+                        log,
+                        out_cursor,
+                    ))
+                    .await
+                    {
+                        Ok(StepResult::Done) => {
+                            index += 1;
+                        }
+                        Ok(StepResult::Waiting { run_at, cursor }) => {
+                            return Ok(StepResult::Waiting { run_at, cursor });
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                AutomationStep::Action(action) => {
+                    if let Err(e) = self.execute_action(ctx, def, event, action).await {
+                        push_log(log, action.kind(), "failed", &e.public_message());
+                        return Err(e);
+                    }
+                    push_log(log, action.kind(), "ok", action.kind());
+                    index += 1;
+                }
+            }
+        }
+        Ok(StepResult::Done)
+    }
+
+    fn resolve_wait(
+        &self,
+        wait: &WaitSpec,
         event: &DomainEvent,
-    ) -> QefroResult<()> {
-        for action in &def.actions {
-            self.execute_action(ctx, def, event, action).await?;
+        tz: &str,
+    ) -> QefroResult<chrono::DateTime<chrono::Utc>> {
+        match wait {
+            WaitSpec::Duration(raw) => {
+                let d = parse_wait_duration(raw).map_err(QefroError::bad_request)?;
+                Ok(chrono::Utc::now() + d)
+            }
+            WaitSpec::UntilField { until_field } => {
+                let raw = event
+                    .payload
+                    .get(until_field)
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        QefroError::bad_request(format!("wait until '{until_field}' is missing"))
+                    })?;
+                if let Some(dt) = qefro_core::canonicalize_datetime(raw, tz) {
+                    return Ok(dt);
+                }
+                if let Some(date) = qefro_core::parse_date(raw) {
+                    let naive = date.and_hms_opt(0, 0, 0).unwrap();
+                    return Ok(qefro_core::local_to_utc(naive, tz));
+                }
+                Err(QefroError::bad_request(format!(
+                    "wait until '{until_field}' is not a date"
+                )))
+            }
+        }
+    }
+
+    async fn refresh_event(&self, ctx: &OpContext, event: &mut DomainEvent) -> QefroResult<()> {
+        if event.entity.is_empty() || event.entity_id.is_nil() {
+            return Ok(());
+        }
+        let Ok(entities) = self.entities() else {
+            return Ok(());
+        };
+        if let Ok(record) = entities.get(ctx, &event.entity, event.entity_id).await {
+            if let Some(obj) = record.as_object() {
+                if let Some(payload) = event.payload.as_object_mut() {
+                    for (k, v) in obj {
+                        payload.insert(k.clone(), v.clone());
+                    }
+                } else {
+                    event.payload = record;
+                }
+            }
         }
         Ok(())
     }
@@ -370,14 +839,14 @@ impl AutomationEngine {
                     .as_deref()
                     .unwrap_or(event.entity.as_str());
                 let id = resolve_id(update_entity.record_id.as_deref(), event)?;
-                self.entities()?
-                    .update(ctx, entity, id, update_entity.fields.clone())
-                    .await?;
+                let fields = interpolate_value(&update_entity.fields, event);
+                self.entities()?.update(ctx, entity, id, fields).await?;
                 Ok(())
             }
             AutomationAction::CreateEntity { create_entity } => {
+                let fields = interpolate_value(&create_entity.fields, event);
                 self.entities()?
-                    .create(ctx, &create_entity.entity, create_entity.fields.clone())
+                    .create(ctx, &create_entity.entity, fields)
                     .await?;
                 Ok(())
             }
@@ -404,6 +873,18 @@ impl AutomationEngine {
                 patch.insert(assign.field.clone(), user);
                 self.entities()?
                     .update(ctx, entity, id, Value::Object(patch))
+                    .await?;
+                Ok(())
+            }
+            AutomationAction::PrintDocument { print_document } => {
+                let entity = print_document
+                    .entity
+                    .as_deref()
+                    .unwrap_or(event.entity.as_str());
+                let id = resolve_id(print_document.record_id.as_deref(), event)?;
+                let _ = self
+                    .entities()?
+                    .print_document(ctx, entity, id, print_document.format.as_deref(), &[])
                     .await?;
                 Ok(())
             }
@@ -706,10 +1187,97 @@ fn resolve_id(raw: Option<&str>, event: &DomainEvent) -> QefroResult<Uuid> {
 }
 
 fn interpolate(s: &str, event: &DomainEvent) -> Value {
-    if s == "{{record_id}}" || s == "$record_id" {
-        return json!(event.entity_id);
+    match s {
+        "{{record_id}}" | "$record_id" => json!(event.entity_id),
+        "{{entity}}" | "$entity" => json!(event.entity),
+        "{{event}}" | "$event" => json!(event.name),
+        other => json!(other),
     }
-    json!(s)
+}
+
+fn interpolate_value(value: &Value, event: &DomainEvent) -> Value {
+    match value {
+        Value::String(s) => interpolate(s, event),
+        Value::Array(items) => {
+            Value::Array(items.iter().map(|v| interpolate_value(v, event)).collect())
+        }
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                out.insert(k.clone(), interpolate_value(v, event));
+            }
+            Value::Object(out)
+        }
+        other => other.clone(),
+    }
+}
+
+enum StepResult {
+    Done,
+    Waiting {
+        run_at: chrono::DateTime<chrono::Utc>,
+        cursor: Vec<usize>,
+    },
+}
+
+struct StoredExecution {
+    cursor: Vec<usize>,
+    log: Value,
+    snapshot: Option<AutomationDef>,
+}
+
+fn cursor_from_value(value: &Value) -> Vec<usize> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_u64().map(|n| n as usize))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn push_log(log: &mut Value, kind: &str, status: &str, message: &str) {
+    if !log.is_array() {
+        *log = json!([]);
+    }
+    if let Some(arr) = log.as_array_mut() {
+        arr.push(json!({
+            "kind": kind,
+            "status": status,
+            "message": message,
+            "at": chrono::Utc::now().to_rfc3339(),
+        }));
+    }
+}
+
+fn plan_walk(steps: &[AutomationStep], view: &Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    for step in steps {
+        match step {
+            AutomationStep::Wait { wait } => {
+                out.push(json!({ "kind": "wait", "label": wait.label() }))
+            }
+            AutomationStep::End { .. } => out.push(json!({ "kind": "end" })),
+            AutomationStep::Action(a) => out.push(json!({ "kind": a.kind() })),
+            AutomationStep::Branch {
+                condition,
+                then,
+                otherwise,
+            } => {
+                let ok = condition.matches(view);
+                out.push(json!({ "kind": "condition", "result": ok }));
+                let branch = if ok {
+                    then.as_slice()
+                } else {
+                    otherwise.as_slice()
+                };
+                out.extend(plan_walk(branch, view));
+            }
+        }
+    }
+    out
 }
 
 fn uuid_from_key(key: &str) -> Uuid {
@@ -810,5 +1378,23 @@ mod tests {
             Condition::field_equals("to_state", "ready"),
         ]);
         assert!(cond.matches(&view));
+    }
+
+    #[test]
+    fn plan_walk_branches() {
+        use qefro_core::{AutomationAction, AutomationStep};
+        let steps = vec![
+            AutomationStep::wait("0s"),
+            AutomationStep::branch(
+                Condition::field_equals("status", "Draft"),
+                vec![AutomationStep::action(AutomationAction::notify("Manager"))],
+                vec![AutomationStep::End { end: true }],
+            ),
+        ];
+        let plan = plan_walk(&steps, &json!({ "status": "Draft" }));
+        assert!(plan.iter().any(|s| s["kind"] == "wait"));
+        assert!(plan.iter().any(|s| s["kind"] == "notify"));
+        let other = plan_walk(&steps, &json!({ "status": "Confirmed" }));
+        assert!(other.iter().any(|s| s["kind"] == "end"));
     }
 }

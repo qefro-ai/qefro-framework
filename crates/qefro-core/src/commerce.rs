@@ -4,10 +4,13 @@
 //! hospitality-specific. There is no second e-commerce framework.
 
 use crate::app::NavItem;
-use crate::automation::{AutomationAction, AutomationDef, AutomationTrigger, NotifyAction};
+use crate::automation::{
+    AutomationAction, AutomationDef, AutomationStep, AutomationTrigger, NotifyAction,
+};
 use crate::communication::{
     CommunicationDef, CHANNEL_EMAIL, CHANNEL_IN_APP, CHANNEL_WHATSAPP, PURPOSE_TRANSACTIONAL,
 };
+use crate::condition::Condition;
 use crate::document::{DocumentConfig, NamingConfig, PrintFormat, PrintSection, ReportDef};
 use crate::entity::EntityDef;
 use crate::field::{ChildTableDef, FieldDef, OnDelete};
@@ -1409,6 +1412,13 @@ pub fn commerce_communications() -> Vec<CommunicationDef> {
             .preferred_channel_field("communication_channel")
             .opt_out_field("marketing_opt_out")
             .attach_document(),
+        CommunicationDef::new("invoice_overdue_reminder", "invoice.issued", INVOICE_ENTITY)
+            .channels(&[CHANNEL_EMAIL, CHANNEL_IN_APP])
+            .purpose(PURPOSE_TRANSACTIONAL)
+            .subject("Invoice {{ number }} is due")
+            .body("Hello {{ customer_name }},\ninvoice {{ number }} for {{ total | currency }} is due. Please send payment.")
+            .preferred_channel_field("communication_channel")
+            .opt_out_field("marketing_opt_out"),
         CommunicationDef::new("payment_received", "payment.received", SALES_PAYMENT_ENTITY)
             .channels(&[CHANNEL_EMAIL, CHANNEL_IN_APP])
             .purpose(PURPOSE_TRANSACTIONAL)
@@ -1467,6 +1477,19 @@ pub fn commerce_automations() -> Vec<AutomationDef> {
                 ..Default::default()
             },
         }),
+        AutomationDef::new(
+            "invoice_overdue_reminder",
+            AutomationTrigger::event("invoice.issued"),
+        )
+        .description("Wait until the due date, then remind if the invoice is still unpaid")
+        .step(AutomationStep::wait_until("due_date"))
+        .step(AutomationStep::branch(
+            Condition::field_equals("status", INVOICE_ISSUED),
+            vec![AutomationStep::action(
+                AutomationAction::send_communication("invoice_overdue_reminder"),
+            )],
+            vec![AutomationStep::End { end: true }],
+        )),
     ]
 }
 

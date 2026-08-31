@@ -597,6 +597,9 @@ impl QefroRuntime {
             webhook_defs.clone(),
             communication_defs.clone(),
         ));
+        for def in automation.defs() {
+            catalog.upsert_automation(def);
+        }
         job_handlers.register("automation.run", automation.clone());
         job_handlers.register("automation.schedule", automation.clone());
         qefro_db::register_document_operations(&mut operations, &registry);
@@ -624,6 +627,7 @@ impl QefroRuntime {
             .with_identity(auth.clone()),
         );
         automation.bind(entities.clone());
+        studio.bind_automation(automation.clone());
         due_reminder.bind(entities.clone());
         schedule_reminder.bind(entities.clone());
         communication_deliver.bind(
