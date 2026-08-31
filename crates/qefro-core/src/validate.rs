@@ -218,6 +218,11 @@ pub fn validate_bundle(bundle: &AppBundle, installed: &[InstalledAppRef]) -> Val
             report.error(err);
         }
     }
+    for entity in &bundle.entities {
+        for err in crate::scheduling::validate_scheduling(entity, Some(&registry)) {
+            report.error(err);
+        }
+    }
     for item in &bundle.manifest.navigation {
         if let Some(page_name) = &item.page {
             if !bundle

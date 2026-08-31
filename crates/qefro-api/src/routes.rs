@@ -92,6 +92,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/reports/{name}", get(get_report))
         .route("/api/v1/reports/{name}/run", post(run_report))
         .route("/api/v1/{slug}/aggregates", get(entity_aggregates))
+        .route("/api/v1/{slug}/availability", get(entity_availability))
         .route("/api/v1/{slug}/bulk", post(bulk_entities))
         .route("/api/v1/{slug}/export", get(export_entities))
         .route("/api/v1/{slug}/{id}/print", get(print_document))
@@ -1501,6 +1502,22 @@ async fn entity_aggregates(
                 field.as_deref(),
                 query,
             )
+            .await?,
+    ))
+}
+
+async fn entity_availability(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(slug): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    reject_reserved(&slug)?;
+    let entity = state.entities.registry().get(&slug)?;
+    Ok(Json(
+        state
+            .entities
+            .availability(&ctx, &entity.name, &params)
             .await?,
     ))
 }

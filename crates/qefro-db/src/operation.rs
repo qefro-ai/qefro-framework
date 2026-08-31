@@ -280,13 +280,26 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
                 dst.insert(k.clone(), v.clone());
             }
         }
+        crate::scheduling::prepare_record(&def, &mut merged, &self.auth.timezone);
         apply_entity_rules(def.business_fields(), &def.validation, &merged, true)?;
         self.check_cross_entity_refs(&def, &merged).await?;
+        crate::scheduling::enforce_in_tx(
+            self.tx,
+            self.repo,
+            self.registry,
+            &self.auth,
+            &def,
+            &merged,
+            Some(id),
+        )
+        .await?;
         let updated = self
             .repo
             .update_tx(self.tx, &def, &self.auth, id, patch)
             .await?;
         self.record_side_effects(&def, Some(&current), &updated, "update")
+            .await?;
+        crate::scheduling::enqueue_reminder_tx(self.jobs, self.tx, &self.auth, &def, &updated)
             .await?;
         Ok(updated)
     }
@@ -322,9 +335,20 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
                 }
             }
         }
+        crate::scheduling::prepare_record(&def, &mut data, &self.auth.timezone);
         validate_record(def.business_fields(), &data, false)?;
         apply_entity_rules(def.business_fields(), &def.validation, &data, false)?;
         self.check_cross_entity_refs(&def, &data).await?;
+        crate::scheduling::enforce_in_tx(
+            self.tx,
+            self.repo,
+            self.registry,
+            &self.auth,
+            &def,
+            &data,
+            None,
+        )
+        .await?;
         let mut created = self.repo.insert_tx(self.tx, &def, &self.auth, data).await?;
         let id = record_id(&created)?;
         let stored_children = self.write_child_rows(&def, id, children).await?;
@@ -334,6 +358,8 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
             }
         }
         self.record_side_effects(&def, None, &created, "create")
+            .await?;
+        crate::scheduling::enqueue_reminder_tx(self.jobs, self.tx, &self.auth, &def, &created)
             .await?;
         Ok(created)
     }

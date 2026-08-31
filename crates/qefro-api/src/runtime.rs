@@ -13,8 +13,9 @@ use qefro_db::{
     CommunicationDeliverJob, CommunicationDispatcher, CommunicationHub, CommunicationStore,
     DueReminderJob, EmailNotifyJob, EntityService, JobHandler, JobQueue, JobRegistry,
     LogNotificationJob, MetadataChangeService, NotificationStore, OperationExecuteJob,
-    OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore, WebhookLog,
-    ATTACHMENT_PURGE_JOB, COMMUNICATION_DELIVER_JOB, DUE_REMINDER_JOB, OPERATION_EXECUTE_JOB,
+    OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore, ScheduleReminderJob,
+    WebhookLog, ATTACHMENT_PURGE_JOB, COMMUNICATION_DELIVER_JOB, DUE_REMINDER_JOB,
+    OPERATION_EXECUTE_JOB, SCHEDULE_REMINDER_JOB,
 };
 use qefro_events::InProcessEventBus;
 use qefro_permissions::{PermissionGrant, PermissionRegistry};
@@ -545,6 +546,8 @@ impl QefroRuntime {
         job_handlers.register("notify.email", Arc::new(EmailNotifyJob));
         let due_reminder = DueReminderJob::new();
         job_handlers.register(DUE_REMINDER_JOB, due_reminder.clone());
+        let schedule_reminder = ScheduleReminderJob::new();
+        job_handlers.register(SCHEDULE_REMINDER_JOB, schedule_reminder.clone());
         let communication_deliver = CommunicationDeliverJob::new();
         job_handlers.register(COMMUNICATION_DELIVER_JOB, communication_deliver.clone());
         let operation_execute = OperationExecuteJob::new();
@@ -597,6 +600,7 @@ impl QefroRuntime {
         job_handlers.register("automation.run", automation.clone());
         job_handlers.register("automation.schedule", automation.clone());
         qefro_db::register_document_operations(&mut operations, &registry);
+        qefro_db::register_scheduling_operations(&mut operations, &registry);
         qefro_db::register_accounting_operations(&mut operations);
         qefro_db::register_commerce_operations(&mut operations);
         let operations = Arc::new(operations);
@@ -621,6 +625,7 @@ impl QefroRuntime {
         );
         automation.bind(entities.clone());
         due_reminder.bind(entities.clone());
+        schedule_reminder.bind(entities.clone());
         communication_deliver.bind(
             entities.clone(),
             communication_store.clone(),

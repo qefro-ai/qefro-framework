@@ -221,6 +221,8 @@ impl QefroError {
             Self::Workflow { .. } => "invalid_transition",
             Self::Business { code, .. } if code == "automation_failed" => "automation_failed",
             Self::Business { code, .. } if code == "job_failed" => "job_failed",
+            Self::Business { code, .. } if code == "scheduling_conflict" => "scheduling_conflict",
+            Self::Business { code, .. } if code == "scheduling_capacity" => "scheduling_capacity",
             Self::Business { .. } => "business_rule_failed",
             Self::RateLimited { .. } => "rate_limited",
             Self::Locked { .. } => "locked",

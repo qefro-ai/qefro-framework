@@ -237,6 +237,11 @@ impl MetadataChangeService {
                 Ok(analysis)
             }
             "entity.views" => analyze_views_overlay(target, payload),
+            "entity.scheduling" => {
+                let mut analysis = qefro_core::ChangeAnalysis::safe();
+                analysis.diff.push(format!("~ {target} scheduling"));
+                Ok(analysis)
+            }
             "workflow" => {
                 let wf: WorkflowDef = serde_json::from_value(payload.clone())
                     .map_err(|e| QefroError::bad_request(format!("invalid workflow: {e}")))?;
@@ -282,6 +287,11 @@ impl MetadataChangeService {
             "entity.views" => {
                 let mut entity = (*self.registry.get(target)?).clone();
                 let after = apply_views_payload(&mut entity, payload)?;
+                validate_entity(self.registry.as_ref(), &after)?;
+            }
+            "entity.scheduling" => {
+                let mut entity = (*self.registry.get(target)?).clone();
+                let after = apply_scheduling_payload(&mut entity, payload)?;
                 validate_entity(self.registry.as_ref(), &after)?;
             }
             "workflow" => {
@@ -506,7 +516,8 @@ impl MetadataChangeService {
             | "entity.field"
             | "entity.field.upsert"
             | "entity.field.ui"
-            | "entity.views" => self
+            | "entity.views"
+            | "entity.scheduling" => self
                 .registry
                 .try_get(target)
                 .and_then(|e| serde_json::to_value(&*e).ok()),
@@ -568,6 +579,14 @@ impl MetadataChangeService {
             "entity.views" => {
                 let mut entity = (*self.registry.get(target)?).clone();
                 let after = apply_views_payload(&mut entity, payload)?;
+                validate_entity(self.registry.as_ref(), &after)?;
+                let module = after.module.clone();
+                self.registry.overlay_put(after.clone())?;
+                maybe_write_yaml(module.as_deref(), &after)?;
+            }
+            "entity.scheduling" => {
+                let mut entity = (*self.registry.get(target)?).clone();
+                let after = apply_scheduling_payload(&mut entity, payload)?;
                 validate_entity(self.registry.as_ref(), &after)?;
                 let module = after.module.clone();
                 self.registry.overlay_put(after.clone())?;
@@ -824,6 +843,22 @@ fn apply_views_payload(entity: &mut EntityDef, payload: &Value) -> QefroResult<E
     Ok(entity.clone())
 }
 
+fn apply_scheduling_payload(entity: &mut EntityDef, payload: &Value) -> QefroResult<EntityDef> {
+    if payload.get("enabled").and_then(|v| v.as_bool()) == Some(false) {
+        entity.scheduling = None;
+        return Ok(entity.clone());
+    }
+    let mut payload = payload.clone();
+    if let Some(obj) = payload.as_object_mut() {
+        obj.remove("enabled");
+        obj.retain(|_, v| !v.is_null());
+    }
+    let config: qefro_core::SchedulingConfig = serde_json::from_value(payload)
+        .map_err(|e| QefroError::bad_request(format!("invalid scheduling: {e}")))?;
+    entity.scheduling = Some(config);
+    Ok(entity.clone())
+}
+
 fn upsert_field(entity: &mut EntityDef, field: FieldDef) {
     if let Some(existing) = entity.fields.iter_mut().find(|f| f.name == field.name) {
         *existing = field;
@@ -837,6 +872,9 @@ fn validate_entity(registry: &EntityRegistry, after: &EntityDef) -> QefroResult<
     after.validate_idents()?;
     detect_cycles(&after.fields)?;
     after.validate_ui_layout()?;
+    for err in qefro_core::validate_scheduling(after, Some(registry)) {
+        return Err(QefroError::bad_request(err));
+    }
     for field in &after.fields {
         if let Some(rel) = &field.relation {
             if rel.target_entity != after.name && registry.try_get(&rel.target_entity).is_none() {

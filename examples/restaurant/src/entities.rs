@@ -5,7 +5,7 @@ use qefro_core::ui::{
 use qefro_core::{
     CalendarViewSpec, ChildTableDef, DocumentConfig, EntityActionDef, EntityDef, EntityViews,
     FieldDef, KanbanCardSpec, KanbanViewSpec, LinkDef, ListViewSpec, NamingConfig, PrintFormat,
-    PrintSection, PublicFormDef, UiConfig,
+    PrintSection, PublicFormDef, SchedulingConfig, UiConfig, WorkingHours,
 };
 use serde_json::json;
 
@@ -438,6 +438,7 @@ pub fn reservation() -> EntityDef {
             calendar: Some(CalendarViewSpec {
                 start: Some("reservation_date".into()),
                 time: Some("reservation_time".into()),
+                end: Some("end_time".into()),
                 title: Some("guest_name".into()),
                 subtitle: Some("status".into()),
                 ..Default::default()
@@ -482,6 +483,21 @@ pub fn reservation() -> EntityDef {
             "greater_than",
             "reservation_time",
         ))
+        .scheduling(
+            SchedulingConfig::new("reservation_date")
+                .time_field("reservation_time")
+                .end_time_field("end_time")
+                .resource("table_id")
+                .capacity("party_size", "seats")
+                .conflict()
+                .calendar()
+                .duration_minutes(90)
+                .slot_interval_minutes(30)
+                .buffer(0, 15)
+                .ignore_states(&["Cancelled", "Completed"])
+                .working_hours(WorkingHours::everyday("11:00", "22:00"))
+                .reminder_minutes(24 * 60),
+        )
         .build()
 }
 
