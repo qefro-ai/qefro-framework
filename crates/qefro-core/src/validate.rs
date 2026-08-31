@@ -202,11 +202,15 @@ pub fn validate_bundle(bundle: &AppBundle, installed: &[InstalledAppRef]) -> Val
         }
     }
     for fmt in &bundle.print_formats {
-        if registry.try_get(&fmt.entity).is_none() {
-            report.error(format!(
-                "print format '{}' references missing entity '{}'",
-                fmt.name, fmt.entity
-            ));
+        for err in crate::document::validate_print_format(fmt, &registry) {
+            report.error(err);
+        }
+    }
+    for entity in &bundle.entities {
+        for fmt in &entity.print_formats {
+            for err in crate::document::validate_print_format(fmt, &registry) {
+                report.error(err);
+            }
         }
     }
     for item in &bundle.manifest.navigation {

@@ -794,6 +794,17 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
             println!("  {}  {}", report.name, report.label);
         }
     }
+    let docs: Vec<_> = runtime
+        .print_formats()
+        .into_iter()
+        .filter(|f| f.entity.eq_ignore_ascii_case(&entity.name))
+        .collect();
+    if !docs.is_empty() {
+        println!("Documents");
+        for fmt in docs {
+            println!("  {}  {}  {}", fmt.document_title(), fmt.variant, fmt.name);
+        }
+    }
     Ok(())
 }
 
@@ -871,6 +882,11 @@ fn cmd_validate(app: &str) -> Result<()> {
         }
         for err in qefro_core::validate_page(&page, &registry, &reports, &dashboards, &entity_slugs)
         {
+            errors.push(err);
+        }
+    }
+    for fmt in runtime.print_formats() {
+        for err in qefro_core::validate_print_format(&fmt, &registry) {
             errors.push(err);
         }
     }

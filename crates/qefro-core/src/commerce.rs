@@ -5,7 +5,7 @@
 
 use crate::app::NavItem;
 use crate::automation::{AutomationAction, AutomationDef, AutomationTrigger, NotifyAction};
-use crate::document::{DocumentConfig, NamingConfig, PrintFormat, ReportDef};
+use crate::document::{DocumentConfig, NamingConfig, PrintFormat, PrintSection, ReportDef};
 use crate::entity::EntityDef;
 use crate::field::{ChildTableDef, FieldDef, OnDelete};
 use crate::platform::{LinkDef, NotificationDef};
@@ -104,6 +104,19 @@ fn party_fields(section: &'static str) -> [FieldDef; 3] {
             .label("Customer name")
             .section(section),
     ]
+}
+
+fn document_print(name: &str, entity: &str, title: &str) -> PrintFormat {
+    PrintFormat::new(name, entity)
+        .title(title)
+        .item_table("items")
+        .total_fields(&["subtotal", "tax", "discount", "total"])
+        .filename_field("doc_no")
+        .section(PrintSection::kind("header"))
+        .section(PrintSection::kind("customer").fields(&["customer_name"]))
+        .section(PrintSection::kind("items").loop_over("items"))
+        .section(PrintSection::kind("totals"))
+        .section(PrintSection::kind("footer"))
 }
 
 fn money_header(section: &'static str) -> Vec<FieldDef> {
@@ -333,12 +346,7 @@ pub fn quote_entity() -> EntityDef {
                 .lock_states(&[QUOTE_CONVERTED]),
         )
         .naming(NamingConfig::new("QT-{YYYY}-{#####}"))
-        .print_format(
-            PrintFormat::new("Quote", QUOTE_ENTITY)
-                .title("Quote")
-                .item_table("items")
-                .total_fields(&["subtotal", "tax", "discount", "total"]),
-        )
+        .print_format(document_print("Quote", QUOTE_ENTITY, "Quote"))
         .field(
             FieldDef::string("doc_no")
                 .nullable()
@@ -481,12 +489,11 @@ pub fn sales_order_entity() -> EntityDef {
                 .lock_states(&[ORDER_FULFILLED, ORDER_COMPLETED, ORDER_CANCELLED]),
         )
         .naming(NamingConfig::new("SO-{YYYY}-{#####}"))
-        .print_format(
-            PrintFormat::new("Sales Order", SALES_ORDER_ENTITY)
-                .title("Sales Order")
-                .item_table("items")
-                .total_fields(&["subtotal", "tax", "discount", "total"]),
-        )
+        .print_format(document_print(
+            "Sales Order",
+            SALES_ORDER_ENTITY,
+            "Sales Order",
+        ))
         .field(
             FieldDef::string("doc_no")
                 .nullable()
@@ -798,11 +805,9 @@ pub fn invoice_entity() -> EntityDef {
                 .lock_states(&[INVOICE_ISSUED, INVOICE_PAID]),
         )
         .naming(NamingConfig::new("INV-{YYYY}-{#####}"))
+        .print_format(document_print("Invoice", INVOICE_ENTITY, "Invoice"))
         .print_format(
-            PrintFormat::new("Invoice", INVOICE_ENTITY)
-                .title("Invoice")
-                .item_table("items")
-                .total_fields(&["subtotal", "tax", "discount", "total"]),
+            document_print("Invoice Compact", INVOICE_ENTITY, "Invoice").variant("compact"),
         )
         .field(
             FieldDef::string("doc_no")
@@ -970,6 +975,18 @@ pub fn sales_payment_entity() -> EntityDef {
         .audit()
         .document(DocumentConfig::new().lock_states(&[PAY_RECEIVED]))
         .naming(NamingConfig::new("PAY-{YYYY}-{#####}"))
+        .print_format(
+            PrintFormat::new("Receipt", SALES_PAYMENT_ENTITY)
+                .title("Receipt")
+                .filename_field("doc_no")
+                .item_table("allocations")
+                .total_fields(&["amount"])
+                .section(PrintSection::kind("header"))
+                .section(PrintSection::kind("customer").fields(&["customer_name"]))
+                .section(PrintSection::kind("items").loop_over("allocations"))
+                .section(PrintSection::kind("totals"))
+                .section(PrintSection::kind("footer")),
+        )
         .field(
             FieldDef::string("doc_no")
                 .nullable()

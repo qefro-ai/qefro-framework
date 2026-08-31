@@ -37,6 +37,7 @@ pub mod seed;
 pub mod storage;
 pub mod studio;
 pub mod task;
+pub mod template;
 pub mod timezone;
 pub mod ui;
 pub mod validate;
@@ -82,7 +83,10 @@ pub use commerce::{
 };
 pub use condition::Condition;
 pub use context::{OpContext, ROLE_PUBLIC, ROLE_WORKER};
-pub use document::{DocumentConfig, NamingConfig, PrintFormat, ReportDef};
+pub use document::{
+    resolve_print_format, validate_print_format, DocumentConfig, NamingConfig, PrintFormat,
+    PrintSection, ReportDef, PRINT_SECTION_KINDS, PRINT_VARIANTS,
+};
 pub use entitlement::{Entitlements, Plan};
 pub use entity::{EntityDef, RecordLifecycle, RowPolicy};
 pub use error::{FieldError, QefroError, QefroResult};
@@ -136,13 +140,18 @@ pub use task::{
     RELATED_TYPE_FIELD, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_IN_PROGRESS, STATUS_OPEN,
     TASK_ENTITY, TASK_SLUG, TASK_WORKFLOW,
 };
+pub use template::{
+    display_value, reject_unsafe_print_payload, reject_unsafe_template, render_template,
+    template_paths, validate_template_paths, wrap_record, FormatOpts,
+};
 pub use timezone::{canonicalize_datetime, local_to_utc, utc_to_local};
 pub use ui::{
     CalendarViewSpec, CardViewSpec, ChartMeasureSpec, ChartViewSpec, DashboardCard, DashboardDef,
     DetailViewSpec, EntityCapabilities, EntityPermissions, EntityViews, FormViewSpec,
-    KanbanCardSpec, KanbanViewSpec, ListViewSpec, TenantBranding, TenantBusinessConfig,
-    TenantConfig, TenantFeatures, TenantUiConfig, UiConfig, UiEntityMeta, UiFieldMeta, UiWhen,
-    UiWidget, ViewColumnSpec, ViewSectionSpec, WidgetOptions, WorkspaceNavItem, UI_SCHEMA_VERSION,
+    KanbanCardSpec, KanbanViewSpec, ListViewSpec, PrintFormatSummary, TenantBranding,
+    TenantBusinessConfig, TenantConfig, TenantFeatures, TenantUiConfig, UiConfig, UiEntityMeta,
+    UiFieldMeta, UiWhen, UiWidget, ViewColumnSpec, ViewSectionSpec, WidgetOptions,
+    WorkspaceNavItem, UI_SCHEMA_VERSION,
 };
 pub use validate::{
     destructive_field_removals, validate_bundle, InstalledAppRef, ValidationReport,

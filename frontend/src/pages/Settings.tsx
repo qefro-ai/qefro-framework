@@ -27,6 +27,10 @@ export default function Settings({
   const [accent, setAccent] = useState("");
   const [logo, setLogo] = useState("");
   const [favicon, setFavicon] = useState("");
+  const [address, setAddress] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [website, setWebsite] = useState("");
   const [navigation, setNavigation] = useState("");
   const [apps, setApps] = useState("");
   const [timezone, setTimezone] = useState("");
@@ -56,6 +60,10 @@ export default function Settings({
     setAccent(config.branding.accent_color ?? "");
     setLogo(config.branding.logo ?? "");
     setFavicon(config.branding.favicon ?? "");
+    setAddress(config.branding.address ?? "");
+    setPhone(config.branding.phone ?? "");
+    setEmail(config.branding.email ?? "");
+    setWebsite(config.branding.website ?? "");
     setNavigation((config.ui_config.navigation ?? []).join(", "));
     setApps((config.enabled_apps ?? []).join(", "));
     setTimezone(config.business?.timezone ?? "UTC");
@@ -95,6 +103,10 @@ export default function Settings({
         accent_color: accent || null,
         logo: logo || null,
         favicon: favicon || null,
+        address: address || null,
+        phone: phone || null,
+        email: email || null,
+        website: website || null,
       },
       ui_config: {
         ...config.ui_config,
@@ -206,6 +218,22 @@ export default function Settings({
         <label className="field-cell width-half">
           App name
           <input value={appName} onChange={(e) => setAppName(e.target.value)} />
+        </label>
+        <label className="field-cell width-half">
+          Address
+          <input value={address} onChange={(e) => setAddress(e.target.value)} />
+        </label>
+        <label className="field-cell width-half">
+          Phone
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} />
+        </label>
+        <label className="field-cell width-half">
+          Email
+          <input value={email} onChange={(e) => setEmail(e.target.value)} />
+        </label>
+        <label className="field-cell width-half">
+          Website
+          <input value={website} onChange={(e) => setWebsite(e.target.value)} />
         </label>
         <label className="field-cell width-half">
           Primary color

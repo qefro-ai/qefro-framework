@@ -6,7 +6,7 @@
 
 use crate::app::NavItem;
 use crate::automation::{AutomationAction, AutomationDef, AutomationTrigger, NotifyAction};
-use crate::document::{DocumentConfig, NamingConfig, ReportDef};
+use crate::document::{DocumentConfig, NamingConfig, PrintFormat, PrintSection, ReportDef};
 use crate::entity::EntityDef;
 use crate::field::{ChildTableDef, FieldDef, OnDelete};
 use crate::platform::NotificationDef;
@@ -196,6 +196,17 @@ pub fn journal_entry_entity() -> EntityDef {
                 .lock_states(&[JOURNAL_POSTED, JOURNAL_REVERSED]),
         )
         .naming(NamingConfig::new("JE-{YYYY}-{#####}"))
+        .print_format(
+            PrintFormat::new("Journal Entry", JOURNAL_ENTITY)
+                .title("Journal Entry")
+                .filename_field("doc_no")
+                .item_table("lines")
+                .total_fields(&["total_debit", "total_credit"])
+                .section(PrintSection::kind("header"))
+                .section(PrintSection::kind("items").loop_over("lines"))
+                .section(PrintSection::kind("totals"))
+                .section(PrintSection::kind("footer")),
+        )
         .field(
             FieldDef::string("doc_no")
                 .nullable()

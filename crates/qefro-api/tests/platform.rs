@@ -40,10 +40,10 @@ fn platform_app() -> InstalledApp {
                     .build(),
             )
             .entity(
-                EntityDef::new("Invoice")
+                EntityDef::new("PlatInvoice")
                     .table_name("plat_invoices")
-                    .slug_name("invoices")
-                    .workflow("invoice")
+                    .slug_name("plat-invoices")
+                    .workflow("plat_invoice")
                     .attachments()
                     .document(
                         DocumentConfig::new()
@@ -78,19 +78,19 @@ fn platform_app() -> InstalledApp {
                     .build(),
             )
             .notification(
-                NotificationDef::new("invoice_submitted", "invoice.submitted")
+                NotificationDef::new("invoice_submitted", "plat_invoice.submitted")
                     .channels(&["in_app"])
                     .recipients(&["Staff", "Manager"]),
             )
             .webhook(WebhookDef::new(
                 "invoice-submitted",
-                "invoice.submitted",
+                "plat_invoice.submitted",
                 "test://invoice",
             ))
             .build(),
     )
     .workflow(
-        WorkflowDef::new("invoice", "Invoice", "Draft")
+        WorkflowDef::new("plat_invoice", "PlatInvoice", "Draft")
             .state(StateDef::new("Submitted"))
             .state(StateDef::new("Approved"))
             .transition(TransitionDef::new("submit", "Draft", "Submitted")),
@@ -98,8 +98,8 @@ fn platform_app() -> InstalledApp {
     .permission(PermissionGrant::crud(ROLE_STAFF, "ShopSettings"))
     .permission(PermissionGrant::crud(ROLE_STAFF, "Employee"))
     .permission(PermissionGrant::crud(ROLE_HR, "Employee"))
-    .permission(PermissionGrant::crud(ROLE_STAFF, "Invoice"))
-    .permission(PermissionGrant::crud(ROLE_MANAGER, "Invoice"))
+    .permission(PermissionGrant::crud(ROLE_STAFF, "PlatInvoice"))
+    .permission(PermissionGrant::crud(ROLE_MANAGER, "PlatInvoice"))
     .permission(PermissionGrant::crud(ROLE_STAFF, "Booking"))
     .permission(PermissionGrant::new(
         ROLE_PUBLIC,
@@ -318,7 +318,7 @@ async fn allow_on_submit_locks_other_fields() {
     let (status, inv) = json(
         clone_router(&router),
         post(
-            "/api/v1/invoices",
+            "/api/v1/plat-invoices",
             Some(&token),
             json!({ "customer": "Ahmed", "total": 100 }),
         ),
@@ -330,7 +330,7 @@ async fn allow_on_submit_locks_other_fields() {
     let (status, submitted) = json(
         clone_router(&router),
         post(
-            &format!("/api/v1/invoices/{id}/actions/submit"),
+            &format!("/api/v1/plat-invoices/{id}/actions/submit"),
             Some(&token),
             json!({}),
         ),
@@ -341,7 +341,7 @@ async fn allow_on_submit_locks_other_fields() {
     let (status, locked) = json(
         clone_router(&router),
         patch(
-            &format!("/api/v1/invoices/{id}"),
+            &format!("/api/v1/plat-invoices/{id}"),
             &token,
             json!({ "customer": "Other" }),
         ),
@@ -352,7 +352,7 @@ async fn allow_on_submit_locks_other_fields() {
     let (status, note) = json(
         clone_router(&router),
         patch(
-            &format!("/api/v1/invoices/{id}"),
+            &format!("/api/v1/plat-invoices/{id}"),
             &token,
             json!({ "delivery_note": "Leave at door" }),
         ),
@@ -479,7 +479,7 @@ async fn attachments_require_record_access() {
     let (status, inv) = json(
         clone_router(&router),
         post(
-            "/api/v1/invoices",
+            "/api/v1/plat-invoices",
             Some(&token),
             json!({ "customer": "Ahmed" }),
         ),
@@ -489,7 +489,10 @@ async fn attachments_require_record_access() {
     let id = inv["id"].as_str().unwrap();
     let (status, listed) = json(
         clone_router(&router),
-        get(&format!("/api/v1/invoices/{id}/attachments"), Some(&token)),
+        get(
+            &format!("/api/v1/plat-invoices/{id}/attachments"),
+            Some(&token),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{listed}");
@@ -504,7 +507,7 @@ async fn webhook_and_notification_after_submit() {
     let (status, inv) = json(
         clone_router(&router),
         post(
-            "/api/v1/invoices",
+            "/api/v1/plat-invoices",
             Some(&token),
             json!({ "customer": "Ahmed" }),
         ),
@@ -515,7 +518,7 @@ async fn webhook_and_notification_after_submit() {
     let (status, submitted) = json(
         clone_router(&router),
         post(
-            &format!("/api/v1/invoices/{id}/actions/submit"),
+            &format!("/api/v1/plat-invoices/{id}/actions/submit"),
             Some(&token),
             json!({}),
         ),

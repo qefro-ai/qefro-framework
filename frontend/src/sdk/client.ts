@@ -17,6 +17,10 @@ export type TenantConfig = {
     accent_color?: string | null;
     company_name?: string | null;
     app_name?: string | null;
+    address?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    website?: string | null;
   };
   ui_config: {
     navigation: string[];
@@ -325,6 +329,30 @@ export class QefroClient {
     const match = disposition.match(/filename="([^"]+)"/);
     link.href = url;
     link.download = match?.[1] || `${slug}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  printHtml = async (slug: string, id: string, format?: string) => {
+    const q = format ? `?format=${encodeURIComponent(format)}` : "";
+    const res = await fetch(`/api/v1/${slug}/${id}/print${q}`, { headers: tokenHeader() });
+    if (!res.ok) {
+      throw new ApiError(res.statusText, res.status);
+    }
+    return res.text();
+  };
+  downloadPdf = async (slug: string, id: string, format?: string) => {
+    const q = format ? `?format=${encodeURIComponent(format)}` : "";
+    const res = await fetch(`/api/v1/${slug}/${id}/print.pdf${q}`, { headers: tokenHeader() });
+    if (!res.ok) {
+      throw new ApiError(res.statusText, res.status);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const disposition = res.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/);
+    link.href = url;
+    link.download = match?.[1] || "document.pdf";
     link.click();
     URL.revokeObjectURL(url);
   };
