@@ -91,13 +91,22 @@ export default function Entities({ caps }: { caps: string[] }) {
         {def?.attachments ? <span className="badge">Attachments</span> : null}
       </h2>
       {def ? (
-        <ul className="capability-list" aria-label="Capabilities">
-          <li><label><input type="checkbox" checked={Boolean(def.attachments)} readOnly /> Attachments</label></li>
-          <li><label><input type="checkbox" checked={Boolean(def.activity)} readOnly /> Activity</label></li>
-          <li><label><input type="checkbox" checked={Boolean(def.audit)} readOnly /> Audit</label></li>
-          <li><label><input type="checkbox" checked={Boolean(def.workflow)} readOnly /> Workflow</label></li>
-          <li><label><input type="checkbox" checked={Boolean(def.scheduling)} readOnly /> Scheduling</label></li>
-        </ul>
+        <>
+          <ul className="capability-list" aria-label="Capabilities">
+            <li><label><input type="checkbox" checked={Boolean(def.attachments)} readOnly /> Attachments</label></li>
+            <li><label><input type="checkbox" checked={Boolean(def.activity)} readOnly /> Activity</label></li>
+            <li><label><input type="checkbox" checked={Boolean(def.audit)} readOnly /> Audit</label></li>
+            <li><label><input type="checkbox" checked={Boolean(def.workflow)} readOnly /> Workflow</label></li>
+            <li><label><input type="checkbox" checked={Boolean(def.scheduling)} readOnly /> Scheduling</label></li>
+            <li><label><input type="checkbox" checked={Boolean(ui?.capabilities?.import)} readOnly /> Import</label></li>
+          </ul>
+          {ui?.capabilities?.import ? (
+            <p className="muted">
+              Matching:{" "}
+              {fields.filter((f) => f.unique).map((f) => String(f.name)).join(", ") || "unique fields on EntityDef"}
+            </p>
+          ) : null}
+        </>
       ) : null}
       {detail?.source_managed ? <p className="muted">Custom Rust operations remain source-managed.</p> : null}
       {detail?.referrers && detail.referrers.length > 0 ? (

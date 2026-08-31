@@ -13,7 +13,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::StreamExt;
 use qefro_core::{OpContext, QefroError, RateLimiter, ROLE_PUBLIC};
-use qefro_db::{signed_headers, ImportMapping};
+use qefro_db::{
+    signed_headers, DuplicatePolicy, ImportFormat, ImportMapping, ImportMode, ImportOptions,
+};
 use qefro_permissions::Action;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -49,6 +51,13 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/v1/{slug}/import/preview", post(import_preview))
         .route("/api/v1/{slug}/import", post(run_import))
+        .route("/api/v1/{slug}/import/upload", post(upload_import))
+        .route("/api/v1/{slug}/imports", get(list_entity_imports))
+        .route("/api/v1/imports", get(list_imports))
+        .route("/api/v1/imports/{id}", get(get_import))
+        .route("/api/v1/imports/{id}/cancel", post(cancel_import))
+        .route("/api/v1/imports/{id}/retry", post(retry_import))
+        .route("/api/v1/imports/{id}/errors", get(download_import_errors))
 }
 
 pub fn public_router() -> Router<AppState> {
@@ -379,11 +388,60 @@ async fn delete_attachment(
 
 #[derive(Deserialize)]
 struct ImportBody {
+    #[serde(default)]
     csv: String,
+    #[serde(default)]
+    json: Option<String>,
     #[serde(default)]
     mapping: Vec<ImportMapping>,
     #[serde(default)]
     batch_size: Option<usize>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    duplicate_policy: Option<String>,
+    #[serde(default)]
+    match_field: Option<String>,
+    #[serde(default)]
+    dry_run: Option<bool>,
+    #[serde(default)]
+    strict: Option<bool>,
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    idempotency_key: Option<String>,
+    #[serde(default)]
+    blob_key: Option<String>,
+}
+
+fn import_opts(body: &ImportBody) -> Result<ImportOptions, ApiError> {
+    let format = if body.json.is_some() {
+        ImportFormat::Json
+    } else {
+        ImportFormat::parse(body.format.as_deref())
+    };
+    Ok(ImportOptions {
+        mapping: body.mapping.clone(),
+        mode: ImportMode::parse(body.mode.as_deref())?,
+        duplicate_policy: DuplicatePolicy::parse(body.duplicate_policy.as_deref())?,
+        match_field: body.match_field.clone(),
+        dry_run: body.dry_run.unwrap_or(false),
+        batch_size: body.batch_size.unwrap_or(100),
+        strict: body.strict.unwrap_or(false),
+        format,
+        idempotency_key: body.idempotency_key.clone(),
+        filename: None,
+    })
+}
+
+fn import_text(body: &ImportBody) -> Result<&str, ApiError> {
+    if let Some(json) = body.json.as_deref().filter(|s| !s.is_empty()) {
+        return Ok(json);
+    }
+    if !body.csv.is_empty() {
+        return Ok(&body.csv);
+    }
+    Err(QefroError::bad_request("csv or json is required").into())
 }
 
 async fn import_preview(
@@ -393,9 +451,11 @@ async fn import_preview(
     Json(body): Json<ImportBody>,
 ) -> Result<Json<Value>, ApiError> {
     let entity = state.entities.entity_by_slug(&slug)?;
-    let preview = state
-        .entities
-        .preview_import(&ctx, &entity.name, &body.csv, &body.mapping)?;
+    let opts = import_opts(&body)?;
+    let preview =
+        state
+            .entities
+            .preview_import_source(&ctx, &entity.name, import_text(&body)?, &opts)?;
     Ok(Json(serde_json::to_value(preview).unwrap_or(json!({}))))
 }
 
@@ -410,17 +470,152 @@ async fn run_import(
         return Err(QefroError::rate_limited("import rate limit exceeded").into());
     }
     let entity = state.entities.entity_by_slug(&slug)?;
-    let result = state
+    let opts = import_opts(&body)?;
+    let result = if let Some(blob_key) = body.blob_key.as_deref().filter(|s| !s.is_empty()) {
+        state
+            .entities
+            .submit_import_blob(
+                &ctx,
+                &entity.name,
+                blob_key,
+                &opts,
+                state.blob_store.as_ref(),
+                Some(state.blobs.as_ref()),
+                Some(state.notifications.as_ref()),
+            )
+            .await?
+    } else {
+        state
+            .entities
+            .run_import_source(
+                &ctx,
+                &entity.name,
+                import_text(&body)?,
+                &opts,
+                Some(state.blob_store.as_ref()),
+                Some(state.blobs.as_ref()),
+                Some(state.notifications.as_ref()),
+            )
+            .await?
+    };
+    Ok(Json(serde_json::to_value(result).unwrap_or(json!({}))))
+}
+
+async fn upload_import(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(slug): Path<String>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, ApiError> {
+    let key = format!("import:{}:{}", ctx.tenant_id, ctx.user_id);
+    if !state.rate_limiter.allow(&key) {
+        return Err(QefroError::rate_limited("import rate limit exceeded").into());
+    }
+    let entity = state.entities.entity_by_slug(&slug)?;
+    let (filename, mime, bytes) = read_multipart_file(&mut multipart).await?;
+    let (blob_key, filename, format) = state
         .entities
-        .run_import(
+        .store_import_file(
             &ctx,
             &entity.name,
-            &body.csv,
-            &body.mapping,
-            body.batch_size.unwrap_or(100),
+            &filename,
+            &mime,
+            &bytes,
+            state.blob_store.as_ref(),
+            state.blobs.as_ref(),
         )
         .await?;
-    Ok(Json(serde_json::to_value(result).unwrap_or(json!({}))))
+    let text = qefro_db::import::decode_text(&bytes)?;
+    let opts = ImportOptions {
+        format,
+        filename: Some(filename.clone()),
+        ..ImportOptions::default()
+    };
+    let preview = state
+        .entities
+        .preview_import_source(&ctx, &entity.name, &text, &opts)?;
+    Ok(Json(json!({
+        "blob_key": blob_key,
+        "filename": filename,
+        "format": format,
+        "preview": preview,
+    })))
+}
+
+async fn list_entity_imports(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(slug): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let entity = state.entities.entity_by_slug(&slug)?;
+    let items = state
+        .entities
+        .list_import_jobs(&ctx, Some(&entity.name))
+        .await?;
+    Ok(Json(json!({
+        "items": items.iter().map(|j| j.to_client_json()).collect::<Vec<_>>()
+    })))
+}
+
+async fn list_imports(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    let entity = params.get("entity").map(String::as_str);
+    let items = state.entities.list_import_jobs(&ctx, entity).await?;
+    Ok(Json(json!({
+        "items": items.iter().map(|j| j.to_client_json()).collect::<Vec<_>>()
+    })))
+}
+
+async fn get_import(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let job = state.entities.get_import_job(&ctx, id).await?;
+    Ok(Json(job.to_client_json()))
+}
+
+async fn cancel_import(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let job = state.entities.cancel_import_job(&ctx, id).await?;
+    Ok(Json(job.to_client_json()))
+}
+
+async fn retry_import(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let job = state.entities.retry_import_job(&ctx, id).await?;
+    Ok(Json(job.to_client_json()))
+}
+
+async fn download_import_errors(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let (filename, bytes) = state
+        .entities
+        .import_error_report(&ctx, id, state.blob_store.as_ref())
+        .await?;
+    let filename = filename.replace(['"', '\\', '\r', '\n'], "");
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{filename}\""),
+            ),
+        ],
+        bytes,
+    ))
 }
 
 #[derive(Deserialize)]

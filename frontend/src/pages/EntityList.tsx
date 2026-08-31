@@ -15,6 +15,8 @@ import { FilterBar, SavedViewsMenu } from "../components/filters/FilterBar";
 import { FormLayout } from "../components/forms/FormLayout";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
 import { PageHeader } from "../components/ui/PageHeader";
+import { Chip } from "../components/ui/Chip";
+import { StatusBadge } from "../components/ui/StatusBadge";
 import { ActionMenu } from "../components/ui/ActionMenu";
 import { AssignDialog } from "../components/ui/AssignDialog";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
@@ -273,7 +275,7 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
                 { key: "export", label: t("export.label"), hidden: !allowExport, onSelect: () => void exportCsv() },
                 {
                   key: "import",
-                  label: "Import CSV",
+                  label: "Import",
                   hidden: !allowCreate || meta.capabilities?.import === false,
                   onSelect: () => setImportOpen((v) => !v),
                 },
@@ -287,7 +289,9 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
           </>
         }
       />
-      {importOpen ? <ImportPanel slug={meta.slug} onDone={() => setTick((n) => n + 1)} /> : null}
+      {importOpen ? (
+        <ImportPanel meta={meta} canUpdate={allowUpdate} onDone={() => setTick((n) => n + 1)} />
+      ) : null}
       <div className="list-toolbar view-toolbar toolbar">
         {meta.searchable && (
           <div className="search-field">
@@ -849,22 +853,123 @@ function SingletonSettings({ meta, entities }: { meta: UiEntity; entities: UiEnt
   );
 }
 
-function ImportPanel({ slug, onDone }: { slug: string; onDone: () => void }) {
+function ImportPanel({
+  meta,
+  canUpdate,
+  onDone,
+}: {
+  meta: UiEntity;
+  canUpdate: boolean;
+  onDone: () => void;
+}) {
+  const steps = ["Upload", "Map", "Preview", "Validate", "Import", "Results"];
+  const [step, setStep] = useState(0);
   const [csv, setCsv] = useState("");
+  const [blobKey, setBlobKey] = useState("");
+  const [filename, setFilename] = useState("");
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  const [result, setResult] = useState<Record<string, unknown> | null>(null);
+  const [mapping, setMapping] = useState<Array<{ column: string; field?: string | null }>>([]);
+  const [mode, setMode] = useState("create");
+  const [duplicates, setDuplicates] = useState("fail");
+  const [matchField, setMatchField] = useState("");
+  const [filter, setFilter] = useState<"all" | "errors" | "warnings">("all");
+  const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [running, setRunning] = useState(false);
+  const [jobId, setJobId] = useState("");
+  const [history, setHistory] = useState<Array<Record<string, unknown>>>([]);
 
-  async function runPreview() {
-    setError("");
-    setPreview(await api.importPreview(slug, csv));
+  const fields = ((preview?.fields as Array<Record<string, unknown>>) ?? []).filter(Boolean);
+  const sample = ((preview?.sample as Array<Record<string, unknown>>) ?? []).slice(0, 25);
+  const errors = ((preview?.errors as Array<Record<string, unknown>>) ?? result?.errors ?? []) as Array<
+    Record<string, unknown>
+  >;
+
+  useEffect(() => {
+    api.importJobs(meta.slug).then((d) => setHistory(d.items ?? [])).catch(() => setHistory([]));
+  }, [meta.slug, result]);
+
+  useEffect(() => {
+    if (!jobId) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const job = await api.importJob(jobId);
+        if (!alive) return;
+        setResult(job);
+        const status = String(job.status ?? "");
+        if (["completed", "completed_with_errors", "failed", "cancelled"].includes(status)) {
+          setRunning(false);
+          setStep(5);
+          onDone();
+          return;
+        }
+        window.setTimeout(() => void tick(), 1000);
+      } catch (e) {
+        if (alive) {
+          setError(friendlyError(e));
+          setRunning(false);
+        }
+      }
+    };
+    void tick();
+    return () => {
+      alive = false;
+    };
+  }, [jobId, onDone]);
+
+  function mappingPayload() {
+    return mapping.map((row) => ({
+      column: row.column,
+      field: row.field || null,
+    }));
   }
 
-  async function runImport() {
+  function sourceBody() {
+    return blobKey
+      ? { blob_key: blobKey, mapping: mappingPayload(), mode, duplicate_policy: duplicates, match_field: matchField || undefined }
+      : { csv, mapping: mappingPayload(), mode, duplicate_policy: duplicates, match_field: matchField || undefined };
+  }
+
+  async function ingestFile(file: File) {
+    setError("");
+    const uploaded = await api.importUpload(meta.slug, file);
+    setBlobKey(String(uploaded.blob_key ?? ""));
+    setFilename(String(uploaded.filename ?? file.name));
+    const next = (uploaded.preview as Record<string, unknown>) ?? uploaded;
+    setPreview(next);
+    setMapping(((next.mapping as Array<{ column: string; field?: string | null }>) ?? []).slice());
+    const matches = (next.match_fields as string[]) ?? [];
+    if (matches.length && !matchField) setMatchField(matches[0]);
+    setStep(1);
+  }
+
+  async function ingestText() {
+    setError("");
+    setBlobKey("");
+    const next = await api.importPreview(meta.slug, { csv, mapping: mappingPayload() });
+    setPreview(next);
+    setMapping(((next.mapping as Array<{ column: string; field?: string | null }>) ?? []).slice());
+    const matches = (next.match_fields as string[]) ?? [];
+    if (matches.length && !matchField) setMatchField(matches[0]);
+    setStep(1);
+  }
+
+  async function refreshPreview() {
+    setError("");
+    const next = await api.importPreview(meta.slug, sourceBody());
+    setPreview(next);
+    setStep(2);
+  }
+
+  async function validate() {
     setRunning(true);
+    setError("");
     try {
-      setPreview(await api.importRun(slug, csv));
-      onDone();
+      const next = await api.importRun(meta.slug, { ...sourceBody(), dry_run: true });
+      setResult(next);
+      setStep(3);
     } catch (e) {
       setError(friendlyError(e));
     } finally {
@@ -872,25 +977,343 @@ function ImportPanel({ slug, onDone }: { slug: string; onDone: () => void }) {
     }
   }
 
+  async function runImport() {
+    setRunning(true);
+    setError("");
+    try {
+      const next = await api.importRun(meta.slug, sourceBody());
+      setResult(next);
+      if (next.async_job && next.job_id) {
+        setJobId(String(next.job_id));
+        setStep(4);
+      } else {
+        setStep(5);
+        onDone();
+      }
+    } catch (e) {
+      setError(friendlyError(e));
+      setRunning(false);
+    }
+  }
+
+  async function downloadErrors() {
+    const id = jobId || String(result?.id ?? "");
+    if (!id) return;
+    const token = localStorage.getItem("qefro_token");
+    const res = await fetch(api.importErrorsUrl(id), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error("error report not found");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${meta.slug}-import-errors.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const filteredErrors = errors.filter((row) => {
+    const hay = `${row.row} ${row.field ?? ""} ${row.message ?? ""}`.toLowerCase();
+    if (search && !hay.includes(search.toLowerCase())) return false;
+    if (filter === "errors") return true;
+    return true;
+  });
+
   return (
-    <div className="panel detail-panel">
-      <h3>Import CSV</h3>
-      <textarea rows={6} value={csv} onChange={(e) => setCsv(e.target.value)} placeholder="Paste CSV with a header row" />
+    <div className="panel detail-panel import-panel">
+      <h3>Import {meta.label_plural}</h3>
+      <ol className="import-stepper" aria-label="Import steps">
+        {steps.map((label, index) => (
+          <li key={label} className={index === step ? "is-current" : index < step ? "is-done" : ""}>
+            <span>{index + 1}</span>
+            {label}
+          </li>
+        ))}
+      </ol>
       {error ? <ErrorState message={error} /> : null}
-      {preview ? (
-        <p className="muted">
-          Rows: {String(preview.rows ?? preview.imported ?? 0)} · Valid: {String(preview.valid ?? "")} ·
-          Invalid: {String(preview.invalid ?? preview.failed ?? "")}
-        </p>
+
+      {step === 0 ? (
+        <>
+          <label className="dropzone">
+            <input
+              type="file"
+              accept=".csv,.json,text/csv,application/json"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void ingestFile(file).catch((err) => setError(friendlyError(err)));
+              }}
+            />
+            <strong>Upload CSV or JSON</strong>
+            <span className="muted">{filename || "Or paste a header row below"}</span>
+          </label>
+          <textarea
+            rows={6}
+            value={csv}
+            onChange={(e) => setCsv(e.target.value)}
+            placeholder="name,email&#10;Ada Lovelace,ada@example.com"
+          />
+          <div className="actions">
+            <button type="button" disabled={!csv.trim()} onClick={() => void ingestText().catch((e) => setError(friendlyError(e)))}>
+              Detect columns
+            </button>
+          </div>
+          {history.length ? (
+            <div className="import-history">
+              <h4>Import history</h4>
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>File</th>
+                    <th>Rows</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.slice(0, 8).map((job) => (
+                    <tr key={String(job.id)}>
+                      <td>{String(job.filename || meta.label)}</td>
+                      <td>{String(job.total ?? 0)}</td>
+                      <td>
+                        <StatusBadge value={job.status} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </>
       ) : null}
-      <div className="actions">
-        <button type="button" className="ghost" onClick={() => runPreview().catch((e) => setError(friendlyError(e)))}>
-          Preview
-        </button>
-        <button type="button" disabled={running} onClick={() => void runImport()}>
-          {running ? "Importing…" : "Import"}
-        </button>
-      </div>
+
+      {step === 1 ? (
+        <>
+          <table className="data">
+            <thead>
+              <tr>
+                <th>CSV column</th>
+                <th>Qefro field</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {mapping.map((row, index) => (
+                <tr key={row.column}>
+                  <td>{row.column}</td>
+                  <td>
+                    <select
+                      value={row.field ?? ""}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setMapping((prev) =>
+                          prev.map((item, i) => (i === index ? { ...item, field: value || null } : item)),
+                        );
+                      }}
+                    >
+                      <option value="">Ignored</option>
+                      {fields.map((field) => (
+                        <option key={String(field.name)} value={String(field.name)}>
+                          {String(field.label || field.name)}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    {row.field ? <Chip className="chip-success">Mapped</Chip> : <Chip>Ignored</Chip>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="form-grid import-options">
+            <label>
+              Mode
+              <select value={mode} onChange={(e) => setMode(e.target.value)}>
+                <option value="create">Create only</option>
+                {canUpdate ? <option value="update">Update only</option> : null}
+                {canUpdate ? <option value="upsert">Upsert</option> : null}
+              </select>
+            </label>
+            <label>
+              Duplicates
+              <select value={duplicates} onChange={(e) => setDuplicates(e.target.value)}>
+                <option value="fail">Fail row</option>
+                <option value="skip">Skip row</option>
+                {canUpdate ? <option value="update">Update existing</option> : null}
+              </select>
+            </label>
+            {mode !== "create" || duplicates === "update" ? (
+              <label>
+                Matching
+                <select value={matchField} onChange={(e) => setMatchField(e.target.value)}>
+                  <option value="">Select unique field</option>
+                  {(((preview?.match_fields as string[]) ?? fields.filter((f) => f.unique).map((f) => String(f.name))) as string[]).map(
+                    (name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ),
+                  )}
+                </select>
+              </label>
+            ) : null}
+          </div>
+          <div className="actions">
+            <button type="button" className="ghost" onClick={() => setStep(0)}>
+              Back
+            </button>
+            <button type="button" onClick={() => void refreshPreview().catch((e) => setError(friendlyError(e)))}>
+              Preview
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {step === 2 ? (
+        <>
+          <p>
+            Rows detected: {Number(preview?.rows ?? 0).toLocaleString()}
+          </p>
+          <div className="chip-row">
+            <Chip selected>{Number(preview?.valid ?? 0)} valid</Chip>
+            <Chip onClick={() => { setFilter("errors"); }}>
+              {Number(preview?.invalid ?? 0)} errors
+            </Chip>
+            <Chip>{Number(preview?.warnings ?? 0)} warnings</Chip>
+          </div>
+          {(preview?.ignored as string[] | undefined)?.length ? (
+            <p className="muted">Ignored: {(preview?.ignored as string[]).join(", ")}</p>
+          ) : null}
+          <div className="table-scroll">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>Row</th>
+                  {mapping
+                    .filter((m) => m.field)
+                    .map((m) => (
+                      <th key={m.column}>{m.field}</th>
+                    ))}
+                  <th>Validation</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sample.map((row, i) => (
+                  <tr key={i}>
+                    <td>{i + 2}</td>
+                    {mapping
+                      .filter((m) => m.field)
+                      .map((m) => (
+                        <td key={m.column}>{String(row[String(m.field)] ?? "")}</td>
+                      ))}
+                    <td>
+                      <StatusBadge value="ok" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="actions">
+            <button type="button" className="ghost" onClick={() => setStep(1)}>
+              Back
+            </button>
+            <button type="button" onClick={() => void validate()}>
+              {running ? "Validating…" : "Validate import"}
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {step === 3 ? (
+        <>
+          <p>
+            {Number(result?.total ?? preview?.rows ?? 0).toLocaleString()} rows
+          </p>
+          <ul className="capability-list">
+            <li>✓ {Number(result?.created ?? preview?.valid ?? 0)} valid</li>
+            <li>⚠ {Number(result?.warnings ?? 0)} warnings</li>
+            <li>✕ {Number(result?.failed ?? preview?.invalid ?? 0)} errors</li>
+          </ul>
+          <p className="muted">Nothing imported.</p>
+          {errors.length ? (
+            <div className="import-errors">
+              <div className="chip-row">
+                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search errors" />
+              </div>
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>Row</th>
+                    <th>Field</th>
+                    <th>Error</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredErrors.slice(0, 50).map((row) => (
+                    <tr key={String(row.row)}>
+                      <td>{String(row.row)}</td>
+                      <td>{String(row.field ?? "")}</td>
+                      <td>{String(row.message ?? "")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          <div className="actions">
+            <button type="button" className="ghost" onClick={() => setStep(2)}>
+              Back
+            </button>
+            <button type="button" disabled={running} onClick={() => void runImport()}>
+              Import
+            </button>
+          </div>
+        </>
+      ) : null}
+
+      {step === 4 ? (
+        <>
+          <p>
+            Processed: {Number(result?.processed ?? 0).toLocaleString()} / {Number(result?.total ?? 0).toLocaleString()}
+          </p>
+          <progress
+            max={Math.max(Number(result?.total ?? 1), 1)}
+            value={Number(result?.processed ?? 0)}
+          />
+          <p className="muted">
+            Created: {Number(result?.created ?? 0)} · Updated: {Number(result?.updated ?? 0)} · Failed:{" "}
+            {Number(result?.failed ?? 0)}
+          </p>
+          {jobId ? (
+            <button type="button" className="ghost" onClick={() => void api.cancelImport(jobId)}>
+              Cancel
+            </button>
+          ) : null}
+        </>
+      ) : null}
+
+      {step === 5 ? (
+        <>
+          <h4>Import complete</h4>
+          <ul>
+            <li>Created: {Number(result?.created ?? 0)}</li>
+            <li>Updated: {Number(result?.updated ?? 0)}</li>
+            <li>Skipped: {Number(result?.skipped ?? 0)}</li>
+            <li>Failed: {Number(result?.failed ?? result?.invalid ?? 0)}</li>
+          </ul>
+          {Number(result?.failed ?? 0) > 0 && (jobId || result?.id) ? (
+            <button type="button" className="ghost" onClick={() => void downloadErrors().catch((e) => setError(friendlyError(e)))}>
+              Download error report
+            </button>
+          ) : null}
+          <div className="actions">
+            <button type="button" className="ghost" onClick={() => { setStep(0); setResult(null); setPreview(null); setCsv(""); setBlobKey(""); }}>
+              New import
+            </button>
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

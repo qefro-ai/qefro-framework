@@ -11,10 +11,10 @@ use qefro_core::{
 use qefro_db::{
     apply_schema, connect, AttachmentPurgeJob, AttachmentStore, AutomationEngine, BlobMetaStore,
     CommunicationDeliverJob, CommunicationDispatcher, CommunicationHub, CommunicationStore,
-    DueReminderJob, EmailNotifyJob, EntityService, JobHandler, JobQueue, JobRegistry,
+    DueReminderJob, EmailNotifyJob, EntityService, ImportRunJob, JobHandler, JobQueue, JobRegistry,
     LogNotificationJob, MetadataChangeService, NotificationStore, OperationExecuteJob,
     OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore, ScheduleReminderJob,
-    WebhookLog, ATTACHMENT_PURGE_JOB, COMMUNICATION_DELIVER_JOB, DUE_REMINDER_JOB,
+    WebhookLog, ATTACHMENT_PURGE_JOB, COMMUNICATION_DELIVER_JOB, DUE_REMINDER_JOB, IMPORT_RUN_JOB,
     OPERATION_EXECUTE_JOB, SCHEDULE_REMINDER_JOB,
 };
 use qefro_events::InProcessEventBus;
@@ -554,6 +554,8 @@ impl QefroRuntime {
         job_handlers.register(OPERATION_EXECUTE_JOB, operation_execute.clone());
         let attachment_purge = AttachmentPurgeJob::new();
         job_handlers.register(ATTACHMENT_PURGE_JOB, attachment_purge.clone());
+        let import_run = ImportRunJob::new();
+        job_handlers.register(IMPORT_RUN_JOB, import_run.clone());
         job_handlers.register(
             "webhook.deliver",
             Arc::new(WebhookDeliverJob {
@@ -856,6 +858,12 @@ impl QefroRuntime {
         let saved_filters = Arc::new(SavedFilterStore::new(pool.clone()));
         let notifications = Arc::new(NotificationStore::new(pool.clone()));
         let attachments = Arc::new(AttachmentStore::new(pool));
+        import_run.bind(
+            entities.clone(),
+            blob_store.clone(),
+            blobs.clone(),
+            notifications.clone(),
+        );
 
         let state = AppState {
             entities,

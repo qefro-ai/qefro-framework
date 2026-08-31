@@ -92,7 +92,10 @@ See [sdk.md](sdk.md) for the browser client.
 | GET/POST | `/{slug}/{id}/attachments` |
 | GET/PATCH/DELETE | `/attachments/{id}` |
 | POST | `/attachments/{id}/replace` |
-| POST | `/{slug}/import/preview`, `/{slug}/import` |
+| POST | `/{slug}/import/preview`, `/{slug}/import`, `/{slug}/import/upload` |
+| GET | `/{slug}/imports`, `/imports`, `/imports/{id}` |
+| POST | `/imports/{id}/cancel`, `/imports/{id}/retry` |
+| GET | `/imports/{id}/errors` |
 | GET | `/realtime` (SSE) |
 | GET/POST | `/public/{tenant}/{form}` |
 

@@ -35,7 +35,7 @@ fn platform_app() -> InstalledApp {
                     .table_name("plat_employees")
                     .slug_name("employees")
                     .field(FieldDef::string("name").required().searchable())
-                    .field(FieldDef::string("email").required().email().searchable())
+                    .field(FieldDef::string("email").required().email().unique().searchable())
                     .field(FieldDef::decimal("salary").nullable().permission_level(2))
                     .build(),
             )
@@ -431,6 +431,194 @@ async fn csv_import_preview_does_not_write() {
     .await;
     assert_eq!(status, StatusCode::OK, "{imported}");
     assert_eq!(imported["imported"], 1);
+}
+
+#[tokio::test]
+async fn json_import_and_dry_run_do_not_bypass_validation() {
+    let _ = db_url();
+    let router = runtime().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let token = register(&router, suffix).await;
+    let (status, dry) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/employees/import",
+            Some(&token),
+            json!({
+                "json": "[{\"name\":\"Grace\",\"email\":\"grace-imp@ex.com\"}]",
+                "dry_run": true
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dry}");
+    assert_eq!(dry["dry_run"], true);
+    assert!(dry["created"].as_u64().unwrap() >= 1);
+    let (status, listed) = json(
+        clone_router(&router),
+        get("/api/v1/employees", Some(&token)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["total"], 0);
+
+    let (status, imported) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/employees/import",
+            Some(&token),
+            json!({
+                "json": "[{\"name\":\"Grace\",\"email\":\"grace-imp@ex.com\",\"tenant_id\":\"00000000-0000-0000-0000-000000000000\",\"password_hash\":\"x\"}]"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{imported}");
+    assert_eq!(imported["imported"], 1);
+
+    let (status, listed) = json(
+        clone_router(&router),
+        get("/api/v1/employees", Some(&token)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    let items = listed["items"].as_array().cloned().unwrap_or_default();
+    assert!(items.iter().any(|i| i["email"] == "grace-imp@ex.com"));
+    assert!(items.iter().all(|i| i.get("password_hash").is_none()));
+}
+
+#[tokio::test]
+async fn import_upsert_and_duplicate_skip() {
+    let _ = db_url();
+    let router = runtime().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let token = register(&router, suffix).await;
+    let csv = "name,email\nAda,ada-up@ex.com";
+    let (status, first) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/employees/import",
+            Some(&token),
+            json!({ "csv": csv }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let (status, skipped) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/employees/import",
+            Some(&token),
+            json!({ "csv": csv, "duplicate_policy": "skip", "match_field": "email" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{skipped}");
+    assert!(skipped["skipped"].as_u64().unwrap() >= 1);
+    let (status, upserted) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/employees/import",
+            Some(&token),
+            json!({
+                "csv": "name,email\nAda Lovelace,ada-up@ex.com",
+                "mode": "upsert",
+                "match_field": "email"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{upserted}");
+    assert!(upserted["updated"].as_u64().unwrap() >= 1);
+}
+
+#[tokio::test]
+async fn import_rejects_malformed_and_nested() {
+    let _ = db_url();
+    let router = runtime().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let token = register(&router, suffix).await;
+    let (status, nested) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/employees/import/preview",
+            Some(&token),
+            json!({ "json": "[{\"name\":{\"nested\":true}}]" }),
+        ),
+    )
+    .await;
+    assert!(status.is_client_error(), "{nested}");
+    let (status, dup) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/employees/import/preview",
+            Some(&token),
+            json!({ "csv": "name,name\na,b\n" }),
+        ),
+    )
+    .await;
+    assert!(status.is_client_error(), "{dup}");
+}
+
+#[tokio::test]
+async fn import_jobs_are_tenant_scoped() {
+    let _ = db_url();
+    let router = runtime().await;
+    let a = &Uuid::new_v4().to_string()[..8];
+    let b = &Uuid::new_v4().to_string()[..8];
+    let token_a = register(&router, a).await;
+    let token_b = register(&router, b).await;
+    let (status, imported) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/employees/import",
+            Some(&token_a),
+            json!({ "csv": "name,email\nTenantA,a-imp@ex.com" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{imported}");
+    let (status, history_b) = json(
+        clone_router(&router),
+        get("/api/v1/employees/imports", Some(&token_b)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{history_b}");
+    let items = history_b["items"].as_array().cloned().unwrap_or_default();
+    assert!(items.is_empty(), "{history_b}");
+    let (status, listed_b) = json(
+        clone_router(&router),
+        get("/api/v1/employees", Some(&token_b)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed_b}");
+    assert_eq!(listed_b["total"], 0);
+}
+
+#[tokio::test]
+async fn import_does_not_set_workflow_status() {
+    let _ = db_url();
+    let router = runtime().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let token = register(&router, suffix).await;
+    let (status, imported) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/plat-invoices/import",
+            Some(&token),
+            json!({ "csv": "customer,status,total\nAhmed,Approved,10" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{imported}");
+    let (status, listed) = json(
+        clone_router(&router),
+        get("/api/v1/plat-invoices", Some(&token)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    let items = listed["items"].as_array().cloned().unwrap_or_default();
+    assert!(items.iter().any(|i| i["customer"] == "Ahmed" && i["status"] == "Draft"), "{listed}");
 }
 
 #[tokio::test]

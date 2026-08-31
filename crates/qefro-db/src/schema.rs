@@ -364,6 +364,45 @@ ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS entity TEXT;
 ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS record_id UUID;
 ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
+CREATE TABLE IF NOT EXISTS qefro_import_jobs (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id UUID,
+    entity TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    mode TEXT NOT NULL DEFAULT 'create',
+    duplicate_policy TEXT NOT NULL DEFAULT 'fail',
+    match_field TEXT,
+    mapping JSONB NOT NULL DEFAULT '[]'::jsonb,
+    format TEXT NOT NULL DEFAULT 'csv',
+    dry_run BOOLEAN NOT NULL DEFAULT false,
+    strict BOOLEAN NOT NULL DEFAULT false,
+    filename TEXT,
+    content_type TEXT,
+    blob_key TEXT,
+    error_report_key TEXT,
+    total_rows INT NOT NULL DEFAULT 0,
+    processed INT NOT NULL DEFAULT 0,
+    created_count INT NOT NULL DEFAULT 0,
+    updated_count INT NOT NULL DEFAULT 0,
+    skipped_count INT NOT NULL DEFAULT 0,
+    failed_count INT NOT NULL DEFAULT 0,
+    warning_count INT NOT NULL DEFAULT 0,
+    checkpoint INT NOT NULL DEFAULT 0,
+    last_error TEXT,
+    cancel_requested BOOLEAN NOT NULL DEFAULT false,
+    retry_count INT NOT NULL DEFAULT 0,
+    idempotency_key TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS qefro_import_jobs_tenant_idx
+    ON qefro_import_jobs (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS qefro_import_jobs_entity_idx
+    ON qefro_import_jobs (tenant_id, entity, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS qefro_import_jobs_idemp_uidx
+    ON qefro_import_jobs (tenant_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS qefro_activity (
     id UUID PRIMARY KEY,

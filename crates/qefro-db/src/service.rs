@@ -940,7 +940,7 @@ impl EntityService {
         Ok(record)
     }
 
-    async fn check_uniques(
+    pub(crate) async fn check_uniques(
         &self,
         ctx: &OpContext,
         entity: &qefro_core::EntityDef,

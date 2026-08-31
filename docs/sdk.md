@@ -24,7 +24,7 @@ Typed methods cover UI metadata, records, workflow, search, reports, dashboards,
 - `attachments` / `getAttachments` / `uploadAttachment` / `files.list` / `files.upload` / `files.download` / `files.delete`
 - `notifications` / `getNotifications`
 - `audit` (Admin)
-- `upload` / `uploadAttachment`
+- `importPreview` / `importRun` / `importUpload` / `importJobs` / `importJob` / `cancelImport` / `retryImport`
 
 There is no `IdentityClient`, `WorkflowClient`, `ReportClient`, `DashboardClient`, or `SearchClient`. Studio, RelationPicker, Kanban drag, and entity pages all call this client. Do not add a second UI API.
 
