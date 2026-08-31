@@ -606,7 +606,7 @@ async fn metadata_cannot_execute_sql() {
     let (status, body) = json(
         clone_router(&router),
         post(
-            "/api/v1/studio/changes",
+            "/api/v1/studio/validate",
             Some(&token),
             json!({
                 "kind": "entity",
