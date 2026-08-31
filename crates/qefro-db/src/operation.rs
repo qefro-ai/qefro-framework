@@ -6,9 +6,9 @@ use crate::operation_run::{
 use crate::repository::{record_id, EntityRepository};
 use async_trait::async_trait;
 use qefro_core::{
-    apply_entity_rules, ident::snake_case, validate_record, EntityRegistry, HookRegistry,
-    MeteringEvent, OpContext, OperationDef, QefroError, QefroResult, RELATED_ID_FIELD,
-    RELATED_TYPE_FIELD, RowPolicy,
+    apply_entity_rules, ident::snake_case, reject_readonly_writes, strip_computed_fields,
+    validate_record, EntityRegistry, HookRegistry, MeteringEvent, OpContext, OperationDef,
+    QefroError, QefroResult, RowPolicy, RELATED_ID_FIELD, RELATED_TYPE_FIELD,
 };
 use qefro_events::DomainEvent;
 use qefro_permissions::{Action, PermissionRegistry};
@@ -224,7 +224,8 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
 
     pub async fn get(&mut self, entity: &str, id: Uuid) -> QefroResult<Value> {
         let def = self.registry.get(entity)?;
-        self.permissions.check(&self.auth, &def.name, Action::Read)?;
+        self.permissions
+            .check(&self.auth, &def.name, Action::Read)?;
         let record = self
             .repo
             .get_tx(self.tx, &def, &self.auth, id, true)
@@ -238,11 +239,13 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
         self.permissions
             .check(&self.auth, &def.name, Action::Update)?;
         reject_client_tenant(&patch)?;
+        strip_computed_fields(&def.fields, &mut patch);
         let current = self
             .repo
             .get_tx(self.tx, &def, &self.auth, id, true)
             .await?;
         enforce_row_policy(&self.auth, &def, &current)?;
+        reject_readonly_writes(def.business_fields(), Some(&current), &patch)?;
         if let Some(expected) = patch
             .as_object_mut()
             .and_then(|o| o.remove("_expected_updated_at"))
@@ -293,6 +296,7 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
         self.permissions
             .check(&self.auth, &def.name, Action::Create)?;
         reject_client_tenant(&data)?;
+        strip_computed_fields(&def.fields, &mut data);
         apply_op_defaults(&def, &mut data, &self.auth);
         if let Some(wf) = self.workflows.for_entity(&def.name) {
             if data.get(&wf.field).and_then(|v| v.as_str()).is_none() {
@@ -304,10 +308,7 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
         validate_record(def.business_fields(), &data, false)?;
         apply_entity_rules(def.business_fields(), &def.validation, &data, false)?;
         self.check_cross_entity_refs(&def, &data).await?;
-        let created = self
-            .repo
-            .insert_tx(self.tx, &def, &self.auth, data)
-            .await?;
+        let created = self.repo.insert_tx(self.tx, &def, &self.auth, data).await?;
         self.record_side_effects(&def, None, &created, "create")
             .await?;
         Ok(created)
@@ -330,10 +331,7 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
             .get_tx(self.tx, &def, &self.auth, id, true)
             .await?;
         enforce_row_policy(&self.auth, &def, &current)?;
-        let deleted = self
-            .repo
-            .delete_tx(self.tx, &def, &self.auth, id)
-            .await?;
+        let deleted = self.repo.delete_tx(self.tx, &def, &self.auth, id).await?;
         self.record_side_effects(&def, Some(&current), &deleted, "delete")
             .await?;
         Ok(deleted)
@@ -403,17 +401,15 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
         value: Value,
     ) -> QefroResult<Vec<Value>> {
         let def = self.registry.get(entity)?;
-        self.permissions.check(&self.auth, &def.name, Action::List)?;
+        self.permissions
+            .check(&self.auth, &def.name, Action::List)?;
         let mut query = Query::default();
         query.page_size = 100;
         query.filters.push(Filter::Eq {
             field: field.into(),
             value,
         });
-        let page = self
-            .repo
-            .list_tx(self.tx, &def, &self.auth, &query)
-            .await?;
+        let page = self.repo.list_tx(self.tx, &def, &self.auth, &query).await?;
         Ok(page.items)
     }
 
@@ -521,7 +517,9 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
                 Some(extra),
             );
             self.activity
-                .record_tx(self.tx, &self.auth, &def.name, id, atype, &message, metadata)
+                .record_tx(
+                    self.tx, &self.auth, &def.name, id, atype, &message, metadata,
+                )
                 .await?;
         }
         let specific = match action {
@@ -759,7 +757,8 @@ pub async fn execute_operation_with(
                 .begin()
                 .await
                 .map_err(|e| QefroError::database(e.to_string()))?;
-            if let Some(existing) = OperationRunStore::find_idempotent(&mut retry, ctx, key).await? {
+            if let Some(existing) = OperationRunStore::find_idempotent(&mut retry, ctx, key).await?
+            {
                 let result = existing.result.clone().unwrap_or_else(|| json!({}));
                 let _ = retry.commit().await;
                 return Ok((result, Vec::new()));
@@ -869,7 +868,8 @@ pub async fn execute_operation_with(
                 envelope.message.clone(),
                 envelope.navigate.clone(),
             );
-            if let Err(err) = OperationRunStore::complete_tx(&mut tx, ctx, operation_id, &record).await
+            if let Err(err) =
+                OperationRunStore::complete_tx(&mut tx, ctx, operation_id, &record).await
             {
                 let _ = tx.rollback().await;
                 return Err(err);
@@ -953,9 +953,15 @@ async fn execute_in_transaction(
     operation_id: Uuid,
     call_stack: Vec<String>,
     enqueue_outbox: bool,
-) -> QefroResult<(Value, Vec<DomainEvent>, Vec<(String, Value)>, HandlerEnvelope)> {
-    let current = repo.get_tx(tx, entity, ctx, id, true).await?;
+) -> QefroResult<(
+    Value,
+    Vec<DomainEvent>,
+    Vec<(String, Value)>,
+    HandlerEnvelope,
+)> {
+    let mut current = repo.get_tx(tx, entity, ctx, id, true).await?;
     enforce_row_policy(ctx, entity, &current)?;
+    attach_child_tables_tx(repo, tx, registry, entity, ctx, &mut current).await?;
 
     if let Some(tname) = &binding.def.workflow_transition {
         let wf = workflows
@@ -1210,6 +1216,49 @@ fn authorize_operation(
     Ok(())
 }
 
+async fn attach_child_tables_tx(
+    repo: &EntityRepository,
+    tx: &mut Transaction<'_, Postgres>,
+    registry: &EntityRegistry,
+    entity: &qefro_core::EntityDef,
+    ctx: &OpContext,
+    record: &mut Value,
+) -> QefroResult<()> {
+    use qefro_core::RelationKind;
+    let Some(id) = record
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+    else {
+        return Ok(());
+    };
+    for field in &entity.fields {
+        let Some(rel) = &field.relation else { continue };
+        if rel.kind != RelationKind::ChildTable {
+            continue;
+        }
+        let Ok(target) = registry.get(&rel.target_entity) else {
+            continue;
+        };
+        let inverse = rel
+            .inverse_field
+            .clone()
+            .unwrap_or_else(|| "parent_id".into());
+        let mut query = qefro_search::Query::default();
+        query.page_size = 200;
+        query.filters.push(qefro_search::Filter::Eq {
+            field: inverse,
+            value: json!(id),
+        });
+        if let Ok(page) = repo.list_tx(tx, &target, ctx, &query).await {
+            if let Some(obj) = record.as_object_mut() {
+                obj.insert(field.name.clone(), json!(page.items));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn apply_transition_to(
     workflows: &WorkflowRegistry,
     auth: &OpContext,
@@ -1325,8 +1374,7 @@ fn correlate_event(event: &mut DomainEvent, operation_id: Uuid, request_id: Uuid
         Value::Object(ref mut obj) => {
             obj.entry("operation_id")
                 .or_insert_with(|| json!(operation_id));
-            obj.entry("request_id")
-                .or_insert_with(|| json!(request_id));
+            obj.entry("request_id").or_insert_with(|| json!(request_id));
         }
         _ => {
             event.payload = json!({

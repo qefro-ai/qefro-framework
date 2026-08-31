@@ -133,23 +133,7 @@ impl UiWhen {
     }
 
     pub fn matches(&self, record: &Value) -> bool {
-        record
-            .get(&self.field)
-            .map(|v| values_equal(v, &self.equals))
-            .unwrap_or(false)
-    }
-}
-
-fn values_equal(left: &Value, right: &Value) -> bool {
-    if left == right {
-        return true;
-    }
-    match (left, right) {
-        (Value::String(a), other) => {
-            a == &other.to_string().trim_matches('"').to_string() || other.as_str() == Some(a)
-        }
-        (other, Value::String(b)) => other.as_str() == Some(b),
-        _ => false,
+        crate::condition::values_equal(crate::condition::lookup(record, &self.field), &self.equals)
     }
 }
 
@@ -765,6 +749,8 @@ pub struct UiFieldView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_when: Option<UiWhen>,
     pub list: bool,
     pub list_visible: bool,
     pub form: bool,

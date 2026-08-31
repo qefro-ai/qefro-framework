@@ -96,8 +96,24 @@ pub fn lead() -> EntityDef {
         .table_name("leads")
         .workflow("lead")
         .field(FieldDef::string("title").required().searchable())
-        .field(FieldDef::string("email").nullable().email().searchable())
-        .field(FieldDef::string("phone").nullable())
+        .field(
+            FieldDef::enum_values("contact_method", vec!["email", "phone"])
+                .nullable()
+                .filterable()
+                .label("Contact method"),
+        )
+        .field(
+            FieldDef::string("email")
+                .nullable()
+                .email()
+                .searchable()
+                .required_when("contact_method", json!("email")),
+        )
+        .field(
+            FieldDef::string("phone")
+                .nullable()
+                .required_when("contact_method", json!("phone")),
+        )
         .field(FieldDef::string("company").nullable().searchable())
         .field(FieldDef::string("source").nullable().filterable())
         .field(

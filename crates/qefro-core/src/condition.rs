@@ -101,7 +101,25 @@ impl Condition {
         let Some(field) = &self.field else {
             return self.all.is_some() || self.any.is_some();
         };
-        let actual = lookup(record, field);
+        let length_holder;
+        let actual = if let Some(base) = field
+            .strip_suffix(".length")
+            .or_else(|| field.strip_suffix(".len"))
+        {
+            match lookup(record, base) {
+                Value::Array(a) => {
+                    length_holder = Value::from(a.len() as i64);
+                    &length_holder
+                }
+                other if other.is_null() => {
+                    length_holder = Value::from(0);
+                    &length_holder
+                }
+                _ => lookup(record, field),
+            }
+        } else {
+            lookup(record, field)
+        };
         let mut ok = true;
         if let Some(expected) = self.resolved_equals() {
             ok &= values_equal(actual, expected);
@@ -213,10 +231,26 @@ pub fn normalize_op(op: &str) -> &str {
 
 pub fn lookup<'a>(record: &'a Value, path: &str) -> &'a Value {
     let mut cur = record;
+    let mut used_expanded = false;
     for part in path.split('.') {
         match cur {
             Value::Object(map) => {
-                cur = map.get(part).unwrap_or(&Value::Null);
+                if let Some(v) = map.get(part) {
+                    cur = v;
+                    continue;
+                }
+                if !used_expanded {
+                    if let Some(v) = map
+                        .get("_expanded")
+                        .and_then(|e| e.as_object())
+                        .and_then(|e| e.get(part))
+                    {
+                        used_expanded = true;
+                        cur = v;
+                        continue;
+                    }
+                }
+                return &Value::Null;
             }
             _ => return &Value::Null,
         }
@@ -232,12 +266,10 @@ pub fn values_equal(left: &Value, right: &Value) -> bool {
         (Value::Null, Value::Null) => true,
         (Value::String(a), Value::String(b)) => a.eq_ignore_ascii_case(b),
         (Value::String(a), other) => {
-            let b = other.as_str().map(|s| s.to_string()).unwrap_or_else(|| {
-                other
-                    .to_string()
-                    .trim_matches('"')
-                    .to_string()
-            });
+            let b = other
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| other.to_string().trim_matches('"').to_string());
             a.eq_ignore_ascii_case(&b)
         }
         (other, Value::String(b)) => other
@@ -340,5 +372,22 @@ mod tests {
             ..Default::default()
         };
         assert!(inn.matches(&rec));
+    }
+
+    #[test]
+    fn relation_and_length_lookups() {
+        let nested = json!({
+            "customer": { "enabled": true },
+            "items": [1, 2]
+        });
+        assert!(Condition::field_equals("customer.enabled", true).matches(&nested));
+        let len = Condition {
+            field: Some("items.length".into()),
+            greater_than: Some(json!(0)),
+            ..Default::default()
+        };
+        assert!(len.matches(&nested));
+        let expanded = json!({ "_expanded": { "customer": { "party_type": "Person" } } });
+        assert!(Condition::field_equals("customer.party_type", "Person").matches(&expanded));
     }
 }

@@ -122,6 +122,14 @@ pub struct FieldUiPatch {
     pub visible_when: Option<crate::ui::UiWhen>,
     #[serde(default, alias = "read_only_when")]
     pub readonly_when: Option<crate::ui::UiWhen>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_when: Option<crate::ui::UiWhen>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub greater_than: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +283,20 @@ pub fn apply_field_ui_patch(field: &mut FieldDef, patch: &FieldUiPatch) {
     }
     if let Some(when) = &patch.readonly_when {
         field.ui.readonly_when = Some(when.clone());
+    }
+    if let Some(when) = &patch.required_when {
+        field.required_when = Some(when.clone());
+    }
+    if let Some(min) = patch.min {
+        field.validation.min = Some(min);
+        field.ui.widget_options.min = Some(serde_json::Value::from(min));
+    }
+    if let Some(max) = patch.max {
+        field.validation.max = Some(max);
+        field.ui.widget_options.max = Some(serde_json::Value::from(max));
+    }
+    if let Some(gt) = patch.greater_than {
+        field.validation.greater_than = Some(gt);
     }
 }
 

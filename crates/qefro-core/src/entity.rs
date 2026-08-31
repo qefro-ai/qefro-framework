@@ -539,6 +539,99 @@ impl EntityDef {
             field.validate_name()?;
         }
         self.validate_ui_layout()?;
+        self.validate_rules()?;
+        Ok(())
+    }
+
+    /// Unknown fields, invalid operators, type mismatches, and formula cycles.
+    pub fn validate_rules(&self) -> QefroResult<()> {
+        crate::formula::detect_cycles(&self.fields)?;
+        for field in &self.fields {
+            if field.computed {
+                let Some(formula) = &field.formula else {
+                    return Err(QefroError::bad_request(format!(
+                        "computed field '{}.{}' is missing a formula",
+                        self.name, field.name
+                    )));
+                };
+                crate::formula::parse_formula(formula).map_err(|e| {
+                    QefroError::bad_request(format!(
+                        "invalid formula on '{}.{}': {e}",
+                        self.name, field.name
+                    ))
+                })?;
+            }
+        }
+        for (i, rule) in self.validation.iter().enumerate() {
+            if let Some(name) = &rule.field {
+                ensure_rule_field(self, name, i)?;
+            }
+            for name in &rule.require {
+                ensure_rule_field(self, name, i)?;
+            }
+            if let Some(when) = &rule.when {
+                ensure_rule_field(self, &when.field, i)?;
+            }
+            if let Some(compare) = &rule.compare {
+                ensure_rule_field(self, &compare.field, i)?;
+                for other in [
+                    compare.greater_than.as_deref(),
+                    compare.less_than.as_deref(),
+                    compare.greater_or_equal.as_deref(),
+                    compare.less_or_equal.as_deref(),
+                    compare.equals.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    ensure_rule_field(self, other, i)?;
+                    if let (Some(left), Some(right)) =
+                        (self.get_field(&compare.field), self.get_field(other))
+                    {
+                        if !types_comparable(&left.field_type, &right.field_type) {
+                            return Err(QefroError::bad_request(format!(
+                                "validation rule {i} on '{}': cannot compare {} ({}) with {} ({})",
+                                self.name,
+                                left.name,
+                                left.field_type.as_str(),
+                                right.name,
+                                right.field_type.as_str()
+                            )));
+                        }
+                    }
+                }
+            }
+            if let Some(op) = rule.rule.as_deref() {
+                let normalized = crate::condition::normalize_op(op);
+                if !matches!(
+                    normalized,
+                    "required"
+                        | "email"
+                        | "phone"
+                        | "url"
+                        | "regex"
+                        | "min_length"
+                        | "max_length"
+                        | "greater_than"
+                        | "less_than"
+                        | "greater_or_equal"
+                        | "less_or_equal"
+                        | "range"
+                        | "exists"
+                        | "equals"
+                        | "not_equals"
+                        | "in"
+                        | "not_in"
+                        | "is_empty"
+                        | "is_not_empty"
+                ) {
+                    return Err(QefroError::bad_request(format!(
+                        "validation rule {i} on '{}' uses unknown operator '{op}'",
+                        self.name
+                    )));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -582,6 +675,9 @@ impl EntityDef {
             }
             if let Some(when) = &field.ui.readonly_when {
                 ensure_condition_field(self, when, &field.name, "readonly_when")?;
+            }
+            if let Some(when) = &field.required_when {
+                ensure_condition_field(self, when, &field.name, "required_when")?;
             }
             if let Some(width) = &field.ui.width {
                 if !matches!(width.as_str(), "full" | "half" | "third") {
@@ -669,6 +765,7 @@ impl EntityDef {
                     label: f.ui.label.clone(),
                     description: f.ui.description.clone().or(f.ui.help.clone()),
                     required: f.required,
+                    required_when: f.required_when.clone(),
                     list: f.ui.list,
                     list_visible: f.ui.list && !f.ui.hidden,
                     form: f.ui.form,
@@ -851,6 +948,28 @@ fn ensure_condition_field(
         "{kind} on '{}.{}' references unknown field '{}'",
         entity.name, field, when.field
     )))
+}
+
+fn ensure_rule_field(entity: &EntityDef, name: &str, index: usize) -> QefroResult<()> {
+    if entity.get_field(name).is_some() || entity.has_column(name) {
+        return Ok(());
+    }
+    Err(QefroError::bad_request(format!(
+        "validation rule {index} on '{}' references unknown field '{name}'",
+        entity.name
+    )))
+}
+
+fn types_comparable(left: &FieldType, right: &FieldType) -> bool {
+    if left.is_numeric() && right.is_numeric() {
+        return true;
+    }
+    let temporal =
+        |t: &FieldType| matches!(t, FieldType::Date | FieldType::DateTime | FieldType::Time);
+    if temporal(left) && temporal(right) {
+        return true;
+    }
+    std::mem::discriminant(left) == std::mem::discriminant(right)
 }
 
 fn validate_layout_sections(
@@ -1110,5 +1229,39 @@ fields:
         let caps = def.to_ui_meta().capabilities.unwrap();
         assert!(caps.assignment);
         assert_eq!(def.row_policy, Some(RowPolicy::AssignedTo));
+    }
+
+    #[test]
+    fn validate_rules_rejects_unknown_field_and_bad_compare() {
+        use crate::validation::ValidationRule;
+        let unknown = EntityDef::new("Order")
+            .field(FieldDef::integer("quantity"))
+            .validation_rule(ValidationRule::compare(
+                "end_date",
+                "greater_than",
+                "start_date",
+            ))
+            .build();
+        let err = unknown.validate_rules().unwrap_err();
+        assert!(err.to_string().contains("unknown field"), "{err}");
+
+        let mismatch = EntityDef::new("Order")
+            .field(FieldDef::integer("quantity"))
+            .field(FieldDef::string("name"))
+            .validation_rule(ValidationRule::compare("quantity", "greater_than", "name"))
+            .build();
+        let err = mismatch.validate_rules().unwrap_err();
+        assert!(err.to_string().contains("cannot compare"), "{err}");
+
+        let ok = EntityDef::new("Order")
+            .field(FieldDef::date("start_date"))
+            .field(FieldDef::date("end_date"))
+            .validation_rule(ValidationRule::compare(
+                "end_date",
+                "greater_or_equal",
+                "start_date",
+            ))
+            .build();
+        ok.validate_rules().unwrap();
     }
 }

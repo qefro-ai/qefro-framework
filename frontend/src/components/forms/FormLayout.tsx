@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import type { UiField, ViewSection } from "../../metadata/types";
-import { fieldReadonly } from "../../metadata/conditions";
+import { fieldReadonly, fieldRequired } from "../../metadata/conditions";
 import { fieldSectionTitle, fieldTab, resolveLayout, tabHasError } from "../../metadata/layout";
 import { renderWidget } from "../../metadata/registry";
 import type { UiEntity } from "../../api";
@@ -139,26 +139,29 @@ function FieldCell({
   fieldErrors: Record<string, string>;
   onChange: (name: string, value: unknown) => void;
 }) {
-  const readonly = fieldReadonly(field, values);
+  const readonly = fieldReadonly(field, values) || Boolean(field.computed);
+  const required = fieldRequired(field, values);
   const width = field.width || "full";
   const inputId = `field-${field.name}`;
   const help = field.help || field.help_text || field.description;
   const isBool = field.widget === "checkbox" || field.widget === "switch";
   const invalid = Boolean(fieldErrors[field.name]);
+  const fieldForWidget = required === field.required ? field : { ...field, required };
   return (
     <div
       data-field={field.name}
-      className={`field-cell width-${width}${invalid ? " is-invalid" : ""}`}
+      className={`field-cell width-${width}${invalid ? " is-invalid" : ""}${field.computed ? " is-computed" : ""}`}
     >
       {isBool ? null : (
         <label htmlFor={inputId}>
           {field.label}
-          {field.required ? " *" : ""}
+          {required ? " *" : ""}
+          {field.computed ? <span className="computed-hint"> calculated</span> : null}
         </label>
       )}
       {field.placeholder && !isBool ? <span className="sr-only">{field.placeholder}</span> : null}
       {renderWidget({
-        field,
+        field: fieldForWidget,
         value: values[field.name],
         entities,
         disabled: readonly,

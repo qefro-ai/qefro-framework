@@ -60,16 +60,17 @@ pub fn apply_task_link(entity: &mut EntityDef) -> bool {
     let mut added = false;
     if !entity.fields.iter().any(|f| {
         f.relation.as_ref().is_some_and(|rel| {
-            rel.target_entity == TASK_ENTITY && rel.inverse_field.as_deref() == Some(RELATED_ID_FIELD)
+            rel.target_entity == TASK_ENTITY
+                && rel.inverse_field.as_deref() == Some(RELATED_ID_FIELD)
         })
     }) {
         let mut name = "tasks".to_string();
         if entity.fields.iter().any(|f| f.name == name) {
             name = format!("{}_tasks", crate::ident::snake_case(&entity.name));
         }
-        entity.fields.push(
-            FieldDef::one_to_many(name, TASK_ENTITY, RELATED_ID_FIELD).label("Tasks"),
-        );
+        entity
+            .fields
+            .push(FieldDef::one_to_many(name, TASK_ENTITY, RELATED_ID_FIELD).label("Tasks"));
         added = true;
     }
     if !entity
@@ -266,6 +267,11 @@ pub fn task_entity() -> EntityDef {
             }),
             ..Default::default()
         })
+        .validation_rule(crate::validation::ValidationRule::compare(
+            "due_at",
+            "greater_or_equal",
+            "created_at",
+        ))
         .build()
 }
 
@@ -400,8 +406,14 @@ mod tests {
                 .as_deref(),
             Some("current_user")
         );
-        assert_eq!(task.get_field("priority").unwrap().default, Some(json!(PRIORITY_NORMAL)));
-        assert_eq!(task.get_field("status").unwrap().default, Some(json!(STATUS_OPEN)));
+        assert_eq!(
+            task.get_field("priority").unwrap().default,
+            Some(json!(PRIORITY_NORMAL))
+        );
+        assert_eq!(
+            task.get_field("status").unwrap().default,
+            Some(json!(STATUS_OPEN))
+        );
         assert!(task.get_field(RELATED_TYPE_FIELD).is_some());
         assert!(task.get_field(RELATED_ID_FIELD).is_some());
         assert!(task.get_field("due_at").is_some());
@@ -439,10 +451,7 @@ mod tests {
 
     #[test]
     fn platform_entities_include_identity_and_task() {
-        let names: Vec<_> = platform_entities()
-            .into_iter()
-            .map(|e| e.name)
-            .collect();
+        let names: Vec<_> = platform_entities().into_iter().map(|e| e.name).collect();
         assert!(names.contains(&"Person".into()));
         assert!(names.contains(&"User".into()));
         assert!(names.contains(&TASK_ENTITY.into()));

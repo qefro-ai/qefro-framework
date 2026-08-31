@@ -81,7 +81,14 @@ export type OperationResult = {
   };
 };
 
-export type FieldError = { field: string; code?: string; message: string };
+export type FieldError = {
+  field: string;
+  code?: string;
+  message: string;
+  entity?: string;
+  record?: string;
+  rule?: string;
+};
 
 export class ApiError extends Error {
   status: number;
@@ -93,6 +100,9 @@ export class ApiError extends Error {
     this.fields = fields;
   }
 }
+
+/** Structured 422 from EntityService. Same envelope as [`ApiError`]. */
+export class ValidationError extends ApiError {}
 
 export type Expanded = {
   id: string;
@@ -119,6 +129,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     const fields: FieldError[] =
       data?.details?.fields ?? data?.fields ?? [];
+    if (res.status === 422) {
+      throw new ValidationError(data.message || data.error || res.statusText, res.status, fields);
+    }
     throw new ApiError(data.message || data.error || res.statusText, res.status, fields);
   }
   return data as T;

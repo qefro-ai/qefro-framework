@@ -6,6 +6,7 @@ export {
   api,
   QefroClient,
   ApiError,
+  ValidationError,
   tokenHeader,
   notifyMetadata,
   saveToken,

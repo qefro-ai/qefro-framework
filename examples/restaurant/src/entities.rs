@@ -353,12 +353,21 @@ pub fn reservation() -> EntityDef {
                 .section("Booking Details"),
         )
         .field(
+            FieldDef::time("end_time")
+                .nullable()
+                .label("End")
+                .help("Must be after the start time when set.")
+                .ui(UiConfig::time().minute_step(15))
+                .section("Booking Details"),
+        )
+        .field(
             FieldDef::integer("party_size")
                 .required()
                 .min(1.0)
                 .max(50.0)
                 .label("Guests")
-                .section("Booking Details"),
+                .section("Booking Details")
+                .readonly_when("status", json!("Completed")),
         )
         .field(
             FieldDef::string("guest_name")
@@ -428,6 +437,7 @@ pub fn reservation() -> EntityDef {
                     ViewColumnSpec::fields(&[
                         "reservation_date",
                         "reservation_time",
+                        "end_time",
                         "party_size",
                         "status",
                     ]),
@@ -443,6 +453,7 @@ pub fn reservation() -> EntityDef {
                     "table_id",
                     "reservation_date",
                     "reservation_time",
+                    "end_time",
                     "party_size",
                     "status",
                 ]),
@@ -450,6 +461,11 @@ pub fn reservation() -> EntityDef {
             ])),
             ..Default::default()
         })
+        .validation_rule(qefro_core::ValidationRule::compare(
+            "end_time",
+            "greater_than",
+            "reservation_time",
+        ))
         .build()
 }
 
@@ -614,7 +630,8 @@ pub fn order() -> EntityDef {
                 .nullable()
                 .label("Customer")
                 .search_related()
-                .section("Details"),
+                .section("Details")
+                .readonly_when("status", json!("Completed")),
         )
         .field(
             FieldDef::many_to_one("table_id", "DiningTable")
@@ -695,7 +712,8 @@ pub fn order() -> EntityDef {
             FieldDef::currency("discount")
                 .nullable()
                 .min(0.0)
-                .default_value(json!(0)),
+                .default_value(json!(0))
+                .readonly_when("status", json!("Completed")),
         )
         .field(FieldDef::currency("grand_total").computed("subtotal + tax - discount"))
         .field(FieldDef::currency("total").computed("grand_total"))

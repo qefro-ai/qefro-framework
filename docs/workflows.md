@@ -10,7 +10,7 @@ WorkflowDef::new("reservation", "Reservation", "Pending")
     .transition(TransitionDef::new("confirm", "Pending", "Confirmed").roles(&["Manager", "Staff"]))
 ```
 
-`WorkflowRegistry::apply` checks the current state and the caller's roles. Admin bypasses role lists.
+`TransitionDef::requires(&["items"])` and `TransitionDef::guard(Condition { ... })` use the same `Condition` evaluator as automation. Child tables are attached before the guard runs. See [business-rules.md](business-rules.md).
 
 ## With business operations
 

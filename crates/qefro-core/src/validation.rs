@@ -80,6 +80,43 @@ impl WhenClause {
     }
 }
 
+impl ValidationRule {
+    pub fn require_when(
+        when_field: impl Into<String>,
+        equals: impl Into<Value>,
+        fields: &[&str],
+    ) -> Self {
+        Self {
+            when: Some(WhenClause {
+                field: when_field.into(),
+                equals: Some(equals.into()),
+                not_equals: None,
+            }),
+            require: fields.iter().map(|s| (*s).to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    pub fn compare(field: impl Into<String>, op: &str, other: impl Into<String>) -> Self {
+        let other = other.into();
+        let mut compare = CompareClause {
+            field: field.into(),
+            ..Default::default()
+        };
+        match crate::condition::normalize_op(op) {
+            "greater_than" => compare.greater_than = Some(other),
+            "less_than" => compare.less_than = Some(other),
+            "greater_or_equal" => compare.greater_or_equal = Some(other),
+            "less_or_equal" => compare.less_or_equal = Some(other),
+            _ => compare.equals = Some(other),
+        }
+        Self {
+            compare: Some(compare),
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct CompareClause {
     pub field: String,
@@ -127,6 +164,19 @@ pub fn validate_record(fields: &[FieldDef], record: &Value, partial: bool) -> Qe
                         "required",
                         format!("{} is required", field.label),
                     ));
+                } else if !partial {
+                    if let Some(when) = &field.required_when {
+                        if when.matches(record) {
+                            errors.push(
+                                FieldError::new(
+                                    &field.name,
+                                    "required",
+                                    format!("{} is required", field.label),
+                                )
+                                .with_rule("required_when"),
+                            );
+                        }
+                    }
                 }
             }
             Some(v) => {
@@ -299,6 +349,113 @@ fn validate_value(field: &FieldDef, value: &Value) -> Vec<FieldError> {
     errors
 }
 
+/// Drop client-supplied computed values. The server recalculates them.
+pub fn strip_computed_fields(fields: &[FieldDef], data: &mut Value) {
+    let Some(obj) = data.as_object_mut() else {
+        return;
+    };
+    for field in fields {
+        if field.computed {
+            obj.remove(&field.name);
+        }
+    }
+}
+
+/// Whether a field is readonly for this record (static, computed, or `readonly_when`).
+pub fn field_is_readonly(field: &FieldDef, record: &Value) -> bool {
+    if field.computed || field.ui.readonly {
+        return true;
+    }
+    field
+        .ui
+        .readonly_when
+        .as_ref()
+        .map(|when| when.matches(record))
+        .unwrap_or(false)
+}
+
+/// Reject mutations of readonly / `readonly_when` fields. Identical values are allowed.
+pub fn reject_readonly_writes(
+    fields: &[FieldDef],
+    current: Option<&Value>,
+    patch: &Value,
+) -> QefroResult<()> {
+    let Some(obj) = patch.as_object() else {
+        return Ok(());
+    };
+    let record = current.unwrap_or(patch);
+    let mut errors = Vec::new();
+    for key in obj.keys() {
+        if key.starts_with('_') {
+            continue;
+        }
+        let Some(field) = fields.iter().find(|f| f.name == *key) else {
+            continue;
+        };
+        if field.system || field.computed {
+            continue;
+        }
+        if !field_is_readonly(field, record) {
+            continue;
+        }
+        let new_val = obj.get(key).unwrap_or(&Value::Null);
+        let old_val = current.and_then(|c| c.get(key)).unwrap_or(&Value::Null);
+        if current.is_some() && crate::condition::values_equal(new_val, old_val) {
+            continue;
+        }
+        if current.is_none() {
+            continue;
+        }
+        errors.push(
+            FieldError::new(
+                &field.name,
+                "readonly",
+                format!("{} cannot be changed", field.label),
+            )
+            .with_rule("readonly_when"),
+        );
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(crate::error::QefroError::validation(errors))
+    }
+}
+
+/// Enforce `required_when` against a (possibly merged) record.
+pub fn apply_field_rules(fields: &[FieldDef], record: &Value, partial: bool) -> QefroResult<()> {
+    let mut errors = Vec::new();
+    for field in fields {
+        if field.system || field.computed || field.is_child_table() {
+            continue;
+        }
+        let Some(when) = &field.required_when else {
+            continue;
+        };
+        if !when.matches(record) {
+            continue;
+        }
+        if partial && lookup(record, &field.name).is_null() && !record.get(&field.name).is_some() {
+            continue;
+        }
+        if is_empty(lookup(record, &field.name)) {
+            errors.push(
+                FieldError::new(
+                    &field.name,
+                    "required",
+                    format!("{} is required", field.label),
+                )
+                .with_rule("required_when"),
+            );
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(crate::error::QefroError::validation(errors))
+    }
+}
+
 /// Apply entity-level declarative rules. `exists` is skipped (needs I/O).
 pub fn apply_entity_rules(
     fields: &[FieldDef],
@@ -314,7 +471,7 @@ pub fn apply_entity_rules(
             }
         }
         if let Some(compare) = &rule.compare {
-            errors.extend(eval_compare(compare, record));
+            errors.extend(eval_compare(compare, record, fields));
         }
         for name in &rule.require {
             if partial && lookup(record, name).is_null() && !record.get(name).is_some() {
@@ -362,6 +519,11 @@ pub fn apply_entity_rules(
             }
         }
     }
+    if let Err(crate::error::QefroError::Validation { fields: extra, .. }) =
+        apply_field_rules(fields, record, partial)
+    {
+        errors.extend(extra);
+    }
     if errors.is_empty() {
         Ok(())
     } else {
@@ -397,7 +559,11 @@ fn eval_named_rule(
     match op {
         "required" => {
             if is_empty(actual) {
-                errors.push(FieldError::new(field, "required", format!("{field} is required")));
+                errors.push(FieldError::new(
+                    field,
+                    "required",
+                    format!("{field} is required"),
+                ));
             }
         }
         "email" | "phone" | "url" | "regex" | "min_length" | "max_length" => {
@@ -438,10 +604,16 @@ fn eval_named_rule(
                 "greater_than" => ord == Some(std::cmp::Ordering::Greater),
                 "less_than" => ord == Some(std::cmp::Ordering::Less),
                 "greater_or_equal" => {
-                    matches!(ord, Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal))
+                    matches!(
+                        ord,
+                        Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+                    )
                 }
                 "less_or_equal" => {
-                    matches!(ord, Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal))
+                    matches!(
+                        ord,
+                        Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                    )
                 }
                 _ => true,
             };
@@ -462,21 +634,55 @@ fn eval_named_rule(
     errors
 }
 
-fn eval_compare(compare: &CompareClause, record: &Value) -> Vec<FieldError> {
+fn eval_compare(compare: &CompareClause, record: &Value, fields: &[FieldDef]) -> Vec<FieldError> {
     let mut errors = Vec::new();
     let left = lookup(record, &compare.field);
+    let left_label = fields
+        .iter()
+        .find(|f| f.name == compare.field)
+        .map(|f| f.label.as_str())
+        .unwrap_or(compare.field.as_str());
     let mut check = |other: &str, op: &str, ok: fn(std::cmp::Ordering) -> bool| {
         let right = lookup(record, other);
         if is_empty(left) || is_empty(right) {
             return;
         }
+        let right_label = fields
+            .iter()
+            .find(|f| f.name == other)
+            .map(|f| f.label.as_str())
+            .unwrap_or(other);
+        let temporal = looks_temporal(left) || looks_temporal(right);
+        let code = if temporal { "invalid_range" } else { op };
+        let human = match (op, temporal) {
+            ("greater_than", true) => "after",
+            ("less_than", true) => "before",
+            ("greater_or_equal", true) => "on or after",
+            ("less_or_equal", true) => "on or before",
+            ("greater_than", false) => "greater than",
+            ("less_than", false) => "less than",
+            ("greater_or_equal", false) => "greater than or equal to",
+            ("less_or_equal", false) => "less than or equal to",
+            _ => op,
+        };
         match cmp_ord(left, right) {
             Some(ord) if ok(ord) => {}
-            _ => errors.push(FieldError::new(
-                compare.field.clone(),
-                op,
-                format!("{} must be {op} {other}", compare.field),
-            )),
+            None => errors.push(
+                FieldError::new(
+                    compare.field.clone(),
+                    "invalid_type",
+                    format!("cannot compare {left_label} with {right_label}"),
+                )
+                .with_rule("compare"),
+            ),
+            _ => errors.push(
+                FieldError::new(
+                    compare.field.clone(),
+                    code,
+                    format!("{left_label} must be {human} {right_label}."),
+                )
+                .with_rule("compare"),
+            ),
         }
     };
     if let Some(other) = &compare.greater_than {
@@ -497,14 +703,28 @@ fn eval_compare(compare: &CompareClause, record: &Value) -> Vec<FieldError> {
     }
     if let Some(other) = &compare.equals {
         if !crate::condition::values_equal(left, lookup(record, other)) && !is_empty(left) {
-            errors.push(FieldError::new(
-                compare.field.clone(),
-                "equals",
-                format!("{} must equal {other}", compare.field),
-            ));
+            errors.push(
+                FieldError::new(
+                    compare.field.clone(),
+                    "equals",
+                    format!("{left_label} must equal {other}"),
+                )
+                .with_rule("compare"),
+            );
         }
     }
     errors
+}
+
+fn looks_temporal(value: &Value) -> bool {
+    value
+        .as_str()
+        .map(|s| {
+            s.len() >= 8
+                && (s.contains('-') || s.contains('T') || s.contains(':'))
+                && s.chars().any(|c| c.is_ascii_digit())
+        })
+        .unwrap_or(false)
 }
 
 pub fn existence_rules(rules: &[ValidationRule]) -> Vec<&ValidationRule> {
@@ -512,6 +732,94 @@ pub fn existence_rules(rules: &[ValidationRule]) -> Vec<&ValidationRule> {
         .iter()
         .filter(|r| r.rule.as_deref() == Some("exists") && r.field.is_some())
         .collect()
+}
+
+/// Human-readable compare line for `qefro inspect`.
+pub fn compare_rule_line(rule: &ValidationRule) -> Option<String> {
+    let compare = rule.compare.as_ref()?;
+    if let Some(other) = &compare.greater_than {
+        return Some(format!("{} > {}", compare.field, other));
+    }
+    if let Some(other) = &compare.less_than {
+        return Some(format!("{} < {}", compare.field, other));
+    }
+    if let Some(other) = &compare.greater_or_equal {
+        return Some(format!("{} >= {}", compare.field, other));
+    }
+    if let Some(other) = &compare.less_or_equal {
+        return Some(format!("{} <= {}", compare.field, other));
+    }
+    if let Some(other) = &compare.equals {
+        return Some(format!("{} = {}", compare.field, other));
+    }
+    Some(format!("{} compared", compare.field))
+}
+
+/// Human-readable rule lines for `qefro inspect`. Empty when the field has none.
+pub fn field_rule_lines(field: &FieldDef) -> Vec<String> {
+    let mut lines = Vec::new();
+    if field.required {
+        lines.push("required".into());
+    }
+    if let Some(when) = &field.required_when {
+        lines.push(format!(
+            "required when {} = {}",
+            when.field,
+            display_equals(&when.equals)
+        ));
+    }
+    if field.ui.readonly {
+        lines.push("readonly".into());
+    }
+    if let Some(when) = &field.ui.readonly_when {
+        lines.push(format!(
+            "readonly when {} = {}",
+            when.field,
+            display_equals(&when.equals)
+        ));
+    }
+    if let Some(when) = &field.ui.visible_when {
+        lines.push(format!(
+            "visible when {} = {}",
+            when.field,
+            display_equals(&when.equals)
+        ));
+    }
+    if field.computed {
+        if let Some(formula) = &field.formula {
+            lines.push(format!("computed: {formula}"));
+        } else {
+            lines.push("computed".into());
+        }
+    }
+    if let Some(min) = field.validation.min {
+        lines.push(format!("validation: >= {min}"));
+    }
+    if let Some(max) = field.validation.max {
+        lines.push(format!("validation: <= {max}"));
+    }
+    if let Some(gt) = field.validation.greater_than {
+        lines.push(format!("validation: > {gt}"));
+    }
+    if let Some(lt) = field.validation.less_than {
+        lines.push(format!("validation: < {lt}"));
+    }
+    if let Some(default) = &field.default {
+        lines.push(format!("default: {}", display_equals(default)));
+    }
+    if let Some(from) = &field.default_from {
+        lines.push(format!("default from {from}"));
+    }
+    lines
+}
+
+fn display_equals(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        other => other.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -584,13 +892,9 @@ mod tests {
             ..Default::default()
         }];
         apply_entity_rules(&fields, &rules, &json!({ "status": "draft" }), false).unwrap();
-        assert!(apply_entity_rules(
-            &fields,
-            &rules,
-            &json!({ "status": "confirmed" }),
-            false
-        )
-        .is_err());
+        assert!(
+            apply_entity_rules(&fields, &rules, &json!({ "status": "confirmed" }), false).is_err()
+        );
         apply_entity_rules(
             &fields,
             &rules,
@@ -625,5 +929,126 @@ mod tests {
             false,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn required_when_is_enforced() {
+        let fields = vec![
+            FieldDef::enum_values("contact_method", vec!["email", "phone"]),
+            FieldDef::string("email")
+                .nullable()
+                .required_when("contact_method", json!("email")),
+        ];
+        apply_entity_rules(&fields, &[], &json!({ "contact_method": "phone" }), false).unwrap();
+        let err = apply_entity_rules(&fields, &[], &json!({ "contact_method": "email" }), false)
+            .unwrap_err();
+        match err {
+            crate::error::QefroError::Validation { fields, .. } => {
+                assert!(fields
+                    .iter()
+                    .any(|e| e.field == "email" && e.code == "required"));
+            }
+            other => panic!("{other:?}"),
+        }
+        apply_entity_rules(
+            &fields,
+            &[],
+            &json!({ "contact_method": "email", "email": "a@b.co" }),
+            false,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn readonly_when_rejects_mutation() {
+        let fields = vec![
+            FieldDef::string("status"),
+            FieldDef::decimal("amount").readonly_when("status", json!("completed")),
+        ];
+        let current = json!({ "status": "completed", "amount": 10 });
+        let err =
+            reject_readonly_writes(&fields, Some(&current), &json!({ "amount": 1 })).unwrap_err();
+        match err {
+            crate::error::QefroError::Validation { fields, .. } => {
+                assert!(fields.iter().any(|e| e.code == "readonly"));
+            }
+            other => panic!("{other:?}"),
+        }
+        reject_readonly_writes(
+            &fields,
+            Some(&json!({ "status": "draft", "amount": 10 })),
+            &json!({ "amount": 1 }),
+        )
+        .unwrap();
+        reject_readonly_writes(&fields, Some(&current), &json!({ "amount": 10 })).unwrap();
+    }
+
+    #[test]
+    fn compare_type_mismatch_is_invalid_type() {
+        let fields = vec![FieldDef::integer("qty"), FieldDef::string("name")];
+        let rules = vec![ValidationRule::compare("qty", "greater_than", "name")];
+        let err = apply_entity_rules(
+            &fields,
+            &rules,
+            &json!({ "qty": 2, "name": "hello" }),
+            false,
+        )
+        .unwrap_err();
+        match err {
+            crate::error::QefroError::Validation { fields, .. } => {
+                assert!(fields.iter().any(|e| e.code == "invalid_type"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn field_rule_lines_cover_categories() {
+        let field = FieldDef::decimal("discount")
+            .readonly_when("status", json!("completed"))
+            .min(0.0)
+            .default_value(json!(0));
+        let lines = field_rule_lines(&field);
+        assert!(lines.iter().any(|l| l.contains("readonly when")));
+        assert!(lines.iter().any(|l| l.contains("default")));
+        let compare = ValidationRule::compare("end_time", "greater_than", "start_time");
+        assert_eq!(
+            compare_rule_line(&compare).as_deref(),
+            Some("end_time > start_time")
+        );
+    }
+
+    #[test]
+    fn rule_evaluation_is_cheap_without_io() {
+        let fields = vec![
+            FieldDef::integer("qty").greater_than(0.0),
+            FieldDef::string("email")
+                .nullable()
+                .required_when("contact_method", json!("email")),
+            FieldDef::string("contact_method"),
+            FieldDef::date("start_date"),
+            FieldDef::date("end_date"),
+        ];
+        let rules = vec![ValidationRule::compare(
+            "end_date",
+            "greater_or_equal",
+            "start_date",
+        )];
+        let record = json!({
+            "qty": 2,
+            "contact_method": "phone",
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-02"
+        });
+        let start = std::time::Instant::now();
+        for _ in 0..200 {
+            validate_record(&fields, &record, false).unwrap();
+            apply_entity_rules(&fields, &rules, &record, false).unwrap();
+        }
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed.as_millis() < 2_000,
+            "rule evaluation took {elapsed:?}"
+        );
     }
 }

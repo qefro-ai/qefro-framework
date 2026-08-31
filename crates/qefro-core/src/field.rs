@@ -152,6 +152,9 @@ pub struct FieldDef {
     pub label: String,
     #[serde(default)]
     pub required: bool,
+    /// Conditional required. Server-authoritative; the generic UI mirrors it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_when: Option<UiWhen>,
     #[serde(default)]
     pub unique: bool,
     #[serde(default = "default_true")]
@@ -299,6 +302,7 @@ impl FieldDef {
             field_type,
             label: label.clone(),
             required: false,
+            required_when: None,
             unique: false,
             nullable: true,
             indexed: false,
@@ -493,6 +497,12 @@ impl FieldDef {
     pub fn required(mut self) -> Self {
         self.required = true;
         self.nullable = false;
+        self
+    }
+
+    /// Require this field when `field` equals `equals`. Backend enforces it.
+    pub fn required_when(mut self, field: impl Into<String>, equals: Value) -> Self {
+        self.required_when = Some(UiWhen::new(field, equals));
         self
     }
 
