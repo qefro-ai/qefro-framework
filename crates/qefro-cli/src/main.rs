@@ -636,6 +636,42 @@ fn cmd_automation_show(app: &str, name: &str) -> Result<()> {
     Ok(())
 }
 
+fn print_inspect_field(field: &qefro_core::FieldDef, indent: &str) {
+    let mut flags = Vec::new();
+    if field.custom {
+        flags.push("custom");
+    }
+    if field.required {
+        flags.push("required");
+    }
+    if field.searchable {
+        flags.push("searchable");
+    }
+    if field.unique {
+        flags.push("unique");
+    }
+    if let Some(rel) = &field.relation {
+        flags.push(match rel.kind {
+            qefro_core::RelationKind::ManyToOne => "many-to-one",
+            qefro_core::RelationKind::OneToMany => "one-to-many",
+            qefro_core::RelationKind::ManyToMany => "many-to-many",
+            qefro_core::RelationKind::ChildTable => "child-table",
+        });
+    }
+    println!(
+        "{indent}{:<20} {:<12} {}",
+        field.name,
+        field.field_type.as_str(),
+        flags.join(", ")
+    );
+    if let Some(rel) = &field.relation {
+        println!(
+            "{indent}                     → {}  on_delete={:?}",
+            rel.target_entity, rel.on_delete
+        );
+    }
+}
+
 fn cmd_page_show(app: &str, name: &str) -> Result<()> {
     let runtime = runtime_for(app)?;
     let Some(mut page) = runtime.page(name) else {
@@ -768,36 +804,23 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
             .unwrap_or_else(|| "(none)".into())
     );
     println!("fields:");
-    for field in &entity.fields {
-        let mut flags = Vec::new();
-        if field.required {
-            flags.push("required");
+    let core: Vec<_> = qefro_core::core_fields_of(&entity);
+    let custom: Vec<_> = qefro_core::custom_fields_of(&entity);
+    if !core.is_empty() {
+        println!("  core:");
+        for field in &core {
+            print_inspect_field(field, "    ");
         }
-        if field.searchable {
-            flags.push("searchable");
+    }
+    if !custom.is_empty() {
+        println!("  custom:");
+        for field in &custom {
+            print_inspect_field(field, "    ");
         }
-        if field.unique {
-            flags.push("unique");
-        }
-        if let Some(rel) = &field.relation {
-            flags.push(match rel.kind {
-                qefro_core::RelationKind::ManyToOne => "many-to-one",
-                qefro_core::RelationKind::OneToMany => "one-to-many",
-                qefro_core::RelationKind::ManyToMany => "many-to-many",
-                qefro_core::RelationKind::ChildTable => "child-table",
-            });
-        }
-        println!(
-            "  {:<20} {:<12} {}",
-            field.name,
-            field.field_type.as_str(),
-            flags.join(", ")
-        );
-        if let Some(rel) = &field.relation {
-            println!(
-                "                     → {}  on_delete={:?}",
-                rel.target_entity, rel.on_delete
-            );
+    }
+    if core.is_empty() && custom.is_empty() {
+        for field in &entity.fields {
+            print_inspect_field(field, "  ");
         }
     }
     let mut any_rules = false;

@@ -1,4 +1,5 @@
 use crate::audit::AuditLogger;
+use crate::custom_fields::CustomFieldStore;
 use crate::jobs::{JobQueue, JobRegistry};
 use crate::operation::{
     available_for_record, crud_operation_defs, execute_operation_with, operation_allowed,
@@ -43,6 +44,7 @@ pub struct EntityService {
     job_handlers: Arc<JobRegistry>,
     outbox: Outbox,
     identity: Option<Arc<AuthService>>,
+    custom_fields: Arc<CustomFieldStore>,
 }
 
 impl EntityService {
@@ -59,7 +61,8 @@ impl EntityService {
             repo: Arc::new(EntityRepository::new(pool.clone())),
             audit: Arc::new(AuditLogger::new(pool.clone())),
             activity: Arc::new(crate::activity::ActivityStore::new(pool.clone())),
-            outbox: Outbox::new(pool),
+            outbox: Outbox::new(pool.clone()),
+            custom_fields: Arc::new(CustomFieldStore::new(pool)),
             registry,
             permissions,
             workflows,
@@ -85,6 +88,35 @@ impl EntityService {
     pub fn with_identity(mut self, identity: Arc<AuthService>) -> Self {
         self.identity = Some(identity);
         self
+    }
+
+    pub fn with_custom_fields(mut self, store: Arc<CustomFieldStore>) -> Self {
+        self.custom_fields = store;
+        self
+    }
+
+    pub fn custom_fields(&self) -> Arc<CustomFieldStore> {
+        self.custom_fields.clone()
+    }
+
+    /// Base EntityDef plus tenant custom fields. Application custom fields are already on the registry.
+    pub async fn entity_for(
+        &self,
+        ctx: &OpContext,
+        name: &str,
+    ) -> QefroResult<Arc<qefro_core::EntityDef>> {
+        let base = self.registry.get(name)?;
+        let extras = self
+            .custom_fields
+            .list_effective(ctx.tenant_id, &base.name)
+            .await?;
+        if extras.is_empty() {
+            return Ok(base);
+        }
+        Ok(Arc::new(qefro_core::merge_custom_fields(
+            base.as_ref(),
+            extras.as_ref(),
+        )?))
     }
 
     pub(crate) fn identity_service(&self) -> Option<&AuthService> {
@@ -165,7 +197,7 @@ impl EntityService {
         input: Value,
         opts: ExecuteOpts,
     ) -> QefroResult<Value> {
-        let entity = self.registry.get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_app(ctx, &entity)?;
         reject_client_tenant(&input)?;
         let (record, _events) = execute_operation_with(
@@ -259,7 +291,7 @@ impl EntityService {
         entity_name: &str,
         query: Query,
     ) -> QefroResult<Page> {
-        let entity = self.registry.get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_app(ctx, &entity)?;
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::List)?;
@@ -286,7 +318,7 @@ impl EntityService {
     }
 
     pub async fn get(&self, ctx: &OpContext, entity_name: &str, id: Uuid) -> QefroResult<Value> {
-        let entity = self.registry.get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_app(ctx, &entity)?;
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Read)?;
@@ -305,7 +337,7 @@ impl EntityService {
         entity_name: &str,
         mut data: Value,
     ) -> QefroResult<Value> {
-        let entity = self.registry.get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_app(ctx, &entity)?;
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Create)?;
@@ -512,7 +544,7 @@ impl EntityService {
         id: Uuid,
         mut patch: Value,
     ) -> QefroResult<Value> {
-        let entity = self.registry.get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_app(ctx, &entity)?;
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Update)?;
@@ -717,7 +749,7 @@ impl EntityService {
     }
 
     pub async fn delete(&self, ctx: &OpContext, entity_name: &str, id: Uuid) -> QefroResult<Value> {
-        let entity = self.registry.get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_app(ctx, &entity)?;
         self.reject_worker_crud(ctx)?;
         self.permissions.check(ctx, &entity.name, Action::Delete)?;
@@ -806,7 +838,7 @@ impl EntityService {
         id: Uuid,
         transition: &str,
     ) -> QefroResult<Value> {
-        let entity = self.registry.get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_app(ctx, &entity)?;
         if self.operations.try_get(&entity.name, transition).is_some() {
             return self
@@ -1986,7 +2018,7 @@ impl EntityService {
         report: &qefro_core::ReportDef,
         filters: Value,
     ) -> QefroResult<Value> {
-        let entity = self.registry.get(&report.entity)?;
+        let entity = self.entity_for(ctx, &report.entity).await?;
         self.ensure_app(ctx, &entity)?;
         self.permissions.check(ctx, &entity.name, Action::List)?;
         crate::reports::validate_report(&entity, report)?;
@@ -2053,7 +2085,7 @@ impl EntityService {
         format_name: Option<&str>,
         extra_formats: &[qefro_core::PrintFormat],
     ) -> QefroResult<(qefro_core::PrintFormat, Value, Vec<Value>)> {
-        let entity = self.registry.get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_app(ctx, &entity)?;
         self.permissions.check(ctx, &entity.name, Action::Read)?;
         let mut record = self.get(ctx, entity_name, id).await?;
@@ -2308,10 +2340,12 @@ impl EntityService {
         field: Option<&str>,
         query: Query,
     ) -> QefroResult<Value> {
-        let entity = self.registry.get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_app(ctx, &entity)?;
         self.permissions.check(ctx, &entity.name, Action::List)?;
-        if entity.get_field(group_by).is_none() && !entity.has_column(group_by) {
+        if entity.get_field(group_by).is_some_and(|f| f.custom)
+            || (entity.get_field(group_by).is_none() && !entity.has_column(group_by))
+        {
             return Err(QefroError::forbidden(format!(
                 "unknown or unauthorized group_by field '{group_by}'"
             )));
@@ -2943,7 +2977,11 @@ fn coerce_numeric_json(entity: &qefro_core::EntityDef, record: &mut Value) {
     let Some(obj) = record.as_object_mut() else {
         return;
     };
-    for field in entity.stored_fields() {
+    for field in entity
+        .fields
+        .iter()
+        .filter(|f| f.stores_column() || f.custom)
+    {
         if !field.field_type.is_numeric() {
             continue;
         }
@@ -2957,6 +2995,7 @@ fn coerce_numeric_json(entity: &qefro_core::EntityDef, record: &mut Value) {
 }
 
 fn prepare_record(entity: &qefro_core::EntityDef, data: &mut Value, ctx: &OpContext) {
+    qefro_core::flatten_nested_custom(entity, data);
     apply_defaults(entity, data, ctx);
     canonicalize_values(entity, data, ctx);
     sanitize_values(entity, data);
@@ -2967,7 +3006,11 @@ fn apply_defaults(entity: &qefro_core::EntityDef, data: &mut Value, ctx: &OpCont
     let Some(obj) = data.as_object_mut() else {
         return;
     };
-    for field in entity.stored_fields() {
+    for field in entity.fields.iter().filter(|f| {
+        !f.system
+            && !f.computed
+            && (f.stores_column() || (f.custom && f.custom_status.in_effective_metadata()))
+    }) {
         let missing = match obj.get(&field.name) {
             None => true,
             Some(Value::Null) => true,
@@ -2997,7 +3040,11 @@ fn canonicalize_values(entity: &qefro_core::EntityDef, data: &mut Value, ctx: &O
     let Some(obj) = data.as_object_mut() else {
         return;
     };
-    for field in entity.stored_fields() {
+    for field in entity
+        .fields
+        .iter()
+        .filter(|f| f.stores_column() || f.custom)
+    {
         let Some(Value::String(raw)) = obj.get(&field.name) else {
             continue;
         };

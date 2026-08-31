@@ -650,3 +650,133 @@ async fn studio_views_overlay_is_safe_and_rejects_permissions() {
         .unwrap();
     assert_eq!(guest["views"]["card"]["title"], "name");
 }
+
+#[tokio::test]
+async fn custom_field_publish_is_safe_and_flows_through_entity_service() {
+    let (router, token, suffix) = boot().await;
+
+    let (status, preview) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/studio/validate",
+            &token,
+            json!({
+                "kind": "entity.custom_field",
+                "target": "StudioGuest",
+                "payload": {
+                    "name": "loyalty_tier",
+                    "label": "Loyalty Tier",
+                    "type": "select",
+                    "options": ["Bronze", "Silver", "Gold"],
+                    "required": false,
+                    "default": "Bronze"
+                }
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["impact"], "safe");
+    assert_eq!(preview["migration_required"], false);
+
+    let (status, reserved) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/studio/validate",
+            &token,
+            json!({
+                "kind": "entity.custom_field",
+                "target": "StudioGuest",
+                "payload": { "name": "tenant_id", "type": "string" }
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{reserved}");
+
+    let (status, published) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/studio/publish",
+            &token,
+            json!({
+                "kind": "entity.custom_field",
+                "target": "StudioGuest",
+                "summary": "Custom field added: StudioGuest.loyalty_tier",
+                "payload": {
+                    "name": "loyalty_tier",
+                    "label": "Loyalty Tier",
+                    "type": "select",
+                    "options": ["Bronze", "Silver", "Gold"],
+                    "filterable": true,
+                    "default": "Bronze"
+                }
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{published}");
+    assert_eq!(published["impact"], "safe");
+
+    let (status, ui) = json(clone_router(&router), get("/api/v1/meta/ui", &token)).await;
+    assert_eq!(status, StatusCode::OK, "{ui}");
+    let guest = ui["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["entity"] == "StudioGuest")
+        .unwrap();
+    let field = guest["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "loyalty_tier")
+        .expect("loyalty_tier in meta/ui");
+    assert_eq!(field["custom"], true);
+    assert_eq!(field["widget"], "select");
+
+    let (status, created) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/studio-guests",
+            &token,
+            json!({
+                "name": format!("Ahmed {suffix}"),
+                "loyalty_tier": "Gold"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    assert_eq!(created["loyalty_tier"], "Gold");
+    assert!(created.get("qefro_custom").is_none());
+
+    let (status, bad) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/studio-guests",
+            &token,
+            json!({
+                "name": format!("Bad {suffix}"),
+                "loyalty_tier": "Platinum"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+
+    let id = created["id"].as_str().unwrap();
+    let (status, listed) = json(
+        clone_router(&router),
+        get(&format!("/api/v1/studio-guests?loyalty_tier=Gold"), &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    let items = listed["items"].as_array().cloned().unwrap_or_default();
+    assert!(
+        items
+            .iter()
+            .any(|r| r["id"] == id && r["loyalty_tier"] == "Gold"),
+        "{listed}"
+    );
+}

@@ -74,6 +74,8 @@ export type UiField = {
   permission_level?: number;
   allow_on_submit?: boolean;
   secret?: boolean;
+  custom?: boolean;
+  custom_status?: string;
   child_entity?: string;
 };
 

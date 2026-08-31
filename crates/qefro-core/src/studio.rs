@@ -324,6 +324,11 @@ pub fn classify_entity_change(before: &EntityDef, after: &EntityDef) -> ChangeAn
             None => {
                 if field.is_child_table() {
                     analysis.diff.push(format!("+ child table {name}"));
+                } else if field.custom {
+                    analysis.diff.push(format!(
+                        "+ custom field {name} ({})",
+                        field.field_type.as_str()
+                    ));
                 } else {
                     analysis.impact = analysis.impact.merge(SchemaImpact::Additive);
                     analysis.migration_required = true;
@@ -347,6 +352,12 @@ pub fn classify_entity_change(before: &EntityDef, after: &EntityDef) -> ChangeAn
         if after_fields.contains_key(name) {
             continue;
         }
+        if field.custom {
+            analysis
+                .diff
+                .push(format!("- custom field {name} (disabled; data retained)"));
+            continue;
+        }
         analysis.impact = SchemaImpact::Destructive;
         analysis.migration_required = true;
         analysis.warnings.push(format!(
@@ -363,6 +374,24 @@ fn classify_field(before: &FieldDef, after: &FieldDef, analysis: &mut ChangeAnal
     if std::mem::discriminant(&before.field_type) != std::mem::discriminant(&after.field_type)
         || field_type_key(&before.field_type) != field_type_key(&after.field_type)
     {
+        if before.custom && after.custom {
+            if !crate::custom::custom_types_compatible(&before.field_type, &after.field_type) {
+                analysis.impact = SchemaImpact::Destructive;
+                analysis.warnings.push(format!(
+                    "Custom field '{}' type change {} → {} is incompatible with existing data.",
+                    after.name,
+                    before.field_type.as_str(),
+                    after.field_type.as_str()
+                ));
+            }
+            analysis.diff.push(format!(
+                "~ custom field {} type {} → {}",
+                after.name,
+                before.field_type.as_str(),
+                after.field_type.as_str()
+            ));
+            return;
+        }
         analysis.impact = SchemaImpact::Destructive;
         analysis.migration_required = true;
         analysis.warnings.push(format!(
@@ -729,6 +758,24 @@ mod tests {
         let a = classify_entity_change(&before, &after);
         assert_eq!(a.impact, SchemaImpact::Additive);
         assert!(a.migration_required);
+    }
+
+    #[test]
+    fn add_custom_field_is_safe() {
+        let before = EntityDef::new("Customer")
+            .field(FieldDef::string("name"))
+            .build();
+        let after = EntityDef::new("Customer")
+            .field(FieldDef::string("name"))
+            .custom_field(FieldDef::enum_values(
+                "loyalty_tier",
+                vec!["Bronze", "Silver", "Gold"],
+            ))
+            .build();
+        let a = classify_entity_change(&before, &after);
+        assert_eq!(a.impact, SchemaImpact::Safe);
+        assert!(!a.migration_required);
+        assert!(a.diff.iter().any(|l| l.contains("loyalty_tier")));
     }
 
     #[test]

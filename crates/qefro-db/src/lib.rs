@@ -14,6 +14,7 @@ pub mod blobs;
 pub mod bulk;
 pub mod commerce;
 pub mod communication;
+pub mod custom_fields;
 pub mod document_ops;
 pub mod due;
 pub mod global_search;
@@ -55,6 +56,7 @@ pub use communication::{
     CommunicationStore, LogEmailProvider, LogSmsProvider, LogWhatsAppProvider, OutboundMessage,
     RecordingProvider, COMMUNICATION_DELIVER_JOB,
 };
+pub use custom_fields::CustomFieldStore;
 pub use document_ops::register_document_operations;
 pub use due::{DueReminderJob, DUE_REMINDER_JOB};
 pub use global_search::{SearchGroup, SearchHit, SearchResponse};

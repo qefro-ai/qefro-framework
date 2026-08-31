@@ -120,7 +120,7 @@ impl Query {
         }
         for filter in &self.filters {
             let name = filter.field_name();
-            if !entity.has_column(name) {
+            if !entity.is_filterable_field(name) {
                 return Err(QefroError::bad_request(format!(
                     "cannot filter on unknown field '{name}'"
                 )));
@@ -133,7 +133,7 @@ impl Query {
             });
         }
         for sort in &self.sort {
-            if !entity.has_column(&sort.field) {
+            if !entity.is_sortable_field(&sort.field) {
                 return Err(QefroError::bad_request(format!(
                     "cannot sort on unknown field '{}'",
                     sort.field
@@ -247,7 +247,7 @@ fn parse_filter(entity: &EntityDef, key: &str, value: &str) -> QefroResult<Optio
     if field == "tenant_id" {
         return Err(QefroError::bad_request("tenant_id is not a client filter"));
     }
-    if !entity.has_column(field) {
+    if !entity.is_filterable_field(field) {
         // Ignore unknown keys so clients can pass extra UI params.
         return Ok(None);
     }

@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type UiEntity } from "../../api";
 import { can, groupedEntities } from "../StudioApp";
 import SourceView from "../components/SourceView";
-import FieldEditor from "../editors/FieldEditor";
+import CustomFieldsEditor from "../editors/CustomFieldsEditor";
 import FormulaEditor from "../editors/FormulaEditor";
 import FormPreview from "../preview/FormPreview";
 import ViewsPreview from "../preview/ViewsPreview";
@@ -116,7 +116,7 @@ export default function Entities({ caps }: { caps: string[] }) {
         </p>
       ) : null}
       <div className="studio-tabs">
-        {["fields", "relations", "child tables", "computed", "actions", "links", "public form", "layout", "views", "scheduling", "preview", "source"].map((name) => (
+        {["fields", "custom fields", "relations", "child tables", "computed", "actions", "links", "public form", "layout", "views", "scheduling", "preview", "source"].map((name) => (
           <button
             key={name}
             className={tab === name ? "" : "ghost"}
@@ -138,6 +138,19 @@ export default function Entities({ caps }: { caps: string[] }) {
         <FieldEditor
           entity={entity}
           fields={fields}
+          canEdit={can(caps, "studio.edit")}
+          canPublish={can(caps, "studio.publish")}
+          onSaved={async () => {
+            setDetail(await api.studioEntity(entity));
+            setMessage("Published.");
+          }}
+        />
+      )}
+      {tab === "custom fields" && (
+        <CustomFieldsEditor
+          entity={entity}
+          fields={fields}
+          ui={ui}
           canEdit={can(caps, "studio.edit")}
           canPublish={can(caps, "studio.publish")}
           onSaved={async () => {

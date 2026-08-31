@@ -12,6 +12,11 @@ const AGGS: &[&str] = &["COUNT", "SUM", "AVG", "MIN", "MAX"];
 
 pub fn validate_report(entity: &EntityDef, report: &ReportDef) -> QefroResult<()> {
     for name in report.fields.iter().chain(report.group_by.iter()) {
+        if entity.get_field(name).is_some_and(|f| f.custom) {
+            return Err(QefroError::bad_request(format!(
+                "custom field '{name}' cannot be used as a report column (JSONB bag; use filters instead)"
+            )));
+        }
         if entity.get_field(name).is_none() && !entity.has_column(name) {
             return Err(QefroError::forbidden(format!(
                 "unknown or unauthorized report field '{name}'"
@@ -40,6 +45,11 @@ pub fn validate_report(entity: &EntityDef, report: &ReportDef) -> QefroResult<()
             let def = entity.get_field(field).ok_or_else(|| {
                 QefroError::forbidden(format!("unknown or unauthorized report field '{field}'"))
             })?;
+            if def.custom {
+                return Err(QefroError::bad_request(format!(
+                    "custom field '{field}' cannot be aggregated (JSONB bag)"
+                )));
+            }
             if !def.field_type.is_numeric() {
                 return Err(QefroError::bad_request(format!(
                     "{agg}({}) is not valid for type {}",
@@ -47,6 +57,10 @@ pub fn validate_report(entity: &EntityDef, report: &ReportDef) -> QefroResult<()
                     def.field_type.as_str()
                 )));
             }
+        } else if field != "*" && entity.get_field(field).is_some_and(|f| f.custom) {
+            return Err(QefroError::bad_request(format!(
+                "custom field '{field}' cannot be aggregated (JSONB bag)"
+            )));
         } else if field != "*" && entity.get_field(field).is_none() && !entity.has_column(field) {
             return Err(QefroError::forbidden(format!(
                 "unknown or unauthorized report field '{field}'"

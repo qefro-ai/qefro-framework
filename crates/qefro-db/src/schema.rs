@@ -422,6 +422,23 @@ CREATE INDEX IF NOT EXISTS qefro_activity_actor_idx
     ON qefro_activity (tenant_id, actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS qefro_activity_created_idx
     ON qefro_activity (tenant_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS qefro_custom_fields (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    entity TEXT NOT NULL,
+    name TEXT NOT NULL,
+    definition JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    version INT NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by UUID,
+    updated_by UUID,
+    UNIQUE (tenant_id, entity, name)
+);
+CREATE INDEX IF NOT EXISTS qefro_custom_fields_tenant_idx
+    ON qefro_custom_fields (tenant_id, entity, status);
 "#;
 
 pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
@@ -441,6 +458,7 @@ pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
     if entity.archives() {
         cols.push("\"archived_at\" TIMESTAMPTZ".to_string());
     }
+    cols.push("\"qefro_custom\" JSONB NOT NULL DEFAULT '{}'::jsonb".to_string());
 
     for field in entity.stored_fields() {
         let col = quote_ident(&field.column_name())?;
@@ -509,6 +527,10 @@ pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
             entity.table
         ));
     }
+    ddl.push_str(&format!(
+        "\nCREATE INDEX IF NOT EXISTS {}_qefro_custom_gin ON {table} USING GIN (\"qefro_custom\");",
+        entity.table
+    ));
     for field in entity.stored_fields() {
         if field.indexed || field.unique {
             let col = quote_ident(&field.column_name())?;
@@ -632,6 +654,20 @@ async fn apply_missing_columns(pool: &PgPool, registry: &EntityRegistry) -> Qefr
                 QefroError::database(format!("add column {}.archived_at: {e}", entity.name))
             })?;
         }
+        let bag = format!(
+            "ALTER TABLE {table} ADD COLUMN IF NOT EXISTS \"qefro_custom\" JSONB NOT NULL DEFAULT '{{}}'::jsonb"
+        );
+        sqlx::query(&bag).execute(pool).await.map_err(|e| {
+            QefroError::database(format!("add column {}.qefro_custom: {e}", entity.name))
+        })?;
+        let gin = format!(
+            "CREATE INDEX IF NOT EXISTS {}_qefro_custom_gin ON {table} USING GIN (\"qefro_custom\")",
+            entity.table
+        );
+        sqlx::query(&gin)
+            .execute(pool)
+            .await
+            .map_err(|e| QefroError::database(format!("gin {}.qefro_custom: {e}", entity.name)))?;
     }
     Ok(())
 }
@@ -645,6 +681,7 @@ const SYSTEM_COLUMNS: &[&str] = &[
     "updated_by",
     "deleted_at",
     "archived_at",
+    "qefro_custom",
 ];
 
 /// `CREATE TABLE IF NOT EXISTS` never drops leftover columns. A previous
@@ -876,6 +913,8 @@ mod tests {
         assert!(ddl.contains("CREATE TABLE IF NOT EXISTS \"customers\""));
         assert!(ddl.contains("\"tenant_id\""));
         assert!(ddl.contains("\"email\""));
+        assert!(ddl.contains("\"qefro_custom\" JSONB"));
+        assert!(ddl.contains("USING GIN (\"qefro_custom\")"));
         assert!(!ddl.contains("DROP TABLE tenants"));
     }
 

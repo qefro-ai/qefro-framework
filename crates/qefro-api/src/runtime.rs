@@ -11,11 +11,11 @@ use qefro_core::{
 use qefro_db::{
     apply_schema, connect, AttachmentPurgeJob, AttachmentStore, AutomationEngine, BlobMetaStore,
     CommunicationDeliverJob, CommunicationDispatcher, CommunicationHub, CommunicationStore,
-    DueReminderJob, EmailNotifyJob, EntityService, ImportRunJob, JobHandler, JobQueue, JobRegistry,
-    LogNotificationJob, MetadataChangeService, NotificationStore, OperationExecuteJob,
-    OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore, ScheduleReminderJob,
-    WebhookLog, ATTACHMENT_PURGE_JOB, COMMUNICATION_DELIVER_JOB, DUE_REMINDER_JOB, IMPORT_RUN_JOB,
-    OPERATION_EXECUTE_JOB, SCHEDULE_REMINDER_JOB,
+    CustomFieldStore, DueReminderJob, EmailNotifyJob, EntityService, ImportRunJob, JobHandler,
+    JobQueue, JobRegistry, LogNotificationJob, MetadataChangeService, NotificationStore,
+    OperationExecuteJob, OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore,
+    ScheduleReminderJob, WebhookLog, ATTACHMENT_PURGE_JOB, COMMUNICATION_DELIVER_JOB,
+    DUE_REMINDER_JOB, IMPORT_RUN_JOB, OPERATION_EXECUTE_JOB, SCHEDULE_REMINDER_JOB,
 };
 use qefro_events::InProcessEventBus;
 use qefro_permissions::{PermissionGrant, PermissionRegistry};
@@ -529,14 +529,18 @@ impl QefroRuntime {
         for page in &pages {
             catalog.upsert_page(page.clone());
         }
-        let studio = Arc::new(MetadataChangeService::new(
-            pool.clone(),
-            registry.clone(),
-            workflows.clone(),
-            permissions.clone(),
-            catalog.clone(),
-            self.config.env.clone(),
-        ));
+        let custom_fields = Arc::new(CustomFieldStore::new(pool.clone()));
+        let studio = Arc::new(
+            MetadataChangeService::new(
+                pool.clone(),
+                registry.clone(),
+                workflows.clone(),
+                permissions.clone(),
+                catalog.clone(),
+                self.config.env.clone(),
+            )
+            .with_custom_fields(custom_fields.clone()),
+        );
 
         let mut operations = OperationRegistry::new();
         let mut job_handlers = JobRegistry::new();
@@ -626,7 +630,8 @@ impl QefroRuntime {
             )
             .with_operations(operations.clone())
             .with_jobs(jobs.clone(), job_handlers.clone())
-            .with_identity(auth.clone()),
+            .with_identity(auth.clone())
+            .with_custom_fields(custom_fields.clone()),
         );
         automation.bind(entities.clone());
         studio.bind_automation(automation.clone());

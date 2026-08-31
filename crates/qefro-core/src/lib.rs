@@ -13,6 +13,7 @@ pub mod commerce;
 pub mod communication;
 pub mod condition;
 pub mod context;
+pub mod custom;
 pub mod document;
 pub mod entitlement;
 pub mod entity;
@@ -92,6 +93,12 @@ pub use communication::{
 };
 pub use condition::Condition;
 pub use context::{OpContext, ROLE_PUBLIC, ROLE_WORKER};
+pub use custom::{
+    core_fields_of, custom_fields_of, custom_type_allowed, custom_types_compatible,
+    flatten_nested_custom, is_reserved_custom_name, merge_custom_fields, pack_custom_values,
+    unpack_custom_values, validate_custom_field, CustomFieldStatus, CUSTOM_BAG_COLUMN,
+    CUSTOM_NESTED_KEY, RESERVED_CUSTOM_NAMES,
+};
 pub use document::{
     resolve_print_format, validate_print_format, DocumentConfig, NamingConfig, PrintFormat,
     PrintSection, ReportDef, PRINT_SECTION_KINDS, PRINT_VARIANTS,

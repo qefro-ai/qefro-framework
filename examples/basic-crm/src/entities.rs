@@ -58,6 +58,30 @@ pub fn crm_customer() -> EntityDef {
                 .section("Contact"),
         )
         .field(FieldDef::string("industry").nullable().filterable())
+        .custom_field(
+            FieldDef::string("lead_source")
+                .nullable()
+                .filterable()
+                .label("Lead Source")
+                .section("Custom"),
+        )
+        .custom_field(
+            FieldDef::enum_values("account_size", vec!["Small", "Medium", "Large"])
+                .nullable()
+                .filterable()
+                .label("Account Size")
+                .section("Custom"),
+        )
+        .custom_field(
+            FieldDef::enum_values(
+                "customer_segment",
+                vec!["Consumer", "SMB", "Enterprise"],
+            )
+            .nullable()
+            .filterable()
+            .label("Customer Segment")
+            .section("Custom"),
+        )
         .field(FieldDef::text("notes").nullable().list(false))
         .views(EntityViews {
             list: Some(ListViewSpec {

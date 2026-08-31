@@ -264,7 +264,7 @@ impl EntityService {
         mut query: Query,
         ids: Option<Vec<Uuid>>,
     ) -> QefroResult<(String, String)> {
-        let entity = self.registry.get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_app(ctx, &entity)?;
         self.permissions.check(ctx, &entity.name, Action::Export)?;
         query.page = 1;

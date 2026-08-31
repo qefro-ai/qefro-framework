@@ -102,6 +102,7 @@ export default function FieldEditor({
             >
               {String(f.label || f.name)}
               <span className="muted"> {String(f.type)}</span>
+              {f.custom ? <span className="muted"> / Custom</span> : null}
               {f.computed ? <span className="muted"> / Computed</span> : null}
             </button>
           </li>

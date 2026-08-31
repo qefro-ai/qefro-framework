@@ -303,7 +303,7 @@ async fn meta_entity(
     Auth(ctx): Auth,
     Path(name): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let entity = state.entities.registry().get(&name)?;
+    let entity = state.entities.entity_for(&ctx, &name).await?;
     if !ctx.allows_app(entity.module.as_deref()) {
         return Err(QefroError::not_found(format!("entity '{name}' not found")).into());
     }
@@ -315,74 +315,76 @@ async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<
     let tenant = state.tenants.get(ctx.tenant_id).await.ok();
     let branding = state.resolve_branding(&ctx, &config, tenant.as_ref().map(|t| t.name.as_str()));
     let permissions = state.entities.permissions();
-    let entities: Vec<_> = state
-        .entities
-        .registry()
-        .list()
-        .into_iter()
-        .filter(|e| ctx.allows_app(e.module.as_deref()))
-        .map(|e| {
-            let mut meta = e.to_ui_meta();
-            meta.apply_terminology(&config.ui_config.terminology);
-            meta.permissions = Some(qefro_core::EntityPermissions {
-                list: permissions.allows(&ctx.roles, &e.name, Action::List),
-                create: permissions.allows(&ctx.roles, &e.name, Action::Create),
-                read: permissions.allows(&ctx.roles, &e.name, Action::Read),
-                update: permissions.allows(&ctx.roles, &e.name, Action::Update),
-                delete: permissions.allows(&ctx.roles, &e.name, Action::Delete),
-                export: permissions.allows(&ctx.roles, &e.name, Action::Export),
-            });
-            let ops = state.entities.operations().for_entity(&e.name);
-            let comms: Vec<_> = state
-                .communications_live()
-                .into_iter()
-                .filter(|c| c.entity == e.name)
-                .collect();
-            if let Some(cap) = meta.capabilities.as_mut() {
-                cap.actions = cap.actions || !ops.is_empty();
-                cap.communication = !comms.is_empty();
-            }
-            meta.communications = comms
+    let mut entities = Vec::new();
+    for e in state.entities.registry().list() {
+        if !ctx.allows_app(e.module.as_deref()) {
+            continue;
+        }
+        let effective = state
+            .entities
+            .entity_for(&ctx, &e.name)
+            .await
+            .unwrap_or(e.clone());
+        let mut meta = effective.to_ui_meta();
+        meta.apply_terminology(&config.ui_config.terminology);
+        meta.permissions = Some(qefro_core::EntityPermissions {
+            list: permissions.allows(&ctx.roles, &e.name, Action::List),
+            create: permissions.allows(&ctx.roles, &e.name, Action::Create),
+            read: permissions.allows(&ctx.roles, &e.name, Action::Read),
+            update: permissions.allows(&ctx.roles, &e.name, Action::Update),
+            delete: permissions.allows(&ctx.roles, &e.name, Action::Delete),
+            export: permissions.allows(&ctx.roles, &e.name, Action::Export),
+        });
+        let ops = state.entities.operations().for_entity(&e.name);
+        let comms: Vec<_> = state
+            .communications_live()
+            .into_iter()
+            .filter(|c| c.entity == e.name)
+            .collect();
+        if let Some(cap) = meta.capabilities.as_mut() {
+            cap.actions = cap.actions || !ops.is_empty();
+            cap.communication = !comms.is_empty();
+        }
+        meta.communications = comms
+            .iter()
+            .map(|c| qefro_core::CommunicationSummary {
+                name: c.name.clone(),
+                event: c.event.clone(),
+                channels: c.channels.clone(),
+                purpose: c.purpose.clone(),
+            })
+            .collect();
+        if !comms.is_empty() && !meta.actions.iter().any(|a| a.name == "send_communication") {
+            meta.actions.push(
+                qefro_core::EntityActionDef::new("send_communication")
+                    .label("Send message")
+                    .operation("send_communication"),
+            );
+        }
+        for binding in ops {
+            if meta
+                .actions
                 .iter()
-                .map(|c| qefro_core::CommunicationSummary {
-                    name: c.name.clone(),
-                    event: c.event.clone(),
-                    channels: c.channels.clone(),
-                    purpose: c.purpose.clone(),
-                })
-                .collect();
-            if !comms.is_empty() && !meta.actions.iter().any(|a| a.name == "send_communication") {
-                meta.actions.push(
-                    qefro_core::EntityActionDef::new("send_communication")
-                        .label("Send message")
-                        .operation("send_communication"),
+                .any(|a| a.name == binding.def.name || a.operation == binding.def.name)
+            {
+                continue;
+            }
+            let mut action = qefro_core::EntityActionDef::new(&binding.def.name)
+                .label(&binding.def.label)
+                .operation(&binding.def.name);
+            if binding.def.requires_confirmation {
+                action = action.confirm(
+                    binding
+                        .def
+                        .confirmation_message
+                        .clone()
+                        .unwrap_or_else(|| format!("Run {}?", binding.def.label)),
                 );
             }
-            for binding in ops {
-                if meta
-                    .actions
-                    .iter()
-                    .any(|a| a.name == binding.def.name || a.operation == binding.def.name)
-                {
-                    continue;
-                }
-                let mut action = qefro_core::EntityActionDef::new(&binding.def.name)
-                    .label(&binding.def.label)
-                    .operation(&binding.def.name);
-                if binding.def.requires_confirmation {
-                    action = action.confirm(
-                        binding
-                            .def
-                            .confirmation_message
-                            .clone()
-                            .unwrap_or_else(|| format!("Run {}?", binding.def.label)),
-                    );
-                }
-                meta.actions.push(action);
-            }
-            meta
-        })
-        .collect();
+            meta.actions.push(action);
+        }
+        entities.push(meta);
+    }
     Ok(Json(json!({
         "schema_version": qefro_core::UI_SCHEMA_VERSION,
         "entities": entities,

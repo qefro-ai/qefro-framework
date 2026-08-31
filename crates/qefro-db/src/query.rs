@@ -216,12 +216,16 @@ pub fn apply_filters(
                     if clause > 0 {
                         qb.push(" OR ");
                     }
-                    qb.push(quote_ident(&field.column_name())?);
-                    if field.search_exact {
+                    if field.custom {
+                        push_custom_extract(qb, &field.name)?;
+                        qb.push(" ILIKE ");
+                    } else {
+                        qb.push(quote_ident(&field.column_name())?);
                         qb.push("::text ILIKE ");
+                    }
+                    if field.search_exact {
                         qb.push_bind(search.clone());
                     } else {
-                        qb.push("::text ILIKE ");
                         qb.push_bind(format!("%{search}%"));
                     }
                     clause += 1;
@@ -242,6 +246,10 @@ fn apply_filter(
     filter: &Filter,
 ) -> QefroResult<()> {
     let field_name = filter.field_name();
+    let field = entity.get_field(field_name);
+    if field.is_some_and(|f| f.custom) {
+        return apply_custom_filter(qb, field, filter);
+    }
     let col = column_ident(entity, field_name)?;
     let field = entity.get_field(field_name);
     match filter {
@@ -327,6 +335,120 @@ fn apply_filter(
             qb.push(" IS NOT NULL AND ");
             qb.push(col);
             qb.push("::text <> '')");
+        }
+    }
+    Ok(())
+}
+
+fn push_custom_extract(qb: &mut QueryBuilder<'_, Postgres>, name: &str) -> QefroResult<()> {
+    qb.push("(");
+    qb.push(quote_ident(qefro_core::CUSTOM_BAG_COLUMN)?);
+    qb.push(" ->> ");
+    qb.push_bind(name.to_string());
+    qb.push(")");
+    Ok(())
+}
+
+fn json_text(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Null => String::new(),
+        other => other.to_string().trim_matches('"').to_string(),
+    }
+}
+
+fn apply_custom_filter(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    field: Option<&FieldDef>,
+    filter: &Filter,
+) -> QefroResult<()> {
+    let name = filter.field_name();
+    match filter {
+        Filter::Eq { value, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" = ");
+            qb.push_bind(json_text(value));
+        }
+        Filter::Neq { value, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" <> ");
+            qb.push_bind(json_text(value));
+        }
+        Filter::Contains { value, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" ILIKE ");
+            qb.push_bind(format!("%{value}%"));
+        }
+        Filter::StartsWith { value, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" ILIKE ");
+            qb.push_bind(format!("{value}%"));
+        }
+        Filter::Gt { value, .. }
+        | Filter::Gte { value, .. }
+        | Filter::Lt { value, .. }
+        | Filter::Lte { value, .. } => {
+            if field.is_some_and(|f| f.field_type.is_numeric()) {
+                qb.push("(");
+                push_custom_extract(qb, name)?;
+                qb.push(")::numeric");
+            } else {
+                push_custom_extract(qb, name)?;
+            }
+            qb.push(match filter {
+                Filter::Gt { .. } => " > ",
+                Filter::Gte { .. } => " >= ",
+                Filter::Lt { .. } => " < ",
+                _ => " <= ",
+            });
+            if field.is_some_and(|f| f.field_type.is_numeric()) {
+                push_bind_owned(qb, field, value);
+            } else {
+                qb.push_bind(json_text(value));
+            }
+        }
+        Filter::In { values, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" IN (");
+            for (i, v) in values.iter().enumerate() {
+                if i > 0 {
+                    qb.push(", ");
+                }
+                qb.push_bind(json_text(v));
+            }
+            qb.push(")");
+        }
+        Filter::NotIn { values, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" NOT IN (");
+            for (i, v) in values.iter().enumerate() {
+                if i > 0 {
+                    qb.push(", ");
+                }
+                qb.push_bind(json_text(v));
+            }
+            qb.push(")");
+        }
+        Filter::Empty { .. } => {
+            qb.push("(");
+            push_custom_extract(qb, name)?;
+            qb.push(" IS NULL OR ");
+            push_custom_extract(qb, name)?;
+            qb.push(" = '')");
+        }
+        Filter::NotEmpty { .. } => {
+            qb.push("(");
+            push_custom_extract(qb, name)?;
+            qb.push(" IS NOT NULL AND ");
+            push_custom_extract(qb, name)?;
+            qb.push(" <> '')");
+        }
+        Filter::Between { from, to, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" BETWEEN ");
+            qb.push_bind(json_text(from));
+            qb.push(" AND ");
+            qb.push_bind(json_text(to));
         }
     }
     Ok(())
