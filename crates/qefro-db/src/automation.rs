@@ -454,12 +454,12 @@ impl AutomationEngine {
         event: &DomainEvent,
         execution_id: Uuid,
     ) -> OpContext {
-        let mut roles = def.as_roles.clone();
+        let mut roles = qefro_core::sanitize_automation_roles(def.as_roles.clone());
         let mut user_id = event.user_id.unwrap_or(job_ctx.user_id);
         if roles.is_empty() {
             if let Some(uid) = event.user_id {
                 if let Ok(loaded) = load_roles(&self.pool, event.tenant_id, uid).await {
-                    roles = loaded;
+                    roles = qefro_core::sanitize_automation_roles(loaded);
                     user_id = uid;
                 }
             }

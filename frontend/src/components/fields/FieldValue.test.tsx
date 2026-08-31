@@ -102,4 +102,26 @@ describe("FieldValue", () => {
     );
     expect(screen.getByText("Overdue")).toBeInTheDocument();
   });
+
+  it("does not execute script tags in rich text", () => {
+    wrap(
+      <FieldValue
+        row={{ notes: '<p>Hi</p><script>window.__xss=1</script><img src=x onerror="alert(1)">' }}
+        field={field({ name: "notes", widget: "rich_text" })}
+      />,
+    );
+    expect(screen.getByText("Hi")).toBeInTheDocument();
+    expect(document.querySelector("script")).toBeNull();
+    expect(document.querySelector("img")?.getAttribute("onerror")).toBeNull();
+  });
+
+  it("rejects javascript: CSS colors", () => {
+    wrap(
+      <FieldValue
+        row={{ color: "javascript:alert(1)" }}
+        field={field({ name: "color", widget: "color" })}
+      />,
+    );
+    expect(document.querySelector(".swatch i")).toBeNull();
+  });
 });

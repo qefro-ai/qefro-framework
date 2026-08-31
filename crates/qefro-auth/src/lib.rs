@@ -1,10 +1,11 @@
 use chrono::{DateTime, Duration, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use qefro_core::{OpContext, QefroError, QefroResult, USER_ENTITY};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use std::sync::OnceLock;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -133,14 +134,18 @@ impl AuthService {
         .bind(&email)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| QefroError::database(e.to_string()))?
-        .ok_or_else(|| QefroError::unauthorized("invalid credentials"))?;
+        .map_err(|e| QefroError::database(e.to_string()))?;
 
-        if !row.enabled {
+        // Always verify against a hash so missing users cost Argon2 like real ones.
+        let hash = row
+            .as_ref()
+            .map(|r| r.password_hash.as_str())
+            .unwrap_or_else(|| dummy_password_hash());
+        let password_ok = verify_password(password, hash)?;
+        let Some(row) = row else {
             return Err(QefroError::unauthorized("invalid credentials"));
-        }
-
-        if !verify_password(password, &row.password_hash)? {
+        };
+        if !row.enabled || !password_ok {
             return Err(QefroError::unauthorized("invalid credentials"));
         }
 
@@ -157,29 +162,25 @@ impl AuthService {
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
 
-        if memberships.is_empty() {
-            return Err(QefroError::forbidden("user has no tenant membership"));
-        }
-
         let membership = if let Some(slug) = tenant_slug {
-            memberships
-                .iter()
-                .find(|m| m.slug == slug)
-                .ok_or_else(|| QefroError::forbidden("not a member of that tenant"))?
-                .clone()
+            memberships.iter().find(|m| m.slug == slug)
         } else {
-            memberships[0].clone()
+            memberships.first()
+        };
+        let Some(membership) = membership.filter(|m| m.enabled) else {
+            return Err(QefroError::unauthorized("invalid credentials"));
         };
 
-        if !membership.enabled {
-            return Err(QefroError::forbidden("user is disabled in this tenant"));
-        }
-
-        self.issue_token(row.id, membership.tenant_id, membership.roles)
+        self.issue_token(row.id, membership.tenant_id, membership.roles.clone())
             .await
     }
 
-    pub async fn switch_tenant(&self, user_id: Uuid, tenant_id: Uuid) -> QefroResult<AuthToken> {
+    pub async fn switch_tenant(
+        &self,
+        user_id: Uuid,
+        tenant_id: Uuid,
+        current_session: Option<Uuid>,
+    ) -> QefroResult<AuthToken> {
         let membership = sqlx::query_as::<_, Membership>(
             r#"
             SELECT t.id as tenant_id, t.slug, ut.roles, ut.enabled
@@ -197,6 +198,9 @@ impl AuthService {
         if !membership.enabled {
             return Err(QefroError::forbidden("user is disabled in this tenant"));
         }
+        if let Some(sid) = current_session {
+            self.logout(sid).await?;
+        }
         self.issue_token(user_id, membership.tenant_id, membership.roles)
             .await
     }
@@ -211,10 +215,13 @@ impl AuthService {
     }
 
     pub async fn authenticate(&self, token: &str) -> QefroResult<OpContext> {
+        let mut validation = Validation::new(Algorithm::HS256);
+        validation.algorithms = vec![Algorithm::HS256];
+        validation.validate_exp = true;
         let claims = decode::<Claims>(
             token,
             &DecodingKey::from_secret(self.jwt_secret.as_bytes()),
-            &Validation::default(),
+            &validation,
         )
         .map_err(|_| QefroError::unauthorized("invalid token"))?
         .claims;
@@ -595,7 +602,7 @@ impl AuthService {
             exp: expires_at.timestamp(),
         };
         let access_token = encode(
-            &Header::default(),
+            &Header::new(Algorithm::HS256),
             &claims,
             &EncodingKey::from_secret(self.jwt_secret.as_bytes()),
         )
@@ -723,6 +730,15 @@ struct SessionRow {
     revoked_at: Option<DateTime<Utc>>,
 }
 
+fn dummy_password_hash() -> &'static str {
+    static HASH: OnceLock<String> = OnceLock::new();
+    HASH.get_or_init(|| {
+        hash_password("qefro-timing-dummy").unwrap_or_else(|_| {
+            "$argon2id$v=19$m=19456,t=2,p=1$cWVmcm90aW1pbmdzYWx0$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()
+        })
+    })
+}
+
 fn hash_password(password: &str) -> QefroResult<String> {
     use argon2::password_hash::{rand_core::OsRng, SaltString};
     use argon2::{Argon2, PasswordHasher};
@@ -750,7 +766,7 @@ fn sha256_hex(value: &str) -> String {
 fn map_db(err: sqlx::Error) -> QefroError {
     if let sqlx::Error::Database(db) = &err {
         if db.code().as_deref() == Some("23505") {
-            return QefroError::conflict("email or tenant slug already exists");
+            return QefroError::conflict("could not create account");
         }
     }
     QefroError::database(err.to_string())

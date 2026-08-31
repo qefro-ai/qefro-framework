@@ -46,4 +46,4 @@ Treat PostgreSQL and `QEFRO_STORAGE_PATH` as trusted systems. Application-level 
 
 ## Residual risk
 
-In-memory rate limiting is per process. A distributed limiter can implement the same `RateLimiter` trait later. RLS is not generated in V1.0; tenant predicates in SQL remain the isolation mechanism.
+In-memory rate limiting is per process. A distributed limiter can implement the same `RateLimiter` trait later. RLS is not generated in V1.0; tenant predicates in SQL remain the isolation mechanism. SPA access tokens live in `localStorage` (XSS can steal them); logout revokes the session and CSP/HTML sanitization reduce XSS. See [security-audit.md](security-audit.md).

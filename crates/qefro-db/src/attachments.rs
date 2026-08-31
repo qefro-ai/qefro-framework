@@ -526,12 +526,18 @@ impl JobHandler for AttachmentPurgeJob {
             .get("storage_key")
             .and_then(|v| v.as_str())
             .ok_or_else(|| QefroError::bad_request("storage_key is required"))?;
-        let tenant = payload
+        if let Some(claimed) = payload
             .get("tenant_id")
             .and_then(|v| v.as_str())
             .and_then(|s| Uuid::parse_str(s).ok())
-            .unwrap_or(ctx.tenant_id);
-        blobs.delete(tenant, key).map_err(client_safe_error)?;
+        {
+            if claimed != ctx.tenant_id {
+                return Err(QefroError::forbidden("job tenant mismatch"));
+            }
+        }
+        blobs
+            .delete(ctx.tenant_id, key)
+            .map_err(client_safe_error)?;
         Ok(())
     }
 }

@@ -11,7 +11,7 @@ Every tenant-owned row includes `tenant_id`. That value is taken from the authen
 - List queries always include `WHERE tenant_id = $1`.
 - `GET /api/v1/tenants` returns the current tenant only.
 
-See [Tenant customization](tenants.md), [Identity](identity.md), and [Security](security.md).
+See [Tenant customization](tenants.md), [Identity](identity.md), [Security](security.md), and [Security audit](security-audit.md).
 
 ## Configuration
 

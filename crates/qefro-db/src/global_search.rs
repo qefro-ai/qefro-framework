@@ -1,4 +1,4 @@
-use qefro_core::{quote_ident, OpContext, QefroError, QefroResult};
+use qefro_core::{quote_ident, OpContext, QefroError, QefroResult, RowPolicy};
 use qefro_permissions::Action;
 use serde_json::{json, Value};
 use sqlx::{Postgres, QueryBuilder, Row};
@@ -149,6 +149,7 @@ impl EntityService {
                 qb.push(quote_ident("deleted_at")?);
                 qb.push(" IS NULL AND ");
             }
+            apply_search_row_policy(&mut qb, ctx, &entity)?;
             qb.push("(");
             let mut clause = 0usize;
             for field in &searchable {
@@ -408,6 +409,45 @@ impl EntityService {
         }
         let _ = json!(null);
     }
+}
+
+fn apply_search_row_policy(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    ctx: &OpContext,
+    entity: &qefro_core::EntityDef,
+) -> QefroResult<()> {
+    if ctx.is_admin() {
+        return Ok(());
+    }
+    match entity.row_policy {
+        Some(RowPolicy::AssignedTo) if entity.get_field("assigned_to").is_some() => {
+            qb.push(quote_ident("assigned_to")?);
+            qb.push(" = ");
+            qb.push_bind(ctx.user_id);
+            qb.push(" AND ");
+        }
+        Some(RowPolicy::CreatedBy) => {
+            qb.push(quote_ident("created_by")?);
+            qb.push(" = ");
+            qb.push_bind(ctx.user_id);
+            qb.push(" AND ");
+        }
+        Some(RowPolicy::AssignedToOrCreatedBy) => {
+            qb.push("(");
+            if entity.get_field("assigned_to").is_some() {
+                qb.push(quote_ident("assigned_to")?);
+                qb.push(" = ");
+                qb.push_bind(ctx.user_id);
+                qb.push(" OR ");
+            }
+            qb.push(quote_ident("created_by")?);
+            qb.push(" = ");
+            qb.push_bind(ctx.user_id);
+            qb.push(") AND ");
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn search_needle(q: &str) -> String {

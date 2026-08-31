@@ -191,6 +191,7 @@ export class QefroClient {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
+  logout = () => request<void>("/api/v1/auth/logout", { method: "POST" });
   register = (body: Record<string, string>) =>
     request<{ access_token: string }>("/api/v1/auth/register", {
       method: "POST",

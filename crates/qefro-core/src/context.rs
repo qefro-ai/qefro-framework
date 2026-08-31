@@ -5,6 +5,16 @@ use uuid::Uuid;
 pub const ROLE_WORKER: &str = "Worker";
 /// Anonymous public-form principal. Never Admin.
 pub const ROLE_PUBLIC: &str = "Public";
+/// Tenant administrator. Never implied by automation `as_roles`.
+pub const ROLE_ADMIN: &str = "Admin";
+/// Internal system principal. Never assignable via client or automation metadata.
+pub const ROLE_SYSTEM: &str = "System";
+
+/// Roles that grant tenant-wide bypass (RowPolicy, RBAC). Automation and
+/// workers must not inherit these from an event actor or Studio payload.
+pub fn is_privileged_role(role: &str) -> bool {
+    role.eq_ignore_ascii_case(ROLE_ADMIN) || role.eq_ignore_ascii_case(ROLE_SYSTEM)
+}
 
 /// Server-side operation context. Tenant identity is taken from the
 /// authenticated session, never from an untrusted client field.
@@ -100,7 +110,9 @@ impl OpContext {
     }
 
     pub fn is_admin(&self) -> bool {
-        self.roles.iter().any(|r| r.eq_ignore_ascii_case("Admin"))
+        self.roles
+            .iter()
+            .any(|r| r.eq_ignore_ascii_case(ROLE_ADMIN))
     }
 
     pub fn is_worker(&self) -> bool {

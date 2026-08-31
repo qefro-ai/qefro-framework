@@ -43,23 +43,25 @@ export function FieldValue({
   }
   if (widget === "percentage") return `${value}%`;
   if (widget === "image" && value) {
+    const src = `/api/v1/files/${encodeURIComponent(String(value))}`;
     return (
       <img
-        src={`/api/v1/files/${encodeURIComponent(String(value))}`}
+        src={src}
         alt=""
         className={compact ? "avatar" : "image-preview"}
       />
     );
   }
   if (widget === "color") {
+    const color = safeCssColor(String(value));
     return (
       <span className="swatch">
-        <i style={{ background: String(value) }} /> {String(value)}
+        {color ? <i style={{ background: color }} /> : null} {String(value)}
       </span>
     );
   }
   if (widget === "rich_text") {
-    return <div className="rich-surface" dangerouslySetInnerHTML={{ __html: String(value) }} />;
+    return <div className="rich-surface" dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(String(value)) }} />;
   }
   if (widget === "datetime" || field?.type === "datetime") {
     if (name === "due_at") {
@@ -118,4 +120,29 @@ function relationLink(
     return <Link to={`/${rel.slug}/${rel.id}`}>{rel.label}</Link>;
   }
   return rel.label ?? null;
+}
+
+/** Defense in depth: server already sanitizes with ammonia. */
+export function sanitizeRichHtml(html: string): string {
+  if (typeof DOMParser === "undefined") return html;
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  doc.querySelectorAll("script,iframe,object,embed,link,meta").forEach((el) => el.remove());
+  doc.querySelectorAll("*").forEach((el) => {
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value.trim().toLowerCase();
+      if (name.startsWith("on") || value.startsWith("javascript:") || value.startsWith("data:text/html")) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  });
+  return doc.body.innerHTML;
+}
+
+export function safeCssColor(value: string): string | undefined {
+  const v = value.trim();
+  if (/^#[0-9a-fA-F]{3,8}$/.test(v)) return v;
+  if (/^rgba?\(\s*[\d.]+%?\s*,\s*[\d.]+%?\s*,\s*[\d.]+%?(?:\s*,\s*[\d.]+)?\s*\)$/.test(v)) return v;
+  if (/^[a-zA-Z]+$/.test(v)) return v;
+  return undefined;
 }
