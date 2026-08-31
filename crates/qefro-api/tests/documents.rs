@@ -3,7 +3,8 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use qefro_api::{Config, InstalledApp, QefroRuntime};
 use qefro_core::{
-    AppModule, ChildTableDef, DocumentConfig, EntityDef, FieldDef, NamingConfig, ReportDef,
+    AppModule, ChildTableDef, DocumentConfig, EntityDef, FieldDef, NamingConfig, PrintFormat,
+    PrintSection, ReportDef,
 };
 use qefro_permissions::{Action, PermissionGrant, ROLE_MANAGER};
 use qefro_workflow::{TransitionDef, WorkflowDef};
@@ -27,10 +28,10 @@ fn test_app() -> InstalledApp {
                 .build(),
         )
         .entity(
-            EntityDef::new("Invoice")
+            EntityDef::new("DocInvoice")
                 .table_name("doc_invoices")
                 .slug_name("doc-invoices")
-                .workflow("invoice")
+                .workflow("doc_invoice")
                 .document(
                     DocumentConfig::new()
                         .submit()
@@ -44,13 +45,28 @@ fn test_app() -> InstalledApp {
                         .field("doc_no")
                         .assign_on("submit"),
                 )
+                .attachments()
+                .print_format(
+                    PrintFormat::new("Invoice", "DocInvoice")
+                        .title("Invoice")
+                        .item_table("items")
+                        .total_fields(&["subtotal", "discount", "grand_total"])
+                        .filename_field("doc_no")
+                        .section(PrintSection::kind("header"))
+                        .section(PrintSection::kind("customer").fields(&["customer.name"]))
+                        .section(PrintSection::kind("items").loop_over("items"))
+                        .section(PrintSection::kind("totals"))
+                        .section(PrintSection::kind("footer")),
+                )
                 .field(FieldDef::many_to_one("customer_id", "DocCustomer").required())
                 .field(
                     FieldDef::enum_values("status", vec!["Draft", "Submitted", "Cancelled"])
                         .required()
                         .default_value(json!("Draft")),
                 )
-                .child_table(ChildTableDef::new("items", "InvoiceItem").parent_field("invoice_id"))
+                .child_table(
+                    ChildTableDef::new("items", "DocInvoiceItem").parent_field("invoice_id"),
+                )
                 .field(FieldDef::currency("subtotal").computed("SUM(items.amount)"))
                 .field(
                     FieldDef::currency("discount")
@@ -62,12 +78,12 @@ fn test_app() -> InstalledApp {
                 .build(),
         )
         .entity(
-            EntityDef::new("InvoiceItem")
+            EntityDef::new("DocInvoiceItem")
                 .table_name("doc_invoice_items")
                 .slug_name("doc-invoice-items")
-                .child_of("Invoice", "items")
+                .child_of("DocInvoice", "items")
                 .field(
-                    FieldDef::many_to_one("invoice_id", "Invoice")
+                    FieldDef::many_to_one("invoice_id", "DocInvoice")
                         .required()
                         .hidden(),
                 )
@@ -78,7 +94,7 @@ fn test_app() -> InstalledApp {
                 .build(),
         )
         .report(
-            ReportDef::new("invoice-totals", "Invoice")
+            ReportDef::new("invoice-totals", "DocInvoice")
                 .module("docs_test")
                 .fields(&["status", "grand_total"])
                 .group_by(&["status"])
@@ -87,7 +103,7 @@ fn test_app() -> InstalledApp {
         .build();
     InstalledApp::new(module)
         .workflow(
-            WorkflowDef::new("invoice", "Invoice", "Draft")
+            WorkflowDef::new("doc_invoice", "DocInvoice", "Draft")
                 .transition(TransitionDef::new("submit", "Draft", "Submitted").roles(&["Manager"]))
                 .transition(TransitionDef::new("cancel", "Draft", "Cancelled").roles(&["Manager"]))
                 .transition(
@@ -96,11 +112,11 @@ fn test_app() -> InstalledApp {
                 ),
         )
         .permission(PermissionGrant::crud(ROLE_MANAGER, "DocCustomer"))
-        .permission(PermissionGrant::crud(ROLE_MANAGER, "Invoice"))
-        .permission(PermissionGrant::crud(ROLE_MANAGER, "InvoiceItem"))
+        .permission(PermissionGrant::crud(ROLE_MANAGER, "DocInvoice"))
+        .permission(PermissionGrant::crud(ROLE_MANAGER, "DocInvoiceItem"))
         .permission(PermissionGrant::new(
             ROLE_MANAGER,
-            "Invoice",
+            "DocInvoice",
             vec![Action::Export],
         ))
 }
@@ -332,6 +348,68 @@ async fn child_tables_formulas_documents_reports_and_security() {
     assert_eq!(status, StatusCode::OK, "{print}");
     let html = print["raw"].as_str().unwrap_or("");
     assert!(html.contains("Invoice") || print.to_string().contains("Invoice"));
+    assert!(html.contains("Ahmed") || print.to_string().contains("Ahmed"));
+    assert!(!html.contains("undefined"));
+    assert!(!html.contains("null"));
+
+    let (status, other_print) = json(
+        clone_router(&router),
+        get(
+            &format!("/api/v1/doc-invoices/{invoice_id}/print"),
+            Some(&token_b),
+        ),
+    )
+    .await;
+    assert!(
+        status == StatusCode::NOT_FOUND
+            || status == StatusCode::FORBIDDEN
+            || status == StatusCode::UNAUTHORIZED,
+        "{other_print}"
+    );
+
+    let (status, pdf) = json(
+        clone_router(&router),
+        get(
+            &format!("/api/v1/doc-invoices/{invoice_id}/print.pdf"),
+            Some(&token_a),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{pdf}");
+    let pdf_raw = pdf["raw"].as_str().unwrap_or("");
+    assert!(pdf_raw.contains("%PDF") || pdf.to_string().contains("%PDF"));
+
+    let (status, generated) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/doc-invoices/{invoice_id}/actions/generate_document"),
+            Some(&token_a),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{generated}");
+    assert!(generated["filename"]
+        .as_str()
+        .unwrap_or("")
+        .ends_with(".pdf"));
+    assert!(generated.get("attachment").is_some());
+
+    let (status, other_gen) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/doc-invoices/{invoice_id}/actions/generate_document"),
+            Some(&token_b),
+            json!({}),
+        ),
+    )
+    .await;
+    assert!(
+        status == StatusCode::NOT_FOUND
+            || status == StatusCode::FORBIDDEN
+            || status == StatusCode::UNAUTHORIZED,
+        "{other_gen}"
+    );
 
     let (status, sql) = json(
         clone_router(&router),

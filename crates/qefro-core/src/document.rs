@@ -4,6 +4,7 @@
 //! workflow engine, and the existing filter/aggregation SQL builders.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -123,12 +124,85 @@ impl NamingConfig {
     }
 }
 
+pub const PRINT_VARIANTS: &[&str] = &["default", "compact", "professional"];
+pub const PRINT_SECTION_KINDS: &[&str] = &[
+    "header", "customer", "address", "items", "totals", "notes", "terms", "footer", "text", "image",
+];
+
+/// One printable region. Fields and text resolve against EntityDef relations.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PrintSection {
+    /// `header`, `customer`, `address`, `items`, `totals`, `notes`, `terms`, `footer`, `text`, `image`.
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Field or relation paths, e.g. `customer.name`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<String>,
+    /// Safe template snippet (`{{ path }}`, `{% for %}`, `{% if %}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relation: Option<String>,
+    /// Child table to iterate. Defaults to the format `item_table`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_over: Option<String>,
+    /// Simple path or `path > 0` condition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_when: Option<String>,
+}
+
+impl PrintSection {
+    pub fn kind(kind: impl Into<String>) -> Self {
+        Self {
+            kind: kind.into(),
+            ..Default::default()
+        }
+    }
+
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    pub fn fields(mut self, fields: &[&str]) -> Self {
+        self.fields = fields.iter().map(|s| (*s).to_string()).collect();
+        self
+    }
+
+    pub fn text(mut self, text: impl Into<String>) -> Self {
+        self.text = Some(text.into());
+        self
+    }
+
+    pub fn relation(mut self, relation: impl Into<String>) -> Self {
+        self.relation = Some(relation.into());
+        self
+    }
+
+    pub fn loop_over(mut self, name: impl Into<String>) -> Self {
+        self.loop_over = Some(name.into());
+        self
+    }
+
+    pub fn show_when(mut self, expr: impl Into<String>) -> Self {
+        self.show_when = Some(expr.into());
+        self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PrintFormat {
     pub name: String,
     pub entity: String,
     #[serde(default)]
     pub title: Option<String>,
+    /// `default`, `compact`, or `professional`. Presentation only.
+    #[serde(default = "default_variant")]
+    pub variant: String,
+    #[serde(default = "default_version")]
+    pub version: u32,
     #[serde(default = "default_true")]
     pub header: bool,
     #[serde(default = "default_true")]
@@ -144,10 +218,26 @@ pub struct PrintFormat {
     pub total_fields: Vec<String>,
     #[serde(default)]
     pub module: Option<String>,
+    /// Optional field used for PDF filenames (`doc_no` by default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename_field: Option<String>,
+    /// Optional full-document template. When set, it wraps the composed sections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<PrintSection>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_variant() -> String {
+    "default".into()
+}
+
+fn default_version() -> u32 {
+    1
 }
 
 impl PrintFormat {
@@ -156,6 +246,8 @@ impl PrintFormat {
             name: name.into(),
             entity: entity.into(),
             title: None,
+            variant: default_variant(),
+            version: default_version(),
             header: true,
             items: true,
             totals: true,
@@ -163,11 +255,19 @@ impl PrintFormat {
             item_table: None,
             total_fields: Vec::new(),
             module: None,
+            filename_field: None,
+            body: None,
+            sections: Vec::new(),
         }
     }
 
     pub fn title(mut self, title: impl Into<String>) -> Self {
         self.title = Some(title.into());
+        self
+    }
+
+    pub fn variant(mut self, variant: impl Into<String>) -> Self {
+        self.variant = variant.into();
         self
     }
 
@@ -180,6 +280,175 @@ impl PrintFormat {
         self.total_fields = fields.iter().map(|s| (*s).to_string()).collect();
         self
     }
+
+    pub fn filename_field(mut self, field: impl Into<String>) -> Self {
+        self.filename_field = Some(field.into());
+        self
+    }
+
+    pub fn body(mut self, body: impl Into<String>) -> Self {
+        self.body = Some(body.into());
+        self
+    }
+
+    pub fn section(mut self, section: PrintSection) -> Self {
+        self.sections.push(section);
+        self
+    }
+
+    pub fn document_title(&self) -> String {
+        self.title.clone().unwrap_or_else(|| self.name.clone())
+    }
+
+    pub fn version(mut self, version: u32) -> Self {
+        self.version = version;
+        self
+    }
+
+    /// True when this format defines a printable document for `entity`.
+    pub fn matches_entity(&self, entity: &str) -> bool {
+        self.entity.eq_ignore_ascii_case(entity)
+    }
+}
+
+/// Resolve a named format, otherwise the first format for the entity.
+pub fn resolve_print_format<'a>(
+    entity_name: &str,
+    format_name: Option<&str>,
+    entity_formats: &'a [PrintFormat],
+    extra: &'a [PrintFormat],
+) -> Option<PrintFormat> {
+    let mut all: Vec<&PrintFormat> = entity_formats
+        .iter()
+        .chain(extra.iter().filter(|f| f.matches_entity(entity_name)))
+        .collect();
+    all.sort_by(|a, b| a.name.cmp(&b.name));
+    if let Some(name) = format_name.filter(|n| !n.is_empty()) {
+        return all.into_iter().find(|f| f.name == name).cloned();
+    }
+    entity_formats.first().cloned().or_else(|| {
+        extra
+            .iter()
+            .find(|f| f.matches_entity(entity_name))
+            .cloned()
+    })
+}
+
+/// Validate print format references against live entity metadata.
+pub fn validate_print_format(
+    format: &PrintFormat,
+    registry: &crate::registry::EntityRegistry,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    if format.name.trim().is_empty() {
+        errors.push("print format is missing name".into());
+    }
+    if registry.try_get(&format.entity).is_none() {
+        errors.push(format!(
+            "print format '{}' references unknown entity '{}'",
+            format.name, format.entity
+        ));
+        return errors;
+    }
+    if !PRINT_VARIANTS.contains(&format.variant.as_str()) && !format.variant.is_empty() {
+        errors.push(format!(
+            "print format '{}' has invalid variant '{}'",
+            format.name, format.variant
+        ));
+    }
+    let entity = registry.try_get(&format.entity).unwrap();
+    if let Some(table) = &format.item_table {
+        let known = entity
+            .fields
+            .iter()
+            .any(|f| f.name == *table && f.is_child_table());
+        if !known {
+            errors.push(format!(
+                "print format '{}' has unknown item table '{}'",
+                format.name, table
+            ));
+        }
+    }
+    if let Some(field) = &format.filename_field {
+        if entity.get_field(field).is_none() {
+            errors.push(format!(
+                "print format '{}' filename_field '{}' is unknown",
+                format.name, field
+            ));
+        }
+    }
+    for total in &format.total_fields {
+        if entity.get_field(total).is_none() {
+            errors.push(format!(
+                "print format '{}' total field '{}' is unknown",
+                format.name, total
+            ));
+        }
+    }
+    if let Some(body) = &format.body {
+        for err in crate::template::validate_template_paths(body, &format.entity, registry) {
+            errors.push(format!("print format '{}': {err}", format.name));
+        }
+    }
+    for (i, section) in format.sections.iter().enumerate() {
+        if !section.kind.is_empty() && !PRINT_SECTION_KINDS.contains(&section.kind.as_str()) {
+            errors.push(format!(
+                "print format '{}' section {} has unknown kind '{}'",
+                format.name,
+                i + 1,
+                section.kind
+            ));
+        }
+        if let Some(rel) = &section.relation {
+            let known =
+                entity.get_field(rel).is_some() || entity.get_field(&format!("{rel}_id")).is_some();
+            if !known {
+                errors.push(format!(
+                    "print format '{}' section has invalid relation '{rel}'",
+                    format.name
+                ));
+            }
+        }
+        if let Some(loop_over) = &section.loop_over {
+            let known = entity
+                .fields
+                .iter()
+                .any(|f| f.name == *loop_over && f.is_child_table());
+            if !known {
+                errors.push(format!(
+                    "print format '{}' has invalid loop '{}'",
+                    format.name, loop_over
+                ));
+            }
+        }
+        if let Some(text) = &section.text {
+            for err in crate::template::validate_template_paths(text, &format.entity, registry) {
+                errors.push(format!("print format '{}': {err}", format.name));
+            }
+        }
+        for field in &section.fields {
+            for err in crate::template::validate_template_paths(
+                &format!("{{{{ {field} }}}}"),
+                &format.entity,
+                registry,
+            ) {
+                errors.push(format!("print format '{}': {err}", format.name));
+            }
+        }
+        if let Some(when) = &section.show_when {
+            let path = when.split(['>', '<', '=', '!']).next().unwrap_or("").trim();
+            if !path.is_empty() {
+                for err in crate::template::validate_template_paths(
+                    &format!("{{{{ {path} }}}}"),
+                    &format.entity,
+                    registry,
+                ) {
+                    errors.push(format!("print format '{}': {err}", format.name));
+                }
+            }
+        }
+    }
+    errors
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -198,6 +467,9 @@ pub struct ReportDef {
     pub chart: Option<String>,
     #[serde(default)]
     pub module: Option<String>,
+    /// Default filters merged into every run. Same JSON as the report API.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filters: Vec<Value>,
 }
 
 impl ReportDef {
@@ -211,6 +483,7 @@ impl ReportDef {
             aggregations: HashMap::new(),
             chart: None,
             module: None,
+            filters: Vec::new(),
             name,
         }
     }
@@ -262,6 +535,15 @@ impl ReportDef {
 
     pub fn module(mut self, name: impl Into<String>) -> Self {
         self.module = Some(name.into());
+        self
+    }
+
+    pub fn filter_eq(mut self, field: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.filters.push(serde_json::json!({
+            "field": field.into(),
+            "op": "eq",
+            "value": value.into(),
+        }));
         self
     }
 }

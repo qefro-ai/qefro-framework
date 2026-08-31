@@ -1,7 +1,9 @@
+use crate::communication::CommunicationDef;
 use crate::document::{PrintFormat, ReportDef};
 use crate::entity::EntityDef;
 use crate::error::QefroResult;
 use crate::hook::{EntityHook, HookRegistry};
+use crate::page::PageDef;
 use crate::platform::{NotificationDef, WebhookDef};
 use crate::registry::EntityRegistry;
 use crate::ui::DashboardDef;
@@ -27,11 +29,16 @@ pub struct AppModule {
     pub entities: Vec<EntityDef>,
     pub hooks: HookRegistry,
     pub dashboards: Vec<DashboardDef>,
+    pub pages: Vec<PageDef>,
     pub reports: Vec<ReportDef>,
     pub print_formats: Vec<PrintFormat>,
     pub notifications: Vec<NotificationDef>,
+    pub communications: Vec<CommunicationDef>,
     pub webhooks: Vec<WebhookDef>,
     pub automations: Vec<crate::automation::AutomationDef>,
+    /// Application-level custom fields for entities this module does not own
+    /// (for example restaurant extending framework Product). Applied via overlay.
+    pub entity_extensions: Vec<(String, Vec<crate::field::FieldDef>)>,
     /// Default tenant chrome when the tenant has not set branding yet.
     pub branding: crate::ui::TenantBranding,
 }
@@ -49,6 +56,9 @@ pub struct NavItem {
     /// Workspace section heading. Renderer groups items that share a section.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
+    /// Composed page name. When set, navigation goes to `/pages/{slug}` instead of the entity list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
 }
 
 impl NavItem {
@@ -59,6 +69,18 @@ impl NavItem {
             query: None,
             view: None,
             section: None,
+            page: None,
+        }
+    }
+
+    pub fn page_link(label: impl Into<String>, page: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            entity: String::new(),
+            query: None,
+            view: None,
+            section: None,
+            page: Some(page.into()),
         }
     }
 
@@ -74,6 +96,11 @@ impl NavItem {
 
     pub fn section(mut self, section: impl Into<String>) -> Self {
         self.section = Some(section.into());
+        self
+    }
+
+    pub fn page(mut self, page: impl Into<String>) -> Self {
+        self.page = Some(page.into());
         self
     }
 }
@@ -158,11 +185,14 @@ impl AppModule {
                 entities: Vec::new(),
                 hooks: HookRegistry::new(),
                 dashboards: Vec::new(),
+                pages: Vec::new(),
                 reports: Vec::new(),
                 print_formats: Vec::new(),
                 notifications: Vec::new(),
+                communications: Vec::new(),
                 webhooks: Vec::new(),
                 automations: Vec::new(),
+                entity_extensions: Vec::new(),
                 branding: crate::ui::TenantBranding::default(),
             },
         }
@@ -175,6 +205,30 @@ impl AppModule {
             }
             registry.register(entity)?;
         }
+        self.apply_entity_extensions(registry)?;
+        Ok(())
+    }
+
+    /// Merge Git-committable application custom fields onto already-registered entities.
+    pub fn apply_entity_extensions(&self, registry: &EntityRegistry) -> QefroResult<()> {
+        for (name, fields) in &self.entity_extensions {
+            let mut def = (*registry.get(name)?).clone();
+            for field in fields {
+                let mut field = field.clone();
+                field.custom = true;
+                field.ui.sortable = false;
+                crate::custom::validate_custom_field(&def, &field)?;
+                if def.get_field(&field.name).is_some() {
+                    return Err(crate::error::QefroError::bad_request(format!(
+                        "application extension '{}.{}' collides with an existing field",
+                        def.name, field.name
+                    )));
+                }
+                def.fields.push(field);
+            }
+            def.normalize();
+            registry.overlay_put(def)?;
+        }
         Ok(())
     }
 
@@ -182,6 +236,9 @@ impl AppModule {
         let mut seen = std::collections::HashSet::new();
         let mut slugs = Vec::new();
         for item in &self.navigation {
+            if item.page.is_some() {
+                continue;
+            }
             if let Some(slug) = self
                 .entities
                 .iter()
@@ -313,6 +370,16 @@ impl AppModuleBuilder {
         self
     }
 
+    /// Extend an already-registered entity (often a framework entity) with custom fields.
+    pub fn extend_entity(
+        mut self,
+        name: impl Into<String>,
+        fields: Vec<crate::field::FieldDef>,
+    ) -> Self {
+        self.module.entity_extensions.push((name.into(), fields));
+        self
+    }
+
     pub fn hook(mut self, hook: Arc<dyn EntityHook>) -> Self {
         self.module.hooks.register(hook);
         self
@@ -320,6 +387,15 @@ impl AppModuleBuilder {
 
     pub fn dashboard(mut self, dashboard: DashboardDef) -> Self {
         self.module.dashboards.push(dashboard);
+        self
+    }
+
+    pub fn page(mut self, mut page: crate::page::PageDef) -> Self {
+        if page.module.is_none() {
+            page.module = Some(self.module.name.clone());
+        }
+        page.normalize();
+        self.module.pages.push(page);
         self
     }
 
@@ -335,6 +411,14 @@ impl AppModuleBuilder {
 
     pub fn notification(mut self, def: NotificationDef) -> Self {
         self.module.notifications.push(def);
+        self
+    }
+
+    pub fn communication(mut self, mut def: crate::communication::CommunicationDef) -> Self {
+        if def.module.is_none() {
+            def.module = Some(self.module.name.clone());
+        }
+        self.module.communications.push(def);
         self
     }
 

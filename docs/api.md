@@ -39,6 +39,7 @@ Create user body: `{ name, email, password, roles }`. Same path as `POST /users`
 - `GET /meta/modules`
 - `GET /meta/dashboards`
 - `GET /dashboards/{name}`
+- `GET /meta/pages`, `GET /meta/pages/{name}` — composition metadata only; data still comes from entity REST, reports, and dashboards. See [Pages](pages.md).
 - `GET /meta/reports`
 
 ## Studio
@@ -89,12 +90,16 @@ See [sdk.md](sdk.md) for the browser client.
 | GET | `/webhooks`, `/webhooks/{name}/deliveries` |
 | POST | `/webhooks/{name}/test` |
 | GET/POST | `/{slug}/{id}/attachments` |
-| GET/DELETE | `/attachments/{id}` |
-| POST | `/{slug}/import/preview`, `/{slug}/import` |
+| GET/PATCH/DELETE | `/attachments/{id}` |
+| POST | `/attachments/{id}/replace` |
+| POST | `/{slug}/import/preview`, `/{slug}/import`, `/{slug}/import/upload` |
+| GET | `/{slug}/imports`, `/imports`, `/imports/{id}` |
+| POST | `/imports/{id}/cancel`, `/imports/{id}/retry` |
+| GET | `/imports/{id}/errors` |
 | GET | `/realtime` (SSE) |
 | GET/POST | `/public/{tenant}/{form}` |
 
-See [singletons](singletons.md), [search](search.md), [attachments](attachments.md), [notifications](notifications.md), [webhooks](webhooks.md), [imports](imports.md), [realtime](realtime.md), [public forms](public-forms.md).
+See [singletons](singletons.md), [search](search.md), [files](files.md), [attachments](attachments.md), [notifications](notifications.md), [webhooks](webhooks.md), [imports](imports.md), [realtime](realtime.md), [public forms](public-forms.md).
 
 ```
 GET /operations

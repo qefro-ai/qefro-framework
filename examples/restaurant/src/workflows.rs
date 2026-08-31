@@ -44,7 +44,8 @@ pub fn order() -> WorkflowDef {
         .transition(
             TransitionDef::new("confirm", "Draft", "Confirmed")
                 .roles(&["Manager", "Staff"])
-                .label("Confirm"),
+                .label("Confirm")
+                .requires(&["items"]),
         )
         .transition(
             TransitionDef::new("schedule", "Draft", "Scheduled")
@@ -54,7 +55,8 @@ pub fn order() -> WorkflowDef {
         .transition(
             TransitionDef::new("confirm", "Scheduled", "Confirmed")
                 .roles(&["Manager", "Staff"])
-                .label("Confirm"),
+                .label("Confirm")
+                .requires(&["items"]),
         )
         .transition(
             TransitionDef::new("prepare", "Confirmed", "Preparing")

@@ -264,7 +264,7 @@ impl EntityService {
         mut query: Query,
         ids: Option<Vec<Uuid>>,
     ) -> QefroResult<(String, String)> {
-        let entity = self.registry.get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_app(ctx, &entity)?;
         self.permissions.check(ctx, &entity.name, Action::Export)?;
         query.page = 1;
@@ -298,9 +298,15 @@ impl EntityService {
                 .collect::<Vec<_>>()
                 .join(","),
         );
+        if entity.attachments {
+            if !fields.is_empty() {
+                csv.push(',');
+            }
+            csv.push_str(&csv_escape("Attachment count"));
+        }
         csv.push('\n');
         for row in &items {
-            let line = fields
+            let mut line = fields
                 .iter()
                 .map(|f| {
                     let v = row.get(&f.name).cloned().unwrap_or(Value::Null);
@@ -308,6 +314,16 @@ impl EntityService {
                 })
                 .collect::<Vec<_>>()
                 .join(",");
+            if entity.attachments {
+                if !fields.is_empty() && !line.is_empty() {
+                    line.push(',');
+                }
+                let count = row
+                    .get("_attachment_count")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                line.push_str(&count.to_string());
+            }
             csv.push_str(&line);
             csv.push('\n');
         }
@@ -315,12 +331,34 @@ impl EntityService {
     }
 }
 
-fn csv_escape(value: &str) -> String {
-    if value.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value.to_string()
+/// Quote CSV cells and neutralize spreadsheet formula injection (`=`, `+`, `-`, `@`).
+pub(crate) fn csv_escape(value: &str) -> String {
+    let mut s = value.to_string();
+    if looks_like_formula(&s) {
+        s.insert(0, '\'');
     }
+    if s.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s
+    }
+}
+
+fn looks_like_formula(value: &str) -> bool {
+    let trimmed = value.trim_start();
+    let Some(first) = trimmed.chars().next() else {
+        return false;
+    };
+    matches!(first, '=' | '+' | '@' | '\t' | '\r')
+        || (first == '-' && !is_plain_number(&trimmed[1..]))
+}
+
+fn is_plain_number(rest: &str) -> bool {
+    if rest.is_empty() {
+        return false;
+    }
+    rest.chars()
+        .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
 }
 
 fn value_text(value: &Value) -> String {

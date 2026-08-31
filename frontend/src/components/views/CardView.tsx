@@ -69,9 +69,9 @@ export default function CardView({
                     compact
                     actions={actions}
                     transitions={transitions}
-                    onAction={async (name) => {
+                    onAction={async (name, _action, input) => {
                       try {
-                        await api.action(slug, String(row.id), name);
+                        await api.action(slug, String(row.id), name, input ?? {});
                         onReload();
                       } catch (err) {
                         onError(friendlyError(err));

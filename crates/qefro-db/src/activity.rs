@@ -3,7 +3,7 @@ use qefro_core::{field_changes, strip_secrets, OpContext, QefroError, QefroResul
 use qefro_permissions::Action;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::service::EntityService;
@@ -102,7 +102,13 @@ impl ActivityStore {
         limit: i64,
     ) -> QefroResult<Vec<ActivityRecord>> {
         let limit = limit.clamp(1, 200);
-        sqlx::query_as::<_, ActivityRecord>(
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        apply_activity_rls(&mut tx, tenant_id, false).await?;
+        let rows = sqlx::query_as::<_, ActivityRecord>(
             r#"
             SELECT id, tenant_id, entity_type, entity_id, actor_id, actor_name,
                    activity_type, message, metadata, created_at
@@ -116,9 +122,13 @@ impl ActivityStore {
         .bind(entity_type)
         .bind(entity_id)
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
-        .map_err(|e| QefroError::database(e.to_string()))
+        .map_err(|e| QefroError::database(e.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok(rows)
     }
 
     pub async fn list_recent(
@@ -128,7 +138,13 @@ impl ActivityStore {
         limit: i64,
     ) -> QefroResult<Vec<ActivityRecord>> {
         let limit = limit.clamp(1, 200);
-        if let Some(entity_type) = entity_type {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        apply_activity_rls(&mut tx, tenant_id, false).await?;
+        let rows = if let Some(entity_type) = entity_type {
             sqlx::query_as::<_, ActivityRecord>(
                 r#"
                 SELECT id, tenant_id, entity_type, entity_id, actor_id, actor_name,
@@ -142,9 +158,9 @@ impl ActivityStore {
             .bind(tenant_id)
             .bind(entity_type)
             .bind(limit)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await
-            .map_err(|e| QefroError::database(e.to_string()))
+            .map_err(|e| QefroError::database(e.to_string()))?
         } else {
             sqlx::query_as::<_, ActivityRecord>(
                 r#"
@@ -158,23 +174,55 @@ impl ActivityStore {
             )
             .bind(tenant_id)
             .bind(limit)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await
-            .map_err(|e| QefroError::database(e.to_string()))
-        }
+            .map_err(|e| QefroError::database(e.to_string()))?
+        };
+        tx.commit()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        Ok(rows)
     }
 
     pub async fn purge_older_than(&self, days: i64) -> QefroResult<u64> {
         let days = days.max(1);
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        apply_activity_rls(&mut tx, Uuid::nil(), true).await?;
         let result = sqlx::query(
             "DELETE FROM qefro_activity WHERE created_at < now() - make_interval(days => $1::int)",
         )
         .bind(days as i32)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
         Ok(result.rows_affected())
     }
+}
+
+async fn apply_activity_rls(
+    tx: &mut Transaction<'_, Postgres>,
+    tenant_id: Uuid,
+    bypass: bool,
+) -> QefroResult<()> {
+    sqlx::query("SELECT set_config('qefro.tenant_id', $1, true)")
+        .bind(tenant_id.to_string())
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| QefroError::database(e.to_string()))?;
+    if bypass {
+        sqlx::query("SELECT set_config('qefro.rls_bypass', 'on', true)")
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+    }
+    Ok(())
 }
 
 async fn insert_tx(
@@ -186,6 +234,7 @@ async fn insert_tx(
     message: &str,
     mut metadata: Value,
 ) -> QefroResult<ActivityRecord> {
+    apply_activity_rls(tx, ctx.tenant_id, false).await?;
     strip_secrets(None, &mut metadata);
     let id = Uuid::new_v4();
     let actor_name = ctx.activity_actor_name();
@@ -300,12 +349,49 @@ impl EntityService {
             .await
     }
 
+    /// Tenant-scoped recent activity with the same RowPolicy as `get`.
+    /// Counts and messages never include records the caller cannot read.
+    pub async fn list_recent_activity(
+        &self,
+        ctx: &OpContext,
+        entity_name: Option<&str>,
+        limit: i64,
+    ) -> QefroResult<Vec<ActivityRecord>> {
+        let want = limit.clamp(1, 50);
+        let raw = self
+            .activity
+            .list_recent(ctx.tenant_id, entity_name, (want * 4).min(200))
+            .await?;
+        let mut out = Vec::new();
+        for row in raw {
+            if self.get(ctx, &row.entity_type, row.entity_id).await.is_ok() {
+                out.push(row);
+                if (out.len() as i64) >= want {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn add_comment(
         &self,
         ctx: &OpContext,
         entity_name: &str,
         record_id: Uuid,
         message: &str,
+    ) -> QefroResult<ActivityRecord> {
+        self.add_comment_with_attachment(ctx, entity_name, record_id, message, None)
+            .await
+    }
+
+    pub async fn add_comment_with_attachment(
+        &self,
+        ctx: &OpContext,
+        entity_name: &str,
+        record_id: Uuid,
+        message: &str,
+        attachment_id: Option<Uuid>,
     ) -> QefroResult<ActivityRecord> {
         let entity = self.registry().get(entity_name)?;
         if !entity.comments {
@@ -321,6 +407,20 @@ impl EntityService {
             return Err(QefroError::bad_request("comment is too long"));
         }
         let mentions = parse_mentions(message);
+        let mut metadata = json!({ "mentions": mentions });
+        if let Some(attachment_id) = attachment_id {
+            let store = crate::attachments::AttachmentStore::new(self.pool().clone());
+            let file = store.get(ctx.tenant_id, attachment_id).await?;
+            if file.entity != entity.name || file.record_id != record_id {
+                return Err(QefroError::bad_request(
+                    "attachment does not belong to this record",
+                ));
+            }
+            if let Some(obj) = metadata.as_object_mut() {
+                obj.insert("attachment_id".into(), json!(attachment_id));
+                obj.insert("filename".into(), json!(file.filename));
+            }
+        }
         let mut tx = self
             .pool()
             .begin()
@@ -335,7 +435,7 @@ impl EntityService {
                 record_id,
                 TYPE_COMMENT,
                 message,
-                json!({ "mentions": mentions }),
+                metadata.clone(),
             )
             .await?;
         let event = {
@@ -344,7 +444,11 @@ impl EntityService {
                 entity.name.clone(),
                 record_id,
                 ctx.tenant_id,
-                json!({ "message": message, "mentions": mentions }),
+                json!({
+                    "message": message,
+                    "mentions": mentions,
+                    "attachment_id": attachment_id,
+                }),
             );
             event.user_id = Some(ctx.user_id);
             event

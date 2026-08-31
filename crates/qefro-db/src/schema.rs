@@ -225,7 +225,8 @@ CREATE TABLE IF NOT EXISTS qefro_attachments (
     size BIGINT NOT NULL,
     storage_key TEXT NOT NULL,
     uploaded_by UUID,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    description TEXT
 );
 CREATE INDEX IF NOT EXISTS qefro_attachments_record_idx
     ON qefro_attachments (tenant_id, entity, record_id);
@@ -233,6 +234,35 @@ CREATE INDEX IF NOT EXISTS qefro_attachments_created_idx
     ON qefro_attachments (tenant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS qefro_attachments_uploader_idx
     ON qefro_attachments (tenant_id, uploaded_by);
+ALTER TABLE qefro_attachments ADD COLUMN IF NOT EXISTS description TEXT;
+CREATE INDEX IF NOT EXISTS qefro_attachments_filename_idx
+    ON qefro_attachments (tenant_id, filename);
+
+CREATE TABLE IF NOT EXISTS qefro_operation_runs (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id UUID,
+    entity TEXT NOT NULL,
+    entity_id UUID NOT NULL,
+    operation TEXT NOT NULL,
+    status TEXT NOT NULL,
+    request_id UUID,
+    idempotency_key TEXT,
+    progress INT NOT NULL DEFAULT 0,
+    result JSONB,
+    error TEXT,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS qefro_operation_runs_idemp_uidx
+    ON qefro_operation_runs (tenant_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+CREATE INDEX IF NOT EXISTS qefro_operation_runs_record_idx
+    ON qefro_operation_runs (tenant_id, entity, entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS qefro_operation_runs_status_idx
+    ON qefro_operation_runs (tenant_id, status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS qefro_notifications (
     id UUID PRIMARY KEY,
@@ -247,6 +277,30 @@ CREATE TABLE IF NOT EXISTS qefro_notifications (
 );
 CREATE INDEX IF NOT EXISTS qefro_notifications_user_idx
     ON qefro_notifications (tenant_id, user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS qefro_communications (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    entity TEXT NOT NULL,
+    entity_id UUID NOT NULL,
+    template TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    purpose TEXT NOT NULL DEFAULT 'transactional',
+    status TEXT NOT NULL DEFAULT 'queued',
+    recipient TEXT,
+    recipient_user_id UUID,
+    event_id UUID,
+    attempts INT NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    sent_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS qefro_communications_idemp
+    ON qefro_communications (tenant_id, template, entity_id, event_id, channel);
+CREATE INDEX IF NOT EXISTS qefro_communications_record_idx
+    ON qefro_communications (tenant_id, entity, entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS qefro_communications_status_idx
+    ON qefro_communications (tenant_id, status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS qefro_webhook_deliveries (
     id UUID PRIMARY KEY,
@@ -302,7 +356,53 @@ CREATE INDEX IF NOT EXISTS qefro_automation_exec_status_idx
     ON qefro_automation_executions (tenant_id, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS qefro_automation_exec_event_idx
     ON qefro_automation_executions (event_id);
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS step_index INT NOT NULL DEFAULT 0;
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS cursor JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS steps_log JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS def_snapshot JSONB;
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS entity TEXT;
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS record_id UUID;
+ALTER TABLE qefro_automation_executions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
+CREATE TABLE IF NOT EXISTS qefro_import_jobs (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    user_id UUID,
+    entity TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    mode TEXT NOT NULL DEFAULT 'create',
+    duplicate_policy TEXT NOT NULL DEFAULT 'fail',
+    match_field TEXT,
+    mapping JSONB NOT NULL DEFAULT '[]'::jsonb,
+    format TEXT NOT NULL DEFAULT 'csv',
+    dry_run BOOLEAN NOT NULL DEFAULT false,
+    strict BOOLEAN NOT NULL DEFAULT false,
+    filename TEXT,
+    content_type TEXT,
+    blob_key TEXT,
+    error_report_key TEXT,
+    total_rows INT NOT NULL DEFAULT 0,
+    processed INT NOT NULL DEFAULT 0,
+    created_count INT NOT NULL DEFAULT 0,
+    updated_count INT NOT NULL DEFAULT 0,
+    skipped_count INT NOT NULL DEFAULT 0,
+    failed_count INT NOT NULL DEFAULT 0,
+    warning_count INT NOT NULL DEFAULT 0,
+    checkpoint INT NOT NULL DEFAULT 0,
+    last_error TEXT,
+    cancel_requested BOOLEAN NOT NULL DEFAULT false,
+    retry_count INT NOT NULL DEFAULT 0,
+    idempotency_key TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS qefro_import_jobs_tenant_idx
+    ON qefro_import_jobs (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS qefro_import_jobs_entity_idx
+    ON qefro_import_jobs (tenant_id, entity, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS qefro_import_jobs_idemp_uidx
+    ON qefro_import_jobs (tenant_id, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS qefro_activity (
     id UUID PRIMARY KEY,
@@ -322,6 +422,43 @@ CREATE INDEX IF NOT EXISTS qefro_activity_actor_idx
     ON qefro_activity (tenant_id, actor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS qefro_activity_created_idx
     ON qefro_activity (tenant_id, created_at DESC);
+
+ALTER TABLE qefro_activity ENABLE ROW LEVEL SECURITY;
+ALTER TABLE qefro_activity FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS qefro_activity_tenant ON qefro_activity;
+CREATE POLICY qefro_activity_tenant ON qefro_activity
+    FOR ALL
+    USING (
+        current_setting('qefro.rls_bypass', true) = 'on'
+        OR (
+            current_setting('qefro.tenant_id', true) <> ''
+            AND tenant_id = CAST(current_setting('qefro.tenant_id', true) AS uuid)
+        )
+    )
+    WITH CHECK (
+        current_setting('qefro.rls_bypass', true) = 'on'
+        OR (
+            current_setting('qefro.tenant_id', true) <> ''
+            AND tenant_id = CAST(current_setting('qefro.tenant_id', true) AS uuid)
+        )
+    );
+
+CREATE TABLE IF NOT EXISTS qefro_custom_fields (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    entity TEXT NOT NULL,
+    name TEXT NOT NULL,
+    definition JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    version INT NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by UUID,
+    updated_by UUID,
+    UNIQUE (tenant_id, entity, name)
+);
+CREATE INDEX IF NOT EXISTS qefro_custom_fields_tenant_idx
+    ON qefro_custom_fields (tenant_id, entity, status);
 "#;
 
 pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
@@ -341,6 +478,7 @@ pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
     if entity.archives() {
         cols.push("\"archived_at\" TIMESTAMPTZ".to_string());
     }
+    cols.push("\"qefro_custom\" JSONB NOT NULL DEFAULT '{}'::jsonb".to_string());
 
     for field in entity.stored_fields() {
         let col = quote_ident(&field.column_name())?;
@@ -409,6 +547,10 @@ pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
             entity.table
         ));
     }
+    ddl.push_str(&format!(
+        "\nCREATE INDEX IF NOT EXISTS {}_qefro_custom_gin ON {table} USING GIN (\"qefro_custom\");",
+        entity.table
+    ));
     for field in entity.stored_fields() {
         if field.indexed || field.unique {
             let col = quote_ident(&field.column_name())?;
@@ -469,8 +611,7 @@ pub fn entity_ddl(entity: &EntityDef) -> QefroResult<String> {
 
 pub async fn apply_schema(pool: &PgPool, registry: &EntityRegistry) -> QefroResult<()> {
     for stmt in split_sql(SYSTEM_DDL) {
-        sqlx::query(stmt)
-            .execute(pool)
+        execute_ddl_ignore_exists(pool, stmt)
             .await
             .map_err(|e| QefroError::database(format!("system schema: {e}")))?;
     }
@@ -496,8 +637,7 @@ pub async fn apply_schema(pool: &PgPool, registry: &EntityRegistry) -> QefroResu
         }
         let ddl = entity_ddl(&entity)?;
         for stmt in split_sql(&ddl).into_iter().skip(1) {
-            sqlx::query(stmt)
-                .execute(pool)
+            execute_ddl_ignore_exists(pool, stmt)
                 .await
                 .map_err(|e| QefroError::database(format!("schema {}: {e}", entity.name)))?;
         }
@@ -532,6 +672,19 @@ async fn apply_missing_columns(pool: &PgPool, registry: &EntityRegistry) -> Qefr
                 QefroError::database(format!("add column {}.archived_at: {e}", entity.name))
             })?;
         }
+        let bag = format!(
+            "ALTER TABLE {table} ADD COLUMN IF NOT EXISTS \"qefro_custom\" JSONB NOT NULL DEFAULT '{{}}'::jsonb"
+        );
+        sqlx::query(&bag).execute(pool).await.map_err(|e| {
+            QefroError::database(format!("add column {}.qefro_custom: {e}", entity.name))
+        })?;
+        let gin = format!(
+            "CREATE INDEX IF NOT EXISTS {}_qefro_custom_gin ON {table} USING GIN (\"qefro_custom\")",
+            entity.table
+        );
+        execute_ddl_ignore_exists(pool, &gin)
+            .await
+            .map_err(|e| QefroError::database(format!("gin {}.qefro_custom: {e}", entity.name)))?;
     }
     Ok(())
 }
@@ -545,6 +698,7 @@ const SYSTEM_COLUMNS: &[&str] = &[
     "updated_by",
     "deleted_at",
     "archived_at",
+    "qefro_custom",
 ];
 
 /// `CREATE TABLE IF NOT EXISTS` never drops leftover columns. A previous
@@ -757,6 +911,24 @@ fn split_sql(ddl: &str) -> Vec<&str> {
         .collect()
 }
 
+/// `CREATE INDEX IF NOT EXISTS` still races under parallel apply_schema.
+async fn execute_ddl_ignore_exists(pool: &PgPool, sql: &str) -> Result<(), sqlx::Error> {
+    match sqlx::query(sql).execute(pool).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("already exists")
+                || msg.contains("duplicate key")
+                || msg.contains("pg_class_relname_nsp_index")
+            {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+    }
+}
+
 pub(crate) fn ident_check(name: &str) -> QefroResult<()> {
     qefro_core::ident::assert_safe_ident(name)
 }
@@ -776,6 +948,8 @@ mod tests {
         assert!(ddl.contains("CREATE TABLE IF NOT EXISTS \"customers\""));
         assert!(ddl.contains("\"tenant_id\""));
         assert!(ddl.contains("\"email\""));
+        assert!(ddl.contains("\"qefro_custom\" JSONB"));
+        assert!(ddl.contains("USING GIN (\"qefro_custom\")"));
         assert!(!ddl.contains("DROP TABLE tenants"));
     }
 

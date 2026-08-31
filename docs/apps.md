@@ -14,6 +14,7 @@ apps/myshop/
 ├── permissions/
 ├── reports/
 ├── dashboards/
+├── pages/
 ├── print_formats/
 ├── seeds/
 ├── hooks/

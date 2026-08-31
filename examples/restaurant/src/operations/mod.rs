@@ -89,11 +89,15 @@ pub fn register(app: InstalledApp) -> InstalledApp {
     )
     .operation(
         OperationDef::new("complete", "Order")
-            .label("Complete")
+            .label("Complete Order")
+            .description("Complete the order and create a follow-up task")
             .permission("order.complete")
             .roles(&["Manager", "Staff"])
             .transition("complete")
-            .event("order.completed"),
+            .event("order.completed")
+            .confirmation_message(
+                "This will complete the order and create a follow-up task for the guest.",
+            ),
         order::CompleteOrder,
     )
     .operation(

@@ -107,6 +107,29 @@ describe("AttachmentsPanel", () => {
     expect(screen.getByText("invoice.pdf")).toBeInTheDocument();
     expect(screen.getByText(/KB/)).toBeInTheDocument();
     expect(screen.queryByText(/s3|storage|tenant/i)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /\+ Add attachment/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Upload files/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download" })).toBeInTheDocument();
+  });
+
+  it("shows an empty state with upload", () => {
+    render(<AttachmentsPanel slug="orders" id="1" items={[]} onChanged={() => undefined} />);
+    expect(screen.getByText("No files attached yet.")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Upload file/ }).length).toBeGreaterThan(0);
+  });
+
+  it("asks before deleting an attachment", async () => {
+    render(
+      <AttachmentsPanel
+        slug="orders"
+        id="1"
+        items={[{ id: "a1", filename: "invoice.pdf", content_type: "application/pdf", size: 245000 }]}
+        onChanged={() => undefined}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "More" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    expect(screen.getByRole("dialog", { name: "Delete attachment?" })).toBeInTheDocument();
+    expect(screen.getByText(/Invoice.pdf will be permanently removed/i)).toBeInTheDocument();
   });
 });

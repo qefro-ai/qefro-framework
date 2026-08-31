@@ -172,7 +172,7 @@ describe("business object runtime UI", () => {
     expect(screen.getByText("Ahmed Khan")).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/Write a comment/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "Attachments" }));
-    expect(screen.getByText("No files attached.")).toBeInTheDocument();
+    expect(screen.getByText("No files attached yet.")).toBeInTheDocument();
   });
 
   it("hides workflow chrome when the entity has no workflow capability", async () => {
@@ -347,5 +347,56 @@ describe("business object runtime UI", () => {
     await userEvent.click(screen.getByRole("button", { name: "Notifications" }));
     expect(await screen.findByText("Order #1042 is ready")).toBeInTheDocument();
     expect(screen.getByText(/second|now|minute/i)).toBeInTheDocument();
+  });
+
+  it("shows print and download PDF only when the entity advertises print", async () => {
+    vi.spyOn(api, "get").mockResolvedValue({
+      id: "o1",
+      name: "#1042",
+      status: "Draft",
+    });
+    vi.spyOn(api, "activity").mockResolvedValue({ items: [] });
+    vi.spyOn(api, "attachments").mockResolvedValue({ items: [] });
+    const hidden = wrap(<EntityDetail entities={[order]} />, "/orders/o1");
+    await waitFor(() => expect(screen.getByText(/Order #1042/)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Print" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Download PDF" })).not.toBeInTheDocument();
+    hidden.unmount();
+
+    const printable = {
+      ...order,
+      capabilities: { ...order.capabilities, print: true },
+      attachments: true,
+    };
+    wrap(<EntityDetail entities={[printable]} />, "/orders/o1");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Print" })).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Download PDF" })).toBeInTheDocument();
+  });
+
+  it("shows Send message when the entity advertises communication", async () => {
+    vi.spyOn(api, "get").mockResolvedValue({
+      id: "o1",
+      name: "#1042",
+      status: "Confirmed",
+    });
+    vi.spyOn(api, "activity").mockResolvedValue({ items: [] });
+    vi.spyOn(api, "attachments").mockResolvedValue({ items: [] });
+    vi.spyOn(api, "communications").mockResolvedValue({ items: [] });
+    const hidden = wrap(<EntityDetail entities={[order]} />, "/orders/o1");
+    await waitFor(() => expect(screen.getByText(/Order #1042/)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Send message" })).not.toBeInTheDocument();
+    hidden.unmount();
+
+    const comms = {
+      ...order,
+      capabilities: { ...order.capabilities, communication: true },
+      communications: [
+        { name: "order_confirmed", channels: ["email", "whatsapp"], purpose: "transactional" },
+      ],
+    };
+    wrap(<EntityDetail entities={[comms]} />, "/orders/o1");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument(),
+    );
   });
 });

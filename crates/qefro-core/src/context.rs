@@ -5,6 +5,16 @@ use uuid::Uuid;
 pub const ROLE_WORKER: &str = "Worker";
 /// Anonymous public-form principal. Never Admin.
 pub const ROLE_PUBLIC: &str = "Public";
+/// Tenant administrator. Never implied by automation `as_roles`.
+pub const ROLE_ADMIN: &str = "Admin";
+/// Internal system principal. Never assignable via client or automation metadata.
+pub const ROLE_SYSTEM: &str = "System";
+
+/// Roles that grant tenant-wide bypass (RowPolicy, RBAC). Automation and
+/// workers must not inherit these from an event actor or Studio payload.
+pub fn is_privileged_role(role: &str) -> bool {
+    role.eq_ignore_ascii_case(ROLE_ADMIN) || role.eq_ignore_ascii_case(ROLE_SYSTEM)
+}
 
 /// Server-side operation context. Tenant identity is taken from the
 /// authenticated session, never from an untrusted client field.
@@ -29,14 +39,29 @@ pub struct OpContext {
     pub locale: String,
     #[serde(default)]
     pub currency: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cash_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receivable_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payable_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sales_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cogs_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory_account: Option<String>,
     #[serde(default)]
     pub plan: Option<String>,
     /// Display name of the acting user. Never agent chain-of-thought.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor_name: Option<String>,
-    /// `user` (default), `agent`, `worker`, or `system`.
+    /// `user` (default), `agent`, `worker`, `system`, or `automation`.
     #[serde(default)]
     pub source: String,
+    /// Nested automation chain length. Event-triggered child runs increment this.
+    #[serde(default)]
+    pub automation_depth: u32,
 }
 
 impl OpContext {
@@ -54,9 +79,16 @@ impl OpContext {
             timezone: "UTC".into(),
             locale: "en-US".into(),
             currency: "USD".into(),
+            cash_account: None,
+            receivable_account: None,
+            payable_account: None,
+            sales_account: None,
+            cogs_account: None,
+            inventory_account: None,
             plan: None,
             actor_name: None,
             source: String::new(),
+            automation_depth: 0,
         }
     }
 
@@ -78,7 +110,9 @@ impl OpContext {
     }
 
     pub fn is_admin(&self) -> bool {
-        self.roles.iter().any(|r| r.eq_ignore_ascii_case("Admin"))
+        self.roles
+            .iter()
+            .any(|r| r.eq_ignore_ascii_case(ROLE_ADMIN))
     }
 
     pub fn is_worker(&self) -> bool {
@@ -102,7 +136,7 @@ impl OpContext {
             return "Qefro Agent".into();
         }
         if self.is_automation() {
-            return "Automation".into();
+            return "Qefro Automation".into();
         }
         if self.is_worker() || self.source.eq_ignore_ascii_case("system") {
             return "System".into();
@@ -139,6 +173,12 @@ impl OpContext {
         self.timezone = config.business.timezone.clone();
         self.locale = config.business.locale.clone();
         self.currency = config.business.currency.clone();
+        self.cash_account = config.business.cash_account.clone();
+        self.receivable_account = config.business.receivable_account.clone();
+        self.payable_account = config.business.payable_account.clone();
+        self.sales_account = config.business.sales_account.clone();
+        self.cogs_account = config.business.cogs_account.clone();
+        self.inventory_account = config.business.inventory_account.clone();
         self.plan = config.plan.clone();
     }
 }
@@ -181,5 +221,7 @@ mod tests {
         assert_eq!(ctx.activity_actor_name(), "Ahmed");
         ctx.source = "agent".into();
         assert_eq!(ctx.activity_actor_name(), "Qefro Agent");
+        ctx.source = "automation".into();
+        assert_eq!(ctx.activity_actor_name(), "Qefro Automation");
     }
 }

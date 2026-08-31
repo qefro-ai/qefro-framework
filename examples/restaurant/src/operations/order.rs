@@ -1,6 +1,9 @@
 use async_trait::async_trait;
-use qefro_api::{OperationCtx, OperationHandler};
-use qefro_core::QefroResult;
+use qefro_api::{
+    inventory_consume, inventory_release, inventory_reserve, post_ledger, OperationCtx,
+    OperationHandler,
+};
+use qefro_core::{LedgerPosting, QefroResult, ACCOUNT_KEY_CASH, ACCOUNT_KEY_SALES};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -84,6 +87,7 @@ impl OperationHandler for ConfirmOrder {
         let id = ctx.record_id()?;
         ensure_order_items(ctx).await?;
         apply_channel_rules(ctx, false)?;
+        inventory_reserve(ctx, &ctx.record.clone()).await?;
         ctx.apply_transition("confirm")?;
         ctx.emit("order.confirmed", json!({ "entity_id": id }));
         ctx.enqueue_job(
@@ -119,6 +123,7 @@ pub struct StartPreparation;
 #[async_trait]
 impl OperationHandler for StartPreparation {
     async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> QefroResult<Value> {
+        inventory_consume(ctx, &ctx.record.clone()).await?;
         ctx.apply_transition("prepare")?;
         ctx.emit("order.preparing", json!({ "entity_id": ctx.record_id()? }));
         Ok(ctx.record.clone())
@@ -142,7 +147,47 @@ pub struct CompleteOrder;
 impl OperationHandler for CompleteOrder {
     async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> QefroResult<Value> {
         ctx.apply_transition("complete")?;
-        ctx.emit("order.completed", json!({ "entity_id": ctx.record_id()? }));
+        let id = ctx.record_id()?;
+        let number = ctx
+            .record
+            .get("doc_no")
+            .and_then(|v| v.as_str())
+            .or_else(|| ctx.record.get("number").and_then(|v| v.as_str()))
+            .unwrap_or("order")
+            .to_string();
+        let task = ctx
+            .create(
+                "Task",
+                json!({
+                    "title": format!("Follow up on {number}"),
+                    "description": "Thank the guest and collect feedback.",
+                    "entity_type": "Order",
+                    "entity_id": id,
+                    "priority": "normal",
+                }),
+            )
+            .await?;
+        ctx.emit(
+            "order.completed",
+            json!({
+                "entity_id": id,
+                "task_id": task.get("id"),
+            }),
+        );
+        let amount = ctx.record.get("grand_total").cloned().unwrap_or(json!(0));
+        let date = ctx
+            .record
+            .get("order_date")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let mut posting = LedgerPosting::new(format!("Order {number}"), number)
+            .debit(ACCOUNT_KEY_CASH, amount.clone())
+            .credit(ACCOUNT_KEY_SALES, amount);
+        if let Some(date) = date {
+            posting = posting.date(date);
+        }
+        let _ = post_ledger(ctx, posting).await?;
+        ctx.set_message("Order completed");
         Ok(ctx.record.clone())
     }
 }
@@ -165,6 +210,7 @@ impl OperationHandler for CancelOrder {
                 ));
             }
         };
+        inventory_release(ctx, &ctx.record.clone()).await?;
         ctx.emit("order.cancelled", json!({ "entity_id": ctx.record_id()? }));
         Ok(ctx.record.clone())
     }

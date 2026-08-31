@@ -3,6 +3,7 @@ use crate::error::{QefroError, QefroResult};
 use crate::field::{ChildTableDef, FieldDef, FieldType, RelationKind};
 use crate::ident::to_plural_slug;
 use crate::platform::{EntityActionDef, LinkDef, PublicFormDef};
+use crate::scheduling::SchedulingConfig;
 use crate::ui::{UiEntityMeta, UiFieldView, UI_SCHEMA_VERSION};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -102,6 +103,9 @@ pub struct EntityDef {
     /// Server-side declarative rules. Complements per-field ValidationRules.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub validation: Vec<crate::validation::ValidationRule>,
+    /// Opt-in generic scheduling (start/end, resources, conflicts, calendar).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduling: Option<SchedulingConfig>,
     /// Schema is owned elsewhere (auth `users` table). EntityService still
     /// exposes this entity; `apply_schema` does not emit DDL for it.
     #[serde(default)]
@@ -150,6 +154,7 @@ impl EntityDef {
             public_form: None,
             views: None,
             validation: Vec::new(),
+            scheduling: None,
             skip_ddl: false,
         }
     }
@@ -194,6 +199,12 @@ impl EntityDef {
         self
     }
 
+    /// Related Quotes / Sales Orders / Invoices / Payments / Returns (polymorphic customer).
+    pub fn with_commerce(mut self) -> Self {
+        crate::commerce::apply_commerce_links(&mut self);
+        self
+    }
+
     pub fn action(mut self, action: EntityActionDef) -> Self {
         self.actions.push(action);
         self
@@ -234,6 +245,18 @@ impl EntityDef {
         self
     }
 
+    /// Application-level custom field. Stored in the JSONB bag, not a new column.
+    /// Tenant Studio fields use the same [`FieldDef`] shape and are merged at request time.
+    pub fn custom_field(mut self, mut field: FieldDef) -> Self {
+        field.custom = true;
+        field.ui.sortable = false;
+        if field.ui.section.is_none() {
+            field.ui.section = Some("Custom".into());
+        }
+        self.fields.push(field);
+        self
+    }
+
     pub fn child_table(mut self, def: ChildTableDef) -> Self {
         if !self.fields.iter().any(|f| f.name == def.name) {
             self.fields.push(FieldDef::child_table_field(&def));
@@ -268,6 +291,11 @@ impl EntityDef {
 
     pub fn print_format(mut self, format: PrintFormat) -> Self {
         self.print_formats.push(format);
+        self
+    }
+
+    pub fn scheduling(mut self, config: SchedulingConfig) -> Self {
+        self.scheduling = Some(config);
         self
     }
 
@@ -513,10 +541,24 @@ impl EntityDef {
                 | "archived_at"
                 | "created_by"
                 | "updated_by"
+                | crate::custom::CUSTOM_BAG_COLUMN
         ) || self
             .stored_fields()
             .iter()
             .any(|f| f.name == name || f.column_name() == name)
+    }
+
+    /// Filterable through a real column or the JSONB bag (`->>` equality).
+    pub fn is_filterable_field(&self, name: &str) -> bool {
+        self.has_column(name)
+            || self
+                .get_field(name)
+                .is_some_and(|f| f.custom && f.custom_status.in_effective_metadata())
+    }
+
+    /// JSONB custom fields are not sortable (no per-key btree index).
+    pub fn is_sortable_field(&self, name: &str) -> bool {
+        self.has_column(name) && self.get_field(name).map(|f| !f.custom).unwrap_or(true)
     }
 
     pub fn searchable_fields(&self) -> Vec<&FieldDef> {
@@ -539,6 +581,102 @@ impl EntityDef {
             field.validate_name()?;
         }
         self.validate_ui_layout()?;
+        self.validate_rules()?;
+        for err in crate::scheduling::validate_scheduling(self, None) {
+            return Err(QefroError::bad_request(err));
+        }
+        Ok(())
+    }
+
+    /// Unknown fields, invalid operators, type mismatches, and formula cycles.
+    pub fn validate_rules(&self) -> QefroResult<()> {
+        crate::formula::detect_cycles(&self.fields)?;
+        for field in &self.fields {
+            if field.computed {
+                let Some(formula) = &field.formula else {
+                    return Err(QefroError::bad_request(format!(
+                        "computed field '{}.{}' is missing a formula",
+                        self.name, field.name
+                    )));
+                };
+                crate::formula::parse_formula(formula).map_err(|e| {
+                    QefroError::bad_request(format!(
+                        "invalid formula on '{}.{}': {e}",
+                        self.name, field.name
+                    ))
+                })?;
+            }
+        }
+        for (i, rule) in self.validation.iter().enumerate() {
+            if let Some(name) = &rule.field {
+                ensure_rule_field(self, name, i)?;
+            }
+            for name in &rule.require {
+                ensure_rule_field(self, name, i)?;
+            }
+            if let Some(when) = &rule.when {
+                ensure_rule_field(self, &when.field, i)?;
+            }
+            if let Some(compare) = &rule.compare {
+                ensure_rule_field(self, &compare.field, i)?;
+                for other in [
+                    compare.greater_than.as_deref(),
+                    compare.less_than.as_deref(),
+                    compare.greater_or_equal.as_deref(),
+                    compare.less_or_equal.as_deref(),
+                    compare.equals.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    ensure_rule_field(self, other, i)?;
+                    if let (Some(left), Some(right)) =
+                        (self.get_field(&compare.field), self.get_field(other))
+                    {
+                        if !types_comparable(&left.field_type, &right.field_type) {
+                            return Err(QefroError::bad_request(format!(
+                                "validation rule {i} on '{}': cannot compare {} ({}) with {} ({})",
+                                self.name,
+                                left.name,
+                                left.field_type.as_str(),
+                                right.name,
+                                right.field_type.as_str()
+                            )));
+                        }
+                    }
+                }
+            }
+            if let Some(op) = rule.rule.as_deref() {
+                let normalized = crate::condition::normalize_op(op);
+                if !matches!(
+                    normalized,
+                    "required"
+                        | "email"
+                        | "phone"
+                        | "url"
+                        | "regex"
+                        | "min_length"
+                        | "max_length"
+                        | "greater_than"
+                        | "less_than"
+                        | "greater_or_equal"
+                        | "less_or_equal"
+                        | "range"
+                        | "exists"
+                        | "equals"
+                        | "not_equals"
+                        | "in"
+                        | "not_in"
+                        | "is_empty"
+                        | "is_not_empty"
+                ) {
+                    return Err(QefroError::bad_request(format!(
+                        "validation rule {i} on '{}' uses unknown operator '{op}'",
+                        self.name
+                    )));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -582,6 +720,9 @@ impl EntityDef {
             }
             if let Some(when) = &field.ui.readonly_when {
                 ensure_condition_field(self, when, &field.name, "readonly_when")?;
+            }
+            if let Some(when) = &field.required_when {
+                ensure_condition_field(self, when, &field.name, "required_when")?;
             }
             if let Some(width) = &field.ui.width {
                 if !matches!(width.as_str(), "full" | "half" | "third") {
@@ -669,6 +810,7 @@ impl EntityDef {
                     label: f.ui.label.clone(),
                     description: f.ui.description.clone().or(f.ui.help.clone()),
                     required: f.required,
+                    required_when: f.required_when.clone(),
                     list: f.ui.list,
                     list_visible: f.ui.list && !f.ui.hidden,
                     form: f.ui.form,
@@ -715,6 +857,8 @@ impl EntityDef {
                     permission_level: f.permission_level,
                     allow_on_submit: f.allow_on_submit,
                     secret: f.secret,
+                    custom: f.custom,
+                    custom_status: f.custom.then(|| f.custom_status.as_str().to_string()),
                     child_entity: f.relation.as_ref().and_then(|r| {
                         if f.is_child_table() {
                             Some(r.target_entity.clone())
@@ -774,7 +918,22 @@ impl EntityDef {
                 import: self.standalone && !self.singleton,
                 export: self.standalone,
                 bulk: self.standalone && !self.singleton,
+                print: !self.print_formats.is_empty() || self.document.is_some(),
+                communication: false,
+                scheduling: self.scheduling.is_some(),
             }),
+            print_formats: self
+                .print_formats
+                .iter()
+                .map(|f| crate::ui::PrintFormatSummary {
+                    name: f.name.clone(),
+                    title: f.document_title(),
+                    variant: f.variant.clone(),
+                    version: f.version,
+                })
+                .collect(),
+            communications: Vec::new(),
+            scheduling: self.scheduling.as_ref().map(|s| s.to_summary()),
             actions: self.actions.clone(),
             links: self.links.clone(),
             public_form: self.public_form.clone(),
@@ -851,6 +1010,28 @@ fn ensure_condition_field(
         "{kind} on '{}.{}' references unknown field '{}'",
         entity.name, field, when.field
     )))
+}
+
+fn ensure_rule_field(entity: &EntityDef, name: &str, index: usize) -> QefroResult<()> {
+    if entity.get_field(name).is_some() || entity.has_column(name) {
+        return Ok(());
+    }
+    Err(QefroError::bad_request(format!(
+        "validation rule {index} on '{}' references unknown field '{name}'",
+        entity.name
+    )))
+}
+
+fn types_comparable(left: &FieldType, right: &FieldType) -> bool {
+    if left.is_numeric() && right.is_numeric() {
+        return true;
+    }
+    let temporal =
+        |t: &FieldType| matches!(t, FieldType::Date | FieldType::DateTime | FieldType::Time);
+    if temporal(left) && temporal(right) {
+        return true;
+    }
+    std::mem::discriminant(left) == std::mem::discriminant(right)
 }
 
 fn validate_layout_sections(
@@ -1110,5 +1291,39 @@ fields:
         let caps = def.to_ui_meta().capabilities.unwrap();
         assert!(caps.assignment);
         assert_eq!(def.row_policy, Some(RowPolicy::AssignedTo));
+    }
+
+    #[test]
+    fn validate_rules_rejects_unknown_field_and_bad_compare() {
+        use crate::validation::ValidationRule;
+        let unknown = EntityDef::new("Order")
+            .field(FieldDef::integer("quantity"))
+            .validation_rule(ValidationRule::compare(
+                "end_date",
+                "greater_than",
+                "start_date",
+            ))
+            .build();
+        let err = unknown.validate_rules().unwrap_err();
+        assert!(err.to_string().contains("unknown field"), "{err}");
+
+        let mismatch = EntityDef::new("Order")
+            .field(FieldDef::integer("quantity"))
+            .field(FieldDef::string("name"))
+            .validation_rule(ValidationRule::compare("quantity", "greater_than", "name"))
+            .build();
+        let err = mismatch.validate_rules().unwrap_err();
+        assert!(err.to_string().contains("cannot compare"), "{err}");
+
+        let ok = EntityDef::new("Order")
+            .field(FieldDef::date("start_date"))
+            .field(FieldDef::date("end_date"))
+            .validation_rule(ValidationRule::compare(
+                "end_date",
+                "greater_or_equal",
+                "start_date",
+            ))
+            .build();
+        ok.validate_rules().unwrap();
     }
 }

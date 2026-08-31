@@ -1,7 +1,7 @@
 use qefro_core::ui::{ChartMeasureSpec, ChartViewSpec, ListColumnSpec, SortSpec};
 use qefro_core::{
     CalendarViewSpec, ChildTableDef, EntityDef, EntityViews, FieldDef, KanbanCardSpec,
-    KanbanViewSpec, ListViewSpec, UiConfig,
+    KanbanViewSpec, ListViewSpec, PrintFormat, PrintSection, UiConfig,
 };
 use serde_json::json;
 
@@ -42,7 +42,46 @@ pub fn crm_customer() -> EntityDef {
                 .nullable()
                 .section("Contact"),
         )
+        .field(
+            FieldDef::enum_values(
+                "communication_channel",
+                vec!["in_app", "email", "sms", "whatsapp", "none"],
+            )
+            .nullable()
+            .label("Preferred channel")
+            .section("Contact"),
+        )
+        .field(
+            FieldDef::boolean("marketing_opt_out")
+                .nullable()
+                .label("Marketing opt-out")
+                .section("Contact"),
+        )
         .field(FieldDef::string("industry").nullable().filterable())
+        .custom_field(
+            FieldDef::string("lead_source")
+                .nullable()
+                .filterable()
+                .label("Lead Source")
+                .section("Custom"),
+        )
+        .custom_field(
+            FieldDef::enum_values("account_size", vec!["Small", "Medium", "Large"])
+                .nullable()
+                .filterable()
+                .label("Account Size")
+                .section("Custom"),
+        )
+        .custom_field(
+            FieldDef::enum_values(
+                "customer_segment",
+                vec!["Consumer", "SMB", "Enterprise"],
+            )
+            .nullable()
+            .filterable()
+            .label("Customer Segment")
+            .section("Custom"),
+        )
         .field(FieldDef::text("notes").nullable().list(false))
         .views(EntityViews {
             list: Some(ListViewSpec {
@@ -85,6 +124,8 @@ pub fn crm_customer() -> EntityDef {
         .field(FieldDef::one_to_many("opportunities", "Opportunity", "customer_id"))
         .field(FieldDef::one_to_many("activities", "Activity", "customer_id"))
         .with_tasks()
+        .with_commerce()
+        .attachments()
         .build()
 }
 
@@ -95,8 +136,24 @@ pub fn lead() -> EntityDef {
         .table_name("leads")
         .workflow("lead")
         .field(FieldDef::string("title").required().searchable())
-        .field(FieldDef::string("email").nullable().email().searchable())
-        .field(FieldDef::string("phone").nullable())
+        .field(
+            FieldDef::enum_values("contact_method", vec!["email", "phone"])
+                .nullable()
+                .filterable()
+                .label("Contact method"),
+        )
+        .field(
+            FieldDef::string("email")
+                .nullable()
+                .email()
+                .searchable()
+                .required_when("contact_method", json!("email")),
+        )
+        .field(
+            FieldDef::string("phone")
+                .nullable()
+                .required_when("contact_method", json!("phone")),
+        )
         .field(FieldDef::string("company").nullable().searchable())
         .field(FieldDef::string("source").nullable().filterable())
         .field(
@@ -177,6 +234,19 @@ pub fn opportunity() -> EntityDef {
         .label_plural("Opportunities")
         .table_name("opportunities")
         .workflow("opportunity")
+        .attachments()
+        .print_format(
+            PrintFormat::new("Quote", "Opportunity")
+                .title("Quote")
+                .item_table("lines")
+                .total_fields(&["amount"])
+                .filename_field("name")
+                .section(PrintSection::kind("header"))
+                .section(PrintSection::kind("customer").fields(&["customer.name"]))
+                .section(PrintSection::kind("items").loop_over("lines"))
+                .section(PrintSection::kind("totals"))
+                .section(PrintSection::kind("footer")),
+        )
         .field(FieldDef::string("name").required().searchable())
         .field(
             FieldDef::many_to_one("customer_id", "CrmCustomer")

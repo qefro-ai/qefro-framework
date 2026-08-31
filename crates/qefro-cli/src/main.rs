@@ -83,6 +83,23 @@ enum Commands {
         #[arg(long, env = "QEFRO_TOKEN")]
         token: Option<String>,
     },
+    /// Import CSV or JSON through EntityService (`qefro import Customer customers.csv`)
+    Import {
+        entity: String,
+        file: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, default_value = "create")]
+        mode: String,
+        #[arg(long)]
+        match_field: Option<String>,
+        #[arg(long, default_value = "fail")]
+        duplicates: String,
+        #[arg(long, env = "QEFRO_URL", default_value = "http://127.0.0.1:8080")]
+        url: String,
+        #[arg(long, env = "QEFRO_TOKEN")]
+        token: Option<String>,
+    },
     /// Run the HTTP server (production). Set QEFRO_EMBED_WORKER=false and run `qefro worker` separately.
     Serve {
         #[arg(long, default_value = "all")]
@@ -97,9 +114,11 @@ enum Commands {
         #[arg(default_value = "all")]
         app: String,
     },
-    /// Inspect an entity's fields, relations, permissions, workflow, and views
+    /// Inspect an entity, composed page, or automation
+    /// (`qefro inspect automation order_confirmation`)
     Inspect {
         name: String,
+        target: Option<String>,
         #[arg(long, default_value = "all")]
         app: String,
     },
@@ -337,10 +356,32 @@ async fn main() -> Result<()> {
             )
             .await?
         }
+        Commands::Import {
+            entity,
+            file,
+            dry_run,
+            mode,
+            match_field,
+            duplicates,
+            url,
+            token,
+        } => {
+            cmd_import(
+                &entity,
+                &file,
+                dry_run,
+                &mode,
+                match_field.as_deref(),
+                &duplicates,
+                &url,
+                token.as_deref(),
+            )
+            .await?
+        }
         Commands::Worker => runtime_for("all")?.run_worker().await?,
         Commands::Doctor => app_cmd::cmd_doctor().await?,
         Commands::Validate { app } => cmd_validate(&app)?,
-        Commands::Inspect { name, app } => cmd_entity_show(&app, &name)?,
+        Commands::Inspect { name, target, app } => cmd_inspect(&app, &name, target.as_deref())?,
     }
     Ok(())
 }
@@ -520,6 +561,194 @@ pub(crate) fn write_catalog_stub(root: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
+fn cmd_inspect(app: &str, name: &str, target: Option<&str>) -> Result<()> {
+    if name.eq_ignore_ascii_case("page") {
+        let page_name =
+            target.ok_or_else(|| anyhow::anyhow!("usage: qefro inspect page <name>"))?;
+        return cmd_page_show(app, page_name);
+    }
+    if name.eq_ignore_ascii_case("automation") {
+        let auto_name =
+            target.ok_or_else(|| anyhow::anyhow!("usage: qefro inspect automation <name>"))?;
+        return cmd_automation_show(app, auto_name);
+    }
+    let runtime = runtime_for(app)?;
+    if runtime
+        .automations()
+        .iter()
+        .any(|a| a.name.eq_ignore_ascii_case(name))
+    {
+        return cmd_automation_show(app, name);
+    }
+    if runtime.page(name).is_some() {
+        return cmd_page_show(app, name);
+    }
+    cmd_entity_show(app, name)
+}
+
+fn cmd_automation_show(app: &str, name: &str) -> Result<()> {
+    let runtime = runtime_for(app)?;
+    let Some(def) = runtime
+        .automations()
+        .into_iter()
+        .find(|a| a.name.eq_ignore_ascii_case(name) || a.id_key().eq_ignore_ascii_case(name))
+    else {
+        let known: Vec<String> = runtime.automations().into_iter().map(|a| a.name).collect();
+        let hint = suggest_similar(name, known.iter().map(|s| s.as_str()))
+            .map(|s| format!(" Did you mean '{s}'?"))
+            .unwrap_or_default();
+        bail!("automation '{name}' not found.{hint}");
+    };
+    println!("name:           {}", def.name);
+    println!(
+        "status:         {}",
+        if def.enabled { "published" } else { "disabled" }
+    );
+    println!("version:        {}", def.version);
+    println!("module:         {}", def.module.clone().unwrap_or_default());
+    println!("description:    {}", def.description);
+    println!(
+        "trigger:        {}",
+        def.trigger
+            .event
+            .clone()
+            .or(def.trigger.schedule.clone())
+            .unwrap_or_else(|| def.trigger.kind.clone())
+    );
+    if let Some(cond) = &def.conditions {
+        println!(
+            "conditions:     {}",
+            serde_json::to_string(cond).unwrap_or_default()
+        );
+    }
+    println!("steps:");
+    for step in def.effective_steps() {
+        println!("  {}  {}", step.kind(), step.label());
+    }
+    if !def.actions.is_empty() && def.steps.is_empty() {
+        println!("actions:");
+        for action in &def.actions {
+            println!("  {}", action.kind());
+        }
+    }
+    println!("max_depth:      {}", def.depth_limit());
+    println!("max_attempts:   {}", def.attempt_limit());
+    Ok(())
+}
+
+fn print_inspect_field(field: &qefro_core::FieldDef, indent: &str) {
+    let mut flags = Vec::new();
+    if field.custom {
+        flags.push("custom");
+    }
+    if field.required {
+        flags.push("required");
+    }
+    if field.searchable {
+        flags.push("searchable");
+    }
+    if field.unique {
+        flags.push("unique");
+    }
+    if let Some(rel) = &field.relation {
+        flags.push(match rel.kind {
+            qefro_core::RelationKind::ManyToOne => "many-to-one",
+            qefro_core::RelationKind::OneToMany => "one-to-many",
+            qefro_core::RelationKind::ManyToMany => "many-to-many",
+            qefro_core::RelationKind::ChildTable => "child-table",
+        });
+    }
+    println!(
+        "{indent}{:<20} {:<12} {}",
+        field.name,
+        field.field_type.as_str(),
+        flags.join(", ")
+    );
+    if let Some(rel) = &field.relation {
+        println!(
+            "{indent}                     → {}  on_delete={:?}",
+            rel.target_entity, rel.on_delete
+        );
+    }
+}
+
+fn cmd_page_show(app: &str, name: &str) -> Result<()> {
+    let runtime = runtime_for(app)?;
+    let Some(mut page) = runtime.page(name) else {
+        let known: Vec<String> = runtime.pages().into_iter().map(|p| p.name).collect();
+        let hint = suggest_similar(name, known.iter().map(|s| s.as_str()))
+            .map(|s| format!(" Did you mean '{s}'?"))
+            .unwrap_or_default();
+        bail!("page '{name}' not found.{hint}");
+    };
+    page.normalize();
+    println!("name:           {}", page.name);
+    println!("label:          {}", page.label);
+    println!("slug:           {}", page.slug());
+    println!("route:          {}", page.route());
+    println!(
+        "module:         {}",
+        page.module.clone().unwrap_or_default()
+    );
+    println!("layout:         {}", page.layout);
+    println!(
+        "template:       {}",
+        page.template.clone().unwrap_or_else(|| "(none)".into())
+    );
+    println!(
+        "permissions:    page roles={}",
+        if page.roles.is_empty() {
+            "(inherit section)".into()
+        } else {
+            page.roles.join(",")
+        }
+    );
+    if let Some(entity) = &page.context_entity {
+        println!(
+            "context:        {} via {}",
+            entity,
+            page.context_param.as_deref().unwrap_or("id")
+        );
+    }
+    if !page.tabs.is_empty() {
+        println!("tabs:");
+        for tab in &page.tabs {
+            println!("  {}  {}", tab.name, tab.label);
+        }
+    }
+    println!("components:");
+    for section in &page.sections {
+        println!(
+            "  {:<22} {:<12} entity={} view={} report={} widget={}",
+            section.title,
+            section.resolved_kind(),
+            section.entity.clone().unwrap_or_default(),
+            section.view.clone().unwrap_or_default(),
+            section.report.clone().unwrap_or_default(),
+            section
+                .widget
+                .clone()
+                .or(section.card.as_ref().map(|c| c.title.clone()))
+                .unwrap_or_default()
+        );
+        if !section.roles.is_empty() {
+            println!("                     roles={}", section.roles.join(","));
+        }
+    }
+    if !page.actions.is_empty() {
+        println!("actions:");
+        for action in &page.actions {
+            println!(
+                "  {} {}.{}",
+                action.label.clone().unwrap_or_default(),
+                action.entity,
+                action.action
+            );
+        }
+    }
+    Ok(())
+}
+
 fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
     let runtime = runtime_for(app)?;
     let Some(entity) = runtime.entity(name) else {
@@ -544,6 +773,29 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
     println!("display_field:  {}", entity.display_field);
     println!("lifecycle:      archive={}", entity.archives());
     println!(
+        "capabilities:   attachments={} activity={} comments={} audit={} workflow={} import={}",
+        entity.attachments,
+        entity.activity,
+        entity.comments,
+        entity.audit,
+        entity.workflow.is_some(),
+        entity.standalone && !entity.singleton
+    );
+    let match_fields: Vec<&str> = entity
+        .fields
+        .iter()
+        .filter(|f| f.unique && !f.system)
+        .map(|f| f.name.as_str())
+        .collect();
+    if !match_fields.is_empty() {
+        println!("import matching: {}", match_fields.join(", "));
+    }
+    if qefro_core::is_commerce_entity(&entity.name) {
+        println!(
+            "commerce:       Quote → Sales Order → Fulfillment → Invoice → Payment → Return (EntityService operations; no commerce API)"
+        );
+    }
+    println!(
         "row_policy:     {}",
         entity
             .row_policy
@@ -552,36 +804,56 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
             .unwrap_or_else(|| "(none)".into())
     );
     println!("fields:");
+    let core: Vec<_> = qefro_core::core_fields_of(&entity);
+    let custom: Vec<_> = qefro_core::custom_fields_of(&entity);
+    if !core.is_empty() {
+        println!("  core:");
+        for field in &core {
+            print_inspect_field(field, "    ");
+        }
+    }
+    if !custom.is_empty() {
+        println!("  custom:");
+        for field in &custom {
+            print_inspect_field(field, "    ");
+        }
+    }
+    if core.is_empty() && custom.is_empty() {
+        for field in &entity.fields {
+            print_inspect_field(field, "  ");
+        }
+    }
+    let mut any_rules = false;
     for field in &entity.fields {
-        let mut flags = Vec::new();
-        if field.required {
-            flags.push("required");
+        if field.system {
+            continue;
         }
-        if field.searchable {
-            flags.push("searchable");
+        let lines = qefro_core::field_rule_lines(field);
+        if lines.is_empty() {
+            continue;
         }
-        if field.unique {
-            flags.push("unique");
+        if !any_rules {
+            println!("Rules");
+            any_rules = true;
         }
-        if let Some(rel) = &field.relation {
-            flags.push(match rel.kind {
-                qefro_core::RelationKind::ManyToOne => "many-to-one",
-                qefro_core::RelationKind::OneToMany => "one-to-many",
-                qefro_core::RelationKind::ManyToMany => "many-to-many",
-                qefro_core::RelationKind::ChildTable => "child-table",
-            });
+        println!("  {}", field.name);
+        for line in lines {
+            println!("    {line}");
         }
-        println!(
-            "  {:<20} {:<12} {}",
-            field.name,
-            field.field_type.as_str(),
-            flags.join(", ")
-        );
-        if let Some(rel) = &field.relation {
-            println!(
-                "                     → {}  on_delete={:?}",
-                rel.target_entity, rel.on_delete
-            );
+    }
+    if !entity.validation.is_empty() {
+        if !any_rules {
+            println!("Rules");
+        }
+        println!("  Validation");
+        for rule in &entity.validation {
+            if let Some(line) = qefro_core::compare_rule_line(rule) {
+                println!("    {line}");
+            } else if !rule.require.is_empty() {
+                println!("    require {}", rule.require.join(", "));
+            } else if let Some(field) = &rule.field {
+                println!("    {field} {:?}", rule.rule);
+            }
         }
     }
     if !entity.actions.is_empty() {
@@ -596,9 +868,9 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
         .filter(|d| d.entity.eq_ignore_ascii_case(&entity.name))
         .collect();
     if !ops.is_empty() {
-        println!("operations:");
+        println!("Operations");
         for def in ops {
-            println!("  {}  {}  {}", def.name, def.label, def.permission);
+            println!("  {}", def.label);
         }
     }
     println!("permissions:");
@@ -657,17 +929,81 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
             println!("  {}  {}", report.name, report.label);
         }
     }
+    let docs: Vec<_> = runtime
+        .print_formats()
+        .into_iter()
+        .filter(|f| f.entity.eq_ignore_ascii_case(&entity.name))
+        .collect();
+    if !docs.is_empty() {
+        println!("Documents");
+        for fmt in docs {
+            println!("  {}  {}  {}", fmt.document_title(), fmt.variant, fmt.name);
+        }
+    }
+    if let Some(sched) = &entity.scheduling {
+        println!("Scheduling");
+        println!("  Start     {}", sched.start_field);
+        if let Some(time) = &sched.time_field {
+            println!("  Time      {time}");
+        }
+        if let Some(end) = &sched.end_field {
+            println!("  End       {end}");
+        }
+        if let Some(end_time) = &sched.end_time_field {
+            println!("  End time  {end_time}");
+        }
+        if sched.resources.is_empty() {
+            println!("  Resource  (none)");
+        } else {
+            println!("  Resource  {}", sched.resources.join(", "));
+        }
+        println!(
+            "  Calendar  {}",
+            if sched.calendar {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+        println!(
+            "  Conflict  {}",
+            if sched.conflict {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+        if let Some(mins) = sched.duration_minutes {
+            println!("  Duration  {mins} minutes");
+        }
+    }
+    let comms: Vec<_> = runtime
+        .communications()
+        .into_iter()
+        .filter(|c| c.entity.eq_ignore_ascii_case(&entity.name))
+        .collect();
+    if !comms.is_empty() {
+        println!("Communication");
+        for def in comms {
+            println!("  {}  {}  {}", def.name, def.event, def.channels.join(","));
+        }
+    }
     Ok(())
 }
 
 fn cmd_validate(app: &str) -> Result<()> {
     let runtime = runtime_for(app)?;
     let mut registry = qefro_core::EntityRegistry::new();
-    for identity in qefro_core::platform_entities() {
-        let _ = registry.register(identity);
-    }
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
+    for identity in qefro_core::platform_entities() {
+        if let Err(e) = identity.validate_idents() {
+            errors.push(format!("{}: {e}", identity.name));
+        }
+        if let Err(e) = registry.register(identity) {
+            errors.push(e.to_string());
+        }
+    }
     for entity in runtime.entities() {
         if let Err(e) = entity.validate_idents() {
             errors.push(format!("{}: {e}", entity.name));
@@ -713,16 +1049,43 @@ fn cmd_validate(app: &str) -> Result<()> {
             }
         }
     }
+    let entity_slugs: Vec<String> = registry
+        .list()
+        .into_iter()
+        .map(|e| e.slug.clone())
+        .collect();
+    let reports = runtime.reports();
+    let dashboards = runtime.dashboards();
+    let mut page_slugs = std::collections::HashSet::new();
+    for mut page in runtime.pages() {
+        page.normalize();
+        let slug = page.slug().to_string();
+        if !page_slugs.insert(slug.clone()) {
+            errors.push(format!("duplicate page route '/pages/{slug}'"));
+        }
+        for err in qefro_core::validate_page(&page, &registry, &reports, &dashboards, &entity_slugs)
+        {
+            errors.push(err);
+        }
+    }
+    for fmt in runtime.print_formats() {
+        for err in qefro_core::validate_print_format(&fmt, &registry) {
+            errors.push(err);
+        }
+    }
+    for def in runtime.communications() {
+        for err in qefro_core::validate_communication(&def, &registry) {
+            errors.push(err);
+        }
+    }
+    for entity in runtime.entities() {
+        for err in qefro_core::validate_scheduling(&entity, Some(&registry)) {
+            errors.push(err);
+        }
+    }
     for auto in runtime.automations() {
-        for action in &auto.actions {
-            if let Some(entity) = action_entity(action) {
-                if registry.try_get(entity).is_none() {
-                    errors.push(format!(
-                        "automation '{}' references unknown entity '{entity}'",
-                        auto.name
-                    ));
-                }
-            }
+        for err in qefro_core::validate_automation(&auto, Some(&registry)) {
+            errors.push(err);
         }
     }
     for w in &warnings {
@@ -740,20 +1103,6 @@ fn cmd_validate(app: &str) -> Result<()> {
             eprintln!("error: {e}");
         }
         bail!("validation failed ({} errors)", errors.len());
-    }
-}
-
-fn action_entity(action: &qefro_core::AutomationAction) -> Option<&str> {
-    match action {
-        qefro_core::AutomationAction::CreateEntity { create_entity } => {
-            Some(create_entity.entity.as_str())
-        }
-        qefro_core::AutomationAction::UpdateEntity { update_entity } => {
-            update_entity.entity.as_deref()
-        }
-        qefro_core::AutomationAction::Transition { transition } => transition.entity.as_deref(),
-        qefro_core::AutomationAction::Assign { assign } => assign.entity.as_deref(),
-        _ => None,
     }
 }
 
@@ -819,6 +1168,93 @@ async fn cmd_action(
         bail!("action failed ({status}): {body}");
     }
     println!("{body}");
+    Ok(())
+}
+
+async fn cmd_import(
+    entity: &str,
+    file: &Path,
+    dry_run: bool,
+    mode: &str,
+    match_field: Option<&str>,
+    duplicates: &str,
+    url: &str,
+    token: Option<&str>,
+) -> Result<()> {
+    let runtime = runtime_for("all")?;
+    let def = runtime
+        .entity(entity)
+        .with_context(|| format!("unknown entity '{entity}'"))?;
+    if !def.standalone || def.singleton {
+        bail!("{} cannot be imported", def.name);
+    }
+    let bytes = fs::read(file).with_context(|| format!("read {}", file.display()))?;
+    let text = qefro_db::import::decode_text(&bytes).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let format = if file
+        .extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+    {
+        "json"
+    } else {
+        "csv"
+    };
+    println!("Importing {}", def.name);
+    let endpoint = format!("{}/api/v1/{}/import", url.trim_end_matches('/'), def.slug);
+    let payload = serde_json::json!({
+        "csv": if format == "csv" { text.as_str() } else { "" },
+        "json": if format == "json" { Some(text.as_str()) } else { None::<&str> },
+        "mode": mode,
+        "duplicate_policy": duplicates,
+        "match_field": match_field,
+        "dry_run": dry_run,
+        "format": format,
+    });
+    let mut req = reqwest::Client::new().post(&endpoint).json(&payload);
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    let response = req.send().await.context("request failed")?;
+    let status = response.status();
+    let body: serde_json::Value = response.json().await.unwrap_or(serde_json::json!({}));
+    if !status.is_success() {
+        bail!("import failed ({status}): {body}");
+    }
+    let rows = body["rows"]
+        .as_u64()
+        .or_else(|| body["total"].as_u64())
+        .unwrap_or(0);
+    println!("Rows: {rows}");
+    println!();
+    println!("Validation");
+    let valid = body["valid"].as_u64().unwrap_or_else(|| {
+        body["created"].as_u64().unwrap_or(0) + body["updated"].as_u64().unwrap_or(0)
+    });
+    let warnings = body["warnings"].as_u64().unwrap_or(0);
+    let errors = body["invalid"]
+        .as_u64()
+        .or_else(|| body["failed"].as_u64())
+        .unwrap_or(0);
+    println!("✓ {valid} valid");
+    if warnings > 0 {
+        println!("⚠ {warnings} warnings");
+    }
+    if errors > 0 {
+        println!("✕ {errors} errors");
+    }
+    if dry_run {
+        println!();
+        println!("Dry run complete.");
+    } else if body["async_job"] == true {
+        println!();
+        println!("Queued job {}", body["job_id"]);
+    } else {
+        println!();
+        println!(
+            "Created: {}  Updated: {}  Skipped: {}  Failed: {}",
+            body["created"], body["updated"], body["skipped"], body["failed"]
+        );
+    }
     Ok(())
 }
 

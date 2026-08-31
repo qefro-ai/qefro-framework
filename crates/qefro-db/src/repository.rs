@@ -2,7 +2,10 @@ use crate::query::{
     apply_filters, apply_sort, column_ident, push_bind_owned, strip_system_writes, table_ident,
 };
 use chrono::Utc;
-use qefro_core::{quote_ident, EntityDef, OpContext, QefroError, QefroResult};
+use qefro_core::{
+    flatten_nested_custom, pack_custom_values, quote_ident, unpack_custom_values, EntityDef,
+    OpContext, QefroError, QefroResult, CUSTOM_BAG_COLUMN,
+};
 use qefro_search::Query;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -59,7 +62,7 @@ impl EntityRepository {
             .try_get(0)
             .map_err(|e| QefroError::database(e.to_string()))?;
         enforce_tenant(entity, ctx, &value)?;
-        Ok(value)
+        Ok(decode_record(entity, value))
     }
 
     pub async fn get_singleton(
@@ -91,7 +94,7 @@ impl EntityRepository {
                     .try_get(0)
                     .map_err(|e| QefroError::database(e.to_string()))?;
                 enforce_tenant(entity, ctx, &value)?;
-                Ok(Some(value))
+                Ok(Some(decode_record(entity, value)))
             }
             None => Ok(None),
         }
@@ -139,7 +142,7 @@ impl EntityRepository {
             if let Some(fields) = &query.fields {
                 value = project_fields(value, fields);
             }
-            items.push(value);
+            items.push(decode_record(entity, value));
         }
         Ok(Page {
             items,
@@ -278,6 +281,10 @@ impl EntityRepository {
             .as_object_mut()
             .ok_or_else(|| QefroError::bad_request("record must be a JSON object"))?;
         strip_system_writes(entity, obj);
+        let bag = take_custom_bag(entity, &mut data);
+        let obj = data
+            .as_object()
+            .ok_or_else(|| QefroError::bad_request("record must be a JSON object"))?;
 
         let id = Uuid::new_v4();
         let now = Utc::now();
@@ -306,6 +313,10 @@ impl EntityRepository {
                 qb.push(quote_ident(&field.column_name())?);
             }
         }
+        if entity_has_custom_bag(entity) {
+            qb.push(", ");
+            qb.push(quote_ident(CUSTOM_BAG_COLUMN)?);
+        }
         qb.push(") VALUES (");
         qb.push_bind(id);
         if entity.tenant_owned {
@@ -330,6 +341,10 @@ impl EntityRepository {
                 push_bind_owned(&mut qb, Some(field), default);
             }
         }
+        if entity_has_custom_bag(entity) {
+            qb.push(", ");
+            qb.push_bind(sqlx::types::Json(bag));
+        }
         qb.push(") RETURNING to_jsonb(");
         qb.push(table_ident(entity)?);
         qb.push(".*)");
@@ -342,7 +357,7 @@ impl EntityRepository {
         let value: Value = row
             .try_get(0)
             .map_err(|e| QefroError::database(e.to_string()))?;
-        Ok(value)
+        Ok(decode_record(entity, value))
     }
 
     pub async fn update(
@@ -356,7 +371,12 @@ impl EntityRepository {
             .as_object_mut()
             .ok_or_else(|| QefroError::bad_request("record must be a JSON object"))?;
         strip_system_writes(entity, obj);
-        if obj.is_empty() {
+        let bag = take_custom_bag(entity, &mut patch);
+        let obj = patch
+            .as_object()
+            .ok_or_else(|| QefroError::bad_request("record must be a JSON object"))?;
+        let bag_writes = bag.as_object().map(|m| !m.is_empty()).unwrap_or(false);
+        if obj.is_empty() && !bag_writes {
             return self.get(entity, ctx, id).await;
         }
 
@@ -372,6 +392,9 @@ impl EntityRepository {
         qb.push_bind(ctx.user_id);
 
         for (key, value) in obj.iter() {
+            if key == CUSTOM_BAG_COLUMN || key == qefro_core::CUSTOM_NESTED_KEY {
+                continue;
+            }
             let field = entity
                 .get_field(key)
                 .ok_or_else(|| QefroError::bad_request(format!("unknown field '{key}'")))?;
@@ -382,6 +405,14 @@ impl EntityRepository {
             qb.push(column_ident(entity, key)?);
             qb.push(" = ");
             push_bind_owned(&mut qb, Some(field), value);
+        }
+        if bag_writes && entity_has_custom_bag(entity) {
+            qb.push(", ");
+            qb.push(quote_ident(CUSTOM_BAG_COLUMN)?);
+            qb.push(" = COALESCE(");
+            qb.push(quote_ident(CUSTOM_BAG_COLUMN)?);
+            qb.push(", '{}'::jsonb) || ");
+            qb.push_bind(sqlx::types::Json(bag));
         }
 
         qb.push(" WHERE ");
@@ -413,7 +444,7 @@ impl EntityRepository {
             .try_get(0)
             .map_err(|e| QefroError::database(e.to_string()))?;
         enforce_tenant(entity, ctx, &value)?;
-        Ok(value)
+        Ok(decode_record(entity, value))
     }
 
     pub async fn delete(
@@ -502,6 +533,49 @@ impl EntityRepository {
         Ok(count > 0)
     }
 
+    /// Return matching ids for an exact field value. Caps at `limit` so callers
+    /// can detect ambiguity without loading a full page.
+    pub async fn find_ids_by_field(
+        &self,
+        entity: &EntityDef,
+        ctx: &OpContext,
+        field: &str,
+        value: &Value,
+        limit: i64,
+    ) -> QefroResult<Vec<Uuid>> {
+        let limit = limit.clamp(1, 20);
+        let mut qb = QueryBuilder::<Postgres>::new("SELECT ");
+        qb.push(quote_ident("id")?);
+        qb.push(" FROM ");
+        qb.push(table_ident(entity)?);
+        qb.push(" WHERE ");
+        qb.push(column_ident(entity, field)?);
+        qb.push(" = ");
+        push_bind_owned(&mut qb, entity.get_field(field), value);
+        if entity.tenant_owned {
+            qb.push(" AND ");
+            qb.push(quote_ident("tenant_id")?);
+            qb.push(" = ");
+            qb.push_bind(ctx.tenant_id);
+        }
+        if entity.soft_delete {
+            qb.push(" AND ");
+            qb.push(quote_ident("deleted_at")?);
+            qb.push(" IS NULL");
+        }
+        qb.push(" LIMIT ");
+        qb.push_bind(limit);
+        let rows = qb.build().fetch_all(&self.pool).await.map_err(map_db_err)?;
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in rows {
+            ids.push(
+                row.try_get::<Uuid, _>(0)
+                    .map_err(|e| QefroError::database(e.to_string()))?,
+            );
+        }
+        Ok(ids)
+    }
+
     pub async fn list_by_ids(
         &self,
         entity: &EntityDef,
@@ -542,7 +616,7 @@ impl EntityRepository {
                 .try_get(0)
                 .map_err(|e| QefroError::database(e.to_string()))?;
             enforce_tenant(entity, ctx, &value)?;
-            items.push(value);
+            items.push(decode_record(entity, value));
         }
         Ok(items)
     }
@@ -586,7 +660,7 @@ impl EntityRepository {
             .try_get(0)
             .map_err(|e| QefroError::database(e.to_string()))?;
         enforce_tenant(entity, ctx, &value)?;
-        Ok(value)
+        Ok(decode_record(entity, value))
     }
 
     pub async fn list_tx(
@@ -626,7 +700,7 @@ impl EntityRepository {
                 .try_get(0)
                 .map_err(|e| QefroError::database(e.to_string()))?;
             enforce_tenant(entity, ctx, &value)?;
-            items.push(value);
+            items.push(decode_record(entity, value));
         }
         Ok(Page {
             items,
@@ -648,7 +722,12 @@ impl EntityRepository {
             .as_object_mut()
             .ok_or_else(|| QefroError::bad_request("record must be a JSON object"))?;
         strip_system_writes(entity, obj);
-        if obj.is_empty() {
+        let bag = take_custom_bag(entity, &mut patch);
+        let obj = patch
+            .as_object()
+            .ok_or_else(|| QefroError::bad_request("record must be a JSON object"))?;
+        let bag_writes = bag.as_object().map(|m| !m.is_empty()).unwrap_or(false);
+        if obj.is_empty() && !bag_writes {
             return self.get_tx(tx, entity, ctx, id, false).await;
         }
         let mut qb = QueryBuilder::<Postgres>::new("UPDATE ");
@@ -662,6 +741,9 @@ impl EntityRepository {
         qb.push(" = ");
         qb.push_bind(ctx.user_id);
         for (key, value) in obj.iter() {
+            if key == CUSTOM_BAG_COLUMN || key == qefro_core::CUSTOM_NESTED_KEY {
+                continue;
+            }
             let field = entity
                 .get_field(key)
                 .ok_or_else(|| QefroError::bad_request(format!("unknown field '{key}'")))?;
@@ -672,6 +754,14 @@ impl EntityRepository {
             qb.push(column_ident(entity, key)?);
             qb.push(" = ");
             push_bind_owned(&mut qb, Some(field), value);
+        }
+        if bag_writes && entity_has_custom_bag(entity) {
+            qb.push(", ");
+            qb.push(quote_ident(CUSTOM_BAG_COLUMN)?);
+            qb.push(" = COALESCE(");
+            qb.push(quote_ident(CUSTOM_BAG_COLUMN)?);
+            qb.push(", '{}'::jsonb) || ");
+            qb.push_bind(sqlx::types::Json(bag));
         }
         qb.push(" WHERE ");
         qb.push(quote_ident("id")?);
@@ -701,7 +791,7 @@ impl EntityRepository {
             .try_get(0)
             .map_err(|e| QefroError::database(e.to_string()))?;
         enforce_tenant(entity, ctx, &value)?;
-        Ok(value)
+        Ok(decode_record(entity, value))
     }
 
     pub async fn insert_tx(
@@ -715,6 +805,10 @@ impl EntityRepository {
             .as_object_mut()
             .ok_or_else(|| QefroError::bad_request("record must be a JSON object"))?;
         strip_system_writes(entity, obj);
+        let bag = take_custom_bag(entity, &mut data);
+        let obj = data
+            .as_object()
+            .ok_or_else(|| QefroError::bad_request("record must be a JSON object"))?;
         let id = Uuid::new_v4();
         let now = Utc::now();
         let mut qb = QueryBuilder::<Postgres>::new("INSERT INTO ");
@@ -740,6 +834,10 @@ impl EntityRepository {
                 qb.push(quote_ident(&field.column_name())?);
             }
         }
+        if entity_has_custom_bag(entity) {
+            qb.push(", ");
+            qb.push(quote_ident(CUSTOM_BAG_COLUMN)?);
+        }
         qb.push(") VALUES (");
         qb.push_bind(id);
         if entity.tenant_owned {
@@ -763,6 +861,10 @@ impl EntityRepository {
                 push_bind_owned(&mut qb, Some(field), default);
             }
         }
+        if entity_has_custom_bag(entity) {
+            qb.push(", ");
+            qb.push_bind(sqlx::types::Json(bag));
+        }
         qb.push(") RETURNING to_jsonb(");
         qb.push(table_ident(entity)?);
         qb.push(".*)");
@@ -770,7 +872,7 @@ impl EntityRepository {
         let value: Value = row
             .try_get(0)
             .map_err(|e| QefroError::database(e.to_string()))?;
-        Ok(value)
+        Ok(decode_record(entity, value))
     }
 
     pub async fn delete_tx(
@@ -820,6 +922,23 @@ impl EntityRepository {
         }
         Ok(existing)
     }
+}
+
+fn decode_record(entity: &EntityDef, mut value: Value) -> Value {
+    unpack_custom_values(entity, &mut value);
+    value
+}
+
+fn take_custom_bag(entity: &EntityDef, data: &mut Value) -> Value {
+    flatten_nested_custom(entity, data);
+    let Some(obj) = data.as_object_mut() else {
+        return serde_json::json!({});
+    };
+    pack_custom_values(entity, obj)
+}
+
+fn entity_has_custom_bag(entity: &EntityDef) -> bool {
+    !entity.skip_ddl
 }
 
 fn project_fields(value: Value, fields: &[String]) -> Value {

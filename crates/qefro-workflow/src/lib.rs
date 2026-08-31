@@ -446,15 +446,16 @@ mod tests {
 
 /// Framework Task workflow. Status is workflow-managed; clients must transition.
 pub fn task_workflow() -> WorkflowDef {
-    use qefro_core::{STATUS_CANCELLED, STATUS_COMPLETED, STATUS_IN_PROGRESS, STATUS_OPEN, TASK_ENTITY, TASK_WORKFLOW};
+    use qefro_core::{
+        STATUS_CANCELLED, STATUS_COMPLETED, STATUS_IN_PROGRESS, STATUS_OPEN, TASK_ENTITY,
+        TASK_WORKFLOW,
+    };
 
     WorkflowDef::new(TASK_WORKFLOW, TASK_ENTITY, STATUS_OPEN)
         .state(StateDef::new(STATUS_IN_PROGRESS))
         .state(StateDef::new(STATUS_COMPLETED).terminal())
         .state(StateDef::new(STATUS_CANCELLED).terminal())
-        .transition(
-            TransitionDef::new("start", STATUS_OPEN, STATUS_IN_PROGRESS).label("Start"),
-        )
+        .transition(TransitionDef::new("start", STATUS_OPEN, STATUS_IN_PROGRESS).label("Start"))
         .transition(
             TransitionDef::new("completed", STATUS_OPEN, STATUS_COMPLETED).label("Complete"),
         )
@@ -473,10 +474,202 @@ pub fn task_workflow() -> WorkflowDef {
         )
 }
 
+/// Journal Draft → Posted → Reversed. Status is never PATCHed.
+pub fn journal_workflow() -> WorkflowDef {
+    use qefro_core::{
+        JOURNAL_DRAFT, JOURNAL_ENTITY, JOURNAL_POSTED, JOURNAL_REVERSED, JOURNAL_WORKFLOW,
+    };
+
+    WorkflowDef::new(JOURNAL_WORKFLOW, JOURNAL_ENTITY, JOURNAL_DRAFT)
+        .state(StateDef::new(JOURNAL_POSTED))
+        .state(StateDef::new(JOURNAL_REVERSED).terminal())
+        .transition(
+            TransitionDef::new("post", JOURNAL_DRAFT, JOURNAL_POSTED)
+                .label("Post")
+                .roles(&["Staff", "Manager"])
+                .confirm("Post this journal to the ledger? Posted entries cannot be edited."),
+        )
+        .transition(
+            TransitionDef::new("reverse", JOURNAL_POSTED, JOURNAL_REVERSED)
+                .label("Reverse")
+                .roles(&["Manager"])
+                .confirm("Reverse this posted journal? A reversing entry will be created."),
+        )
+}
+
+/// Fiscal period Open → Closed. Reopen is Admin-only via the operation roles.
+pub fn period_workflow() -> WorkflowDef {
+    use qefro_core::{PERIOD_CLOSED, PERIOD_ENTITY, PERIOD_OPEN, PERIOD_WORKFLOW};
+
+    WorkflowDef::new(PERIOD_WORKFLOW, PERIOD_ENTITY, PERIOD_OPEN)
+        .state(StateDef::new(PERIOD_CLOSED))
+        .transition(
+            TransitionDef::new("close", PERIOD_OPEN, PERIOD_CLOSED)
+                .label("Close period")
+                .roles(&["Manager"])
+                .confirm("Close this period? New journals cannot be posted into it."),
+        )
+        .transition(
+            TransitionDef::new("reopen", PERIOD_CLOSED, PERIOD_OPEN)
+                .label("Reopen period")
+                .roles(&["Admin"])
+                .confirm("Reopen this closed period?"),
+        )
+}
+
+/// Quote Draft → Sent → Accepted → Converted.
+pub fn quote_workflow() -> WorkflowDef {
+    use qefro_core::{QUOTE_ENTITY, QUOTE_WORKFLOW};
+    WorkflowDef::new(QUOTE_WORKFLOW, QUOTE_ENTITY, "Draft")
+        .state(StateDef::new("Sent"))
+        .state(StateDef::new("Accepted"))
+        .state(StateDef::new("Converted").terminal())
+        .transition(
+            TransitionDef::new("send", "Draft", "Sent")
+                .label("Send")
+                .roles(&["Staff", "Manager"]),
+        )
+        .transition(
+            TransitionDef::new("accept", "Sent", "Accepted")
+                .label("Accept")
+                .roles(&["Staff", "Manager"]),
+        )
+        .transition(
+            TransitionDef::new("convert", "Accepted", "Converted")
+                .label("Convert")
+                .roles(&["Staff", "Manager"])
+                .confirm("Convert this quote to a sales order?"),
+        )
+}
+
+/// Sales Order Draft → Confirmed → Fulfilled → Completed. Cancel from Confirmed.
+pub fn sales_order_workflow() -> WorkflowDef {
+    use qefro_core::{SALES_ORDER_ENTITY, SALES_ORDER_WORKFLOW};
+    WorkflowDef::new(SALES_ORDER_WORKFLOW, SALES_ORDER_ENTITY, "Draft")
+        .state(StateDef::new("Confirmed"))
+        .state(StateDef::new("Fulfilled"))
+        .state(StateDef::new("Completed").terminal())
+        .state(StateDef::new("Cancelled").terminal())
+        .transition(
+            TransitionDef::new("confirm", "Draft", "Confirmed")
+                .label("Confirm")
+                .roles(&["Staff", "Manager"])
+                .confirm("Confirm this sales order?"),
+        )
+        .transition(
+            TransitionDef::new("fulfill", "Confirmed", "Fulfilled")
+                .label("Fulfill")
+                .roles(&["Staff", "Manager"]),
+        )
+        .transition(
+            TransitionDef::new("complete", "Fulfilled", "Completed")
+                .label("Complete")
+                .roles(&["Staff", "Manager"]),
+        )
+        .transition(
+            TransitionDef::new("cancel", "Confirmed", "Cancelled")
+                .label("Cancel")
+                .roles(&["Manager"])
+                .confirm("Cancel this sales order?"),
+        )
+}
+
+/// Shipment Pending → Ready → Shipped → Delivered.
+pub fn shipment_workflow() -> WorkflowDef {
+    use qefro_core::{SHIPMENT_ENTITY, SHIPMENT_WORKFLOW};
+    WorkflowDef::new(SHIPMENT_WORKFLOW, SHIPMENT_ENTITY, "Pending")
+        .state(StateDef::new("Ready"))
+        .state(StateDef::new("Shipped"))
+        .state(StateDef::new("Delivered").terminal())
+        .transition(
+            TransitionDef::new("prepare", "Pending", "Ready")
+                .label("Prepare")
+                .roles(&["Staff", "Manager"]),
+        )
+        .transition(
+            TransitionDef::new("ship", "Ready", "Shipped")
+                .label("Ship")
+                .roles(&["Staff", "Manager"]),
+        )
+        .transition(
+            TransitionDef::new("deliver", "Shipped", "Delivered")
+                .label("Deliver")
+                .roles(&["Staff", "Manager"]),
+        )
+}
+
+/// Invoice Draft → Issued → Paid. Overdue is derived, not a state.
+pub fn invoice_workflow() -> WorkflowDef {
+    use qefro_core::{INVOICE_ENTITY, INVOICE_WORKFLOW};
+    WorkflowDef::new(INVOICE_WORKFLOW, INVOICE_ENTITY, "Draft")
+        .state(StateDef::new("Issued"))
+        .state(StateDef::new("Paid").terminal())
+        .transition(
+            TransitionDef::new("issue", "Draft", "Issued")
+                .label("Issue")
+                .roles(&["Staff", "Manager"])
+                .confirm("Issue this invoice? Accounting will post when account mappings exist."),
+        )
+        .transition(
+            TransitionDef::new("record_payment", "Issued", "Paid")
+                .label("Record payment")
+                .roles(&["Staff", "Manager"]),
+        )
+}
+
+/// Sales payment Draft → Received.
+pub fn sales_payment_workflow() -> WorkflowDef {
+    use qefro_core::{PAYMENT_WORKFLOW, SALES_PAYMENT_ENTITY};
+    WorkflowDef::new(PAYMENT_WORKFLOW, SALES_PAYMENT_ENTITY, "Draft")
+        .state(StateDef::new("Received").terminal())
+        .transition(
+            TransitionDef::new("receive", "Draft", "Received")
+                .label("Receive")
+                .roles(&["Staff", "Manager"]),
+        )
+}
+
+/// Return Requested → Approved → Received → Refunded.
+pub fn sales_return_workflow() -> WorkflowDef {
+    use qefro_core::{RETURN_WORKFLOW, SALES_RETURN_ENTITY};
+    WorkflowDef::new(RETURN_WORKFLOW, SALES_RETURN_ENTITY, "Requested")
+        .state(StateDef::new("Approved"))
+        .state(StateDef::new("Received"))
+        .state(StateDef::new("Refunded").terminal())
+        .transition(
+            TransitionDef::new("approve", "Requested", "Approved")
+                .label("Approve")
+                .roles(&["Manager"]),
+        )
+        .transition(
+            TransitionDef::new("receive", "Approved", "Received")
+                .label("Receive")
+                .roles(&["Staff", "Manager"]),
+        )
+        .transition(
+            TransitionDef::new("refund", "Received", "Refunded")
+                .label("Refund")
+                .roles(&["Manager"])
+                .confirm("Refund this return? Inventory restore is a no-op until Inventory Runtime exists."),
+        )
+}
+
 #[cfg(test)]
 mod task_workflow_tests {
     #[test]
     fn task_workflow_is_structurally_valid() {
         crate::task_workflow().validate().unwrap();
+    }
+
+    #[test]
+    fn accounting_workflows_are_structurally_valid() {
+        crate::journal_workflow().validate().unwrap();
+        crate::period_workflow().validate().unwrap();
+        crate::quote_workflow().validate().unwrap();
+        crate::sales_order_workflow().validate().unwrap();
+        crate::shipment_workflow().validate().unwrap();
+        crate::invoice_workflow().validate().unwrap();
+        crate::sales_payment_workflow().validate().unwrap();
+        crate::sales_return_workflow().validate().unwrap();
     }
 }

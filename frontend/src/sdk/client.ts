@@ -7,6 +7,8 @@ import type { UiEntity, UiField, WidgetOptions, UiWhen } from "../metadata/types
 export type { UiEntity, UiField, WidgetOptions, UiWhen };
 
 const TOKEN_KEY = "qefro_token";
+const TOKEN_EXP_KEY = "qefro_token_exp";
+export { TOKEN_KEY };
 
 export type TenantConfig = {
   branding: {
@@ -17,6 +19,10 @@ export type TenantConfig = {
     accent_color?: string | null;
     company_name?: string | null;
     app_name?: string | null;
+    address?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    website?: string | null;
   };
   ui_config: {
     navigation: string[];
@@ -31,6 +37,12 @@ export type TenantConfig = {
     locale?: string;
     date_format?: string;
     number_format?: string;
+    cash_account?: string | null;
+    receivable_account?: string | null;
+    payable_account?: string | null;
+    sales_account?: string | null;
+    cogs_account?: string | null;
+    inventory_account?: string | null;
   };
   business_config?: unknown;
   features?: { flags?: Record<string, boolean> };
@@ -61,9 +73,34 @@ export type EntityAction = {
   confirmation_message?: string;
   icon?: string;
   workflow_transition?: string;
+  input_schema?: {
+    type?: string;
+    properties?: Record<string, { type?: string; title?: string; description?: string; enum?: string[] }>;
+    required?: string[];
+  };
 };
 
-export type FieldError = { field: string; code?: string; message: string };
+export type OperationResult = {
+  id?: string;
+  _operation?: {
+    id?: string;
+    operation?: string;
+    name?: string;
+    status?: string;
+    progress?: number;
+    message?: string | null;
+    navigate?: { entity?: string; slug?: string; id?: string } | null;
+  };
+};
+
+export type FieldError = {
+  field: string;
+  code?: string;
+  message: string;
+  entity?: string;
+  record?: string;
+  rule?: string;
+};
 
 export class ApiError extends Error {
   status: number;
@@ -75,6 +112,9 @@ export class ApiError extends Error {
     this.fields = fields;
   }
 }
+
+/** Structured 422 from EntityService. Same envelope as [`ApiError`]. */
+export class ValidationError extends ApiError {}
 
 export type Expanded = {
   id: string;
@@ -101,19 +141,77 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     const fields: FieldError[] =
       data?.details?.fields ?? data?.fields ?? [];
+    if (res.status === 422) {
+      throw new ValidationError(data.message || data.error || res.statusText, res.status, fields);
+    }
     throw new ApiError(data.message || data.error || res.statusText, res.status, fields);
   }
   return data as T;
 }
 
+function xhrUpload(
+  url: string,
+  file: File,
+  onProgress?: (n: number) => void,
+  signal?: AbortSignal,
+) {
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    const headers = tokenHeader();
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText || "{}");
+        if (xhr.status >= 400) reject(new ApiError(data.message || xhr.statusText, xhr.status));
+        else resolve(data);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    xhr.onerror = () => reject(new ApiError("Upload failed", 0));
+    xhr.onabort = () => reject(new ApiError("Upload cancelled", 0));
+    if (signal) {
+      if (signal.aborted) {
+        xhr.abort();
+        return;
+      }
+      signal.addEventListener("abort", () => xhr.abort(), { once: true });
+    }
+    const body = new FormData();
+    body.append("file", file);
+    xhr.send(body);
+  });
+}
+
 export class QefroClient {
   login = (email: string, password: string) =>
-    request<{ access_token: string; roles: string[] }>("/api/v1/auth/login", {
+    request<{ access_token: string; expires_in?: number; roles: string[] }>("/api/v1/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
+  logout = () => request<void>("/api/v1/auth/logout", { method: "POST" });
+  refresh = () =>
+    request<{ access_token: string; expires_in?: number }>("/api/v1/auth/refresh", {
+      method: "POST",
+    });
+  /** Replaces the stored Bearer token. The previous session is revoked server-side. */
+  switchTenant = async (tenantId: string) => {
+    const res = await request<{ access_token: string; expires_in?: number }>(
+      "/api/v1/auth/switch-tenant",
+      {
+        method: "POST",
+        body: JSON.stringify({ tenant_id: tenantId }),
+      },
+    );
+    saveToken(res.access_token, res.expires_in);
+    return res;
+  };
   register = (body: Record<string, string>) =>
-    request<{ access_token: string }>("/api/v1/auth/register", {
+    request<{ access_token: string; expires_in?: number }>("/api/v1/auth/register", {
       method: "POST",
       body: JSON.stringify(body),
     });
@@ -146,9 +244,11 @@ export class QefroClient {
           view?: string | null;
           module?: string | null;
           section?: string | null;
+          page?: string | null;
         }>;
         shortcuts?: Array<{ label: string; to: string; entity?: string; kind?: string }>;
         default_dashboard?: string | null;
+        pages?: Array<{ name: string; label: string; slug: string; route?: string }>;
       };
     }>("/api/v1/meta/ui");
   tenant = () => request<Record<string, unknown>>("/api/v1/tenant");
@@ -189,6 +289,10 @@ export class QefroClient {
     }>(`/api/v1/dashboards/${name}${q ? `?${q}` : ""}`);
   };
   getDashboard = (name: string, extra?: URLSearchParams) => this.dashboard(name, extra);
+  pages = () =>
+    request<{ pages: Array<import("../metadata/types").PageDef> }>("/api/v1/meta/pages");
+  page = (name: string) =>
+    request<import("../metadata/types").PageDef>(`/api/v1/meta/pages/${encodeURIComponent(name)}`);
   workspace = () =>
     request<{
       navigation: Array<{
@@ -247,16 +351,64 @@ export class QefroClient {
     link.click();
     URL.revokeObjectURL(url);
   };
+  printHtml = async (slug: string, id: string, format?: string) => {
+    const q = format ? `?format=${encodeURIComponent(format)}` : "";
+    const res = await fetch(`/api/v1/${slug}/${id}/print${q}`, { headers: tokenHeader() });
+    if (!res.ok) {
+      throw new ApiError(res.statusText, res.status);
+    }
+    return res.text();
+  };
+  communications = (slug: string, id: string) =>
+    request<{ items: Array<Record<string, unknown>> }>(`/api/v1/${slug}/${id}/communications`);
+  sendCommunication = (
+    slug: string,
+    id: string,
+    body: { template: string; channel?: string },
+  ) =>
+    request<{ queued: Array<Record<string, unknown>>; message?: string }>(
+      `/api/v1/${slug}/${id}/actions/send_communication`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  downloadPdf = async (slug: string, id: string, format?: string) => {
+    const q = format ? `?format=${encodeURIComponent(format)}` : "";
+    const res = await fetch(`/api/v1/${slug}/${id}/print.pdf${q}`, { headers: tokenHeader() });
+    if (!res.ok) {
+      throw new ApiError(res.statusText, res.status);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const disposition = res.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename="([^"]+)"/);
+    link.href = url;
+    link.download = match?.[1] || "document.pdf";
+    link.click();
+    URL.revokeObjectURL(url);
+  };
   transition = (slug: string, id: string, transition: string) =>
     request<Record<string, unknown>>(`/api/v1/${slug}/${id}/transition`, {
       method: "POST",
       body: JSON.stringify({ transition }),
     });
-  action = (slug: string, id: string, name: string, body: unknown = {}) =>
-    request<Record<string, unknown>>(`/api/v1/${slug}/${id}/actions/${name}`, {
+  action = (
+    slug: string,
+    id: string,
+    name: string,
+    body: unknown = {},
+    opts?: { idempotencyKey?: string },
+  ) => {
+    const key = opts?.idempotencyKey || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    return request<Record<string, unknown>>(`/api/v1/${slug}/${id}/actions/${name}`, {
       method: "POST",
       body: JSON.stringify(body ?? {}),
+      headers: { "Idempotency-Key": key },
     });
+  };
+  execute = (
+    args: { entity: string; id: string; action: string; inputs?: unknown; idempotencyKey?: string },
+  ) => this.action(args.entity, args.id, args.action, args.inputs ?? {}, { idempotencyKey: args.idempotencyKey });
+  operationRun = (id: string) => request<Record<string, unknown>>(`/api/v1/operation-runs/${id}`);
   workflow = (slug: string, id: string) =>
     request<{ current: string; transitions: WorkflowAction[] }>(`/api/v1/${slug}/${id}/workflow`);
   getWorkflow = (slug: string, id: string) => this.workflow(slug, id);
@@ -272,10 +424,10 @@ export class QefroClient {
   activity = (slug: string, id: string) =>
     request<{ items: Array<Record<string, unknown>> }>(`/api/v1/${slug}/${id}/activity`);
   getActivity = (slug: string, id: string) => this.activity(slug, id);
-  addComment = (slug: string, id: string, message: string) =>
+  addComment = (slug: string, id: string, message: string, attachmentId?: string) =>
     request<Record<string, unknown>>(`/api/v1/${slug}/${id}/comments`, {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, attachment_id: attachmentId }),
     });
   upload = (file: File, kind: "file" | "image" = "file", onProgress?: (n: number) => void) =>
     new Promise<{ key: string; url: string; filename: string; content_type: string; size: number }>(
@@ -359,12 +511,22 @@ export class QefroClient {
     request<{ dashboards: Array<Record<string, unknown>> }>("/api/v1/studio/dashboards");
   studioDashboard = (name: string) =>
     request<Record<string, unknown>>(`/api/v1/studio/dashboards/${name}`);
+  studioPages = () => request<{ pages: Array<Record<string, unknown>> }>("/api/v1/studio/pages");
+  studioPage = (name: string) => request<Record<string, unknown>>(`/api/v1/studio/pages/${name}`);
   studioPrintFormats = () =>
     request<{ print_formats: Array<Record<string, unknown>> }>("/api/v1/studio/print-formats");
   studioPrintFormat = (name: string) =>
     request<Record<string, unknown>>(`/api/v1/studio/print-formats/${name}`);
   studioPrintPreview = (name: string) =>
     request<{ html: string }>(`/api/v1/studio/print-formats/${name}/preview`);
+  studioCommunications = () =>
+    request<{ communications: Array<Record<string, unknown>> }>("/api/v1/studio/communications");
+  studioCommunication = (name: string) =>
+    request<Record<string, unknown>>(`/api/v1/studio/communications/${name}`);
+  studioCommunicationPreview = (name: string) =>
+    request<{ subject: string; body: string; channel?: string; sent?: boolean }>(
+      `/api/v1/studio/communications/${name}/preview`,
+    );
   studioSearch = (q: string) =>
     request<{ results: Array<{ kind: string; name: string; label?: string; entity?: string }> }>(
       `/api/v1/studio/search?q=${encodeURIComponent(q)}`,
@@ -420,6 +582,13 @@ export class QefroClient {
       metric: string;
       series: Array<{ label: string; value: number }>;
     }>(`/api/v1/${slug}/aggregates?${params}`);
+  availability = (slug: string, params: URLSearchParams) =>
+    request<{
+      entity: string;
+      date: string;
+      duration_minutes: number;
+      slots: Array<{ start: string; end: string; available: boolean }>;
+    }>(`/api/v1/${slug}/availability?${params}`);
   settings = (slug: string) => request<Record<string, unknown>>(`/api/v1/settings/${slug}`);
   saveSettings = (slug: string, body: unknown) =>
     request<Record<string, unknown>>(`/api/v1/settings/${slug}`, {
@@ -431,10 +600,56 @@ export class QefroClient {
   getNotifications = () => this.notifications();
   readNotification = (id: string) =>
     request<void>(`/api/v1/notifications/${id}/read`, { method: "POST" });
-  attachments = (slug: string, id: string) =>
-    request<{ items: Array<Record<string, unknown>> }>(`/api/v1/${slug}/${id}/attachments`);
+  attachments = (slug: string, id: string, page = 1, pageSize = 50) =>
+    request<{ items: Array<Record<string, unknown>>; total?: number; page?: number; page_size?: number }>(
+      `/api/v1/${slug}/${id}/attachments?page=${page}&page_size=${pageSize}`,
+    );
   getAttachments = (slug: string, id: string) => this.attachments(slug, id);
   deleteAttachment = (id: string) => request<void>(`/api/v1/attachments/${id}`, { method: "DELETE" });
+  updateAttachment = (id: string, body: { filename?: string; description?: string }) =>
+    request<Record<string, unknown>>(`/api/v1/attachments/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  downloadAttachment = (id: string, inline = false) =>
+    fetch(`/api/v1/attachments/${id}${inline ? "?disposition=inline" : ""}`, { headers: tokenHeader() }).then(
+      async (res) => {
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new ApiError((data as { message?: string }).message || res.statusText, res.status);
+        }
+        return res.blob();
+      },
+    );
+  replaceAttachment = (
+    id: string,
+    file: File,
+    onProgress?: (n: number) => void,
+    signal?: AbortSignal,
+  ) =>
+    xhrUpload(`/api/v1/attachments/${id}/replace`, file, onProgress, signal);
+  uploadAttachment = (
+    slug: string,
+    id: string,
+    file: File,
+    onProgress?: (n: number) => void,
+    signal?: AbortSignal,
+  ) => xhrUpload(`/api/v1/${slug}/${id}/attachments`, file, onProgress, signal);
+  files = {
+    list: (slug: string, id: string, page?: number, pageSize?: number) => this.attachments(slug, id, page, pageSize),
+    upload: (
+      slug: string,
+      id: string,
+      file: File,
+      onProgress?: (n: number) => void,
+      signal?: AbortSignal,
+    ) => this.uploadAttachment(slug, id, file, onProgress, signal),
+    download: (id: string, inline?: boolean) => this.downloadAttachment(id, inline),
+    delete: (id: string) => this.deleteAttachment(id),
+    update: (id: string, body: { filename?: string; description?: string }) => this.updateAttachment(id, body),
+    replace: (id: string, file: File, onProgress?: (n: number) => void, signal?: AbortSignal) =>
+      this.replaceAttachment(id, file, onProgress, signal),
+  };
   publicForm = (tenant: string, slug: string) =>
     request<{
       title: string;
@@ -456,45 +671,76 @@ export class QefroClient {
     request<{ automation: Record<string, unknown>; yaml: string; json: string }>(
       `/api/v1/studio/automations/${name}`,
     );
+  studioAutomationPreview = (name: string, body: Record<string, unknown>) =>
+    request<{ automation: string; dry_run: boolean; would_execute: Array<Record<string, unknown>>; side_effects: boolean }>(
+      `/api/v1/studio/automations/${name}/preview`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+  studioAutomationRuns = (name?: string, opts?: { entity?: string; recordId?: string }) => {
+    if (name) {
+      return request<{ runs: Array<Record<string, unknown>> }>(
+        `/api/v1/studio/automations/${encodeURIComponent(name)}/runs`,
+      );
+    }
+    const query = new URLSearchParams();
+    if (opts?.entity) query.set("entity", opts.entity);
+    if (opts?.recordId) query.set("record_id", opts.recordId);
+    const suffix = query.toString() ? `?${query}` : "";
+    return request<{ runs: Array<Record<string, unknown>> }>(`/api/v1/studio/automations/runs${suffix}`);
+  };
+  studioAutomationDisable = (name: string) =>
+    request<Record<string, unknown>>(`/api/v1/studio/automations/${name}/disable`, { method: "POST" });
+  studioAutomationEnable = (name: string) =>
+    request<Record<string, unknown>>(`/api/v1/studio/automations/${name}/enable`, { method: "POST" });
   studioPublicForms = () =>
     request<{ public_forms: Array<Record<string, unknown>> }>("/api/v1/studio/public-forms");
-  importPreview = (slug: string, csv: string, mapping?: Array<{ column: string; field?: string | null; default?: unknown }>) =>
+  importPreview = (
+    slug: string,
+    body: {
+      csv?: string;
+      json?: string;
+      mapping?: Array<{ column: string; field?: string | null; default?: unknown }>;
+      mode?: string;
+      duplicate_policy?: string;
+      match_field?: string;
+      format?: string;
+      blob_key?: string;
+    },
+  ) =>
     request<Record<string, unknown>>(`/api/v1/${slug}/import/preview`, {
       method: "POST",
-      body: JSON.stringify({ csv, mapping: mapping ?? [] }),
+      body: JSON.stringify(body),
     });
   importRun = (
     slug: string,
-    csv: string,
-    mapping?: Array<{ column: string; field?: string | null; default?: unknown }>,
+    body: {
+      csv?: string;
+      json?: string;
+      mapping?: Array<{ column: string; field?: string | null; default?: unknown }>;
+      mode?: string;
+      duplicate_policy?: string;
+      match_field?: string;
+      dry_run?: boolean;
+      batch_size?: number;
+      blob_key?: string;
+      idempotency_key?: string;
+    },
   ) =>
     request<Record<string, unknown>>(`/api/v1/${slug}/import`, {
       method: "POST",
-      body: JSON.stringify({ csv, mapping: mapping ?? [], batch_size: 100 }),
+      body: JSON.stringify({ batch_size: 100, ...body }),
     });
-  uploadAttachment = (slug: string, id: string, file: File, onProgress?: (n: number) => void) =>
-    new Promise<Record<string, unknown>>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", `/api/v1/${slug}/${id}/attachments`);
-      const headers = tokenHeader();
-      for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
-      };
-      xhr.onload = () => {
-        try {
-          const data = JSON.parse(xhr.responseText || "{}");
-          if (xhr.status >= 400) reject(new ApiError(data.message || xhr.statusText, xhr.status));
-          else resolve(data);
-        } catch (err) {
-          reject(err);
-        }
-      };
-      xhr.onerror = () => reject(new ApiError("upload failed", 0));
-      const body = new FormData();
-      body.append("file", file);
-      xhr.send(body);
-    });
+  importUpload = (slug: string, file: File) => xhrUpload(`/api/v1/${slug}/import/upload`, file);
+  importJobs = (slug?: string) =>
+    request<{ items: Array<Record<string, unknown>> }>(
+      slug ? `/api/v1/${slug}/imports` : "/api/v1/imports",
+    );
+  importJob = (id: string) => request<Record<string, unknown>>(`/api/v1/imports/${id}`);
+  cancelImport = (id: string) =>
+    request<Record<string, unknown>>(`/api/v1/imports/${id}/cancel`, { method: "POST" });
+  retryImport = (id: string) =>
+    request<Record<string, unknown>>(`/api/v1/imports/${id}/retry`, { method: "POST" });
+  importErrorsUrl = (id: string) => `/api/v1/imports/${id}/errors`;
   webhookDeliveries = (name: string) =>
     request<{ deliveries: Array<Record<string, unknown>> }>(`/api/v1/webhooks/${name}/deliveries`);
   testWebhook = (name: string) =>
@@ -515,13 +761,44 @@ export function notifyMetadata() {
   window.dispatchEvent(new Event(METADATA_EVENT));
 }
 
-export function saveToken(token: string) {
+let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleRefresh(expiresIn?: number) {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = undefined;
+  }
+  if (!expiresIn || expiresIn < 60) return;
+  const waitMs = Math.max(30_000, Math.floor(expiresIn * 1000 * 0.8));
+  refreshTimer = setTimeout(() => {
+    api
+      .refresh()
+      .then((res) => saveToken(res.access_token, res.expires_in))
+      .catch(() => undefined);
+  }, waitMs);
+}
+
+if (typeof window !== "undefined") {
+  const exp = Number(localStorage.getItem(TOKEN_EXP_KEY) || 0);
+  if (exp > Date.now() && localStorage.getItem(TOKEN_KEY)) {
+    scheduleRefresh(Math.floor((exp - Date.now()) / 1000));
+  }
+}
+
+export function saveToken(token: string, expiresIn?: number) {
   localStorage.setItem(TOKEN_KEY, token);
+  if (expiresIn && expiresIn > 0) {
+    localStorage.setItem(TOKEN_EXP_KEY, String(Date.now() + expiresIn * 1000));
+  } else {
+    localStorage.removeItem(TOKEN_EXP_KEY);
+  }
   notifyAuth();
+  scheduleRefresh(expiresIn);
 }
 
 export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_EXP_KEY);
   notifyAuth();
 }
 

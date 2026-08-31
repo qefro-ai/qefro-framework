@@ -66,10 +66,11 @@ The full catalog (every feature with a one-line description) is the [documentati
 | Permissions | [permissions.md](permissions.md) |
 | Identity | [identity.md](identity.md) |
 | Tasks | [tasks.md](tasks.md) |
+| Files | [files.md](files.md) |
 | Business object runtime | [business-object-runtime.md](business-object-runtime.md) |
 | UI | [ui.md](ui.md), [ui-2.md](ui-2.md), [views.md](views.md) |
 | Studio | [studio.md](studio.md) |
-| Reports / dashboards | [reports.md](reports.md), [dashboards.md](dashboards.md) |
+| Reports / dashboards / pages | [reports.md](reports.md), [dashboards.md](dashboards.md), [pages.md](pages.md) |
 | Events / jobs | [events.md](events.md), [jobs.md](jobs.md) |
 | Webhooks / realtime | [webhooks.md](webhooks.md), [realtime.md](realtime.md) |
 | Public forms | [public-forms.md](public-forms.md) |

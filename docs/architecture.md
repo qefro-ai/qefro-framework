@@ -20,7 +20,7 @@ V0.4 extends V0.3. It does not rewrite CRUD, operations, or the agent boundary. 
 
 ## Metadata is the source of truth
 
-`EntityDef` describes fields, validation, relations, UI, audit, and workflow binding. `OperationDef` describes named business actions. Together they drive:
+`EntityDef` describes fields, validation, relations, UI, audit, and workflow binding. `OperationDef` describes named business actions, including multi-entity transactions on one SQLx connection ([business-operations.md](business-operations.md)). Together they drive:
 
 - DDL generation
 - CRUD SQL (parameterized; identifiers allowlisted)
@@ -35,7 +35,7 @@ V0.4 extends V0.3. It does not rewrite CRUD, operations, or the agent boundary. 
 - Singletons, attachments, actions, links, and public forms
 - Notifications, webhooks, import, search, and realtime fan-out
 
-`EntityDef` is the source of truth. `EntityService` is the execution boundary. Generic List / Card / Kanban / Calendar / Chart / Form / Detail renderers consume UI metadata. Studio overlays presentation (`entity.field.ui`, `entity.views`); it does not replace the business model.
+`EntityDef` is the source of truth. `EntityService` is the execution boundary. Generic List / Card / Kanban / Calendar / Chart / Form / Detail renderers consume UI metadata. Studio overlays presentation (`entity.field.ui`, `entity.views`); it does not replace the business model. Authorization is RBAC + RowPolicy inside `EntityService`, not a second permission engine. PostgreSQL RLS is an optional defense-in-depth pilot on `qefro_activity` only ([rls.md](rls.md)).
 
 See [sdk.md](sdk.md) and [Create an application](creating-an-app.md).
 
@@ -85,15 +85,15 @@ CLI  ─────────────┤
 EntityOps / Agent ┘
 ```
 
-`EntityDef` is the source of truth. `EntityService` is the execution boundary. The browser talks to REST through `QefroClient` ([sdk.md](sdk.md)). Agents use in-process `EntityOps`. Generic List / Card / Kanban / Calendar / Chart / Form / Detail renderers consume UI metadata. Studio overlays presentation (`entity.field.ui`, `entity.views`); it does not replace the business model.
+`EntityDef` is the source of truth. `EntityService` is the execution boundary. Business rules (`required`, `required_when`, validation, defaults, `readonly_when`, `visible_when`, computed formulas) are declared on that metadata and enforced in EntityService — see [business-rules.md](business-rules.md). The browser talks to REST through `QefroClient` ([sdk.md](sdk.md)). Agents use in-process `EntityOps`. Generic List / Card / Kanban / Calendar / Chart / Form / Detail renderers consume UI metadata. Studio overlays presentation (`entity.field.ui`, `entity.views`); it does not replace the business model.
 
 Clients cannot set `tenant_id` on create, update, action, or agent invoke. `X-Tenant-ID` is ignored. Agents have no SQLx dependency and cannot run SQL. Restaurant and CRM rules live in `examples/`, not in core crates.
 
 User and agent calls use user RBAC. Workers use `OpContext::worker` and may run only handlers/operations marked `worker_safe`.
 
-**Qefro 1.3 search, reports, dashboards, and saved views:** Global search, entity search weights, saved views, metadata reports, generic charts, dashboards, and workspaces sit on the same `EntityService`. See [Search](search.md), [Reports](reports.md), [Dashboards](dashboards.md), and [Workspaces](workspaces.md).
+**Qefro 1.3 search, reports, dashboards, pages, and saved views:** Global search, entity search weights, saved views, metadata reports, generic charts, dashboards, composed pages, and workspaces sit on the same `EntityService`. Pages compose existing generic components; they are not a second UI runtime. See [Search](search.md), [Reports](reports.md), [Dashboards](dashboards.md), [Pages](pages.md), and [Workspaces](workspaces.md).
 
-**Qefro 1.2 business object runtime:** Identity (Person / Organization / User / business), workflow UI, activity, audit, attachments, and in-app notifications sit on `EntityService`. See [Business object runtime](business-object-runtime.md) and [Identity](identity.md). The framework Task primitive composes the same path — see [Tasks](tasks.md).
+**Qefro 1.2 business object runtime:** Identity (Person / Organization / User / business), workflow UI, activity, audit, attachments, and in-app notifications sit on `EntityService`. See [Business object runtime](business-object-runtime.md) and [Identity](identity.md). The framework Task primitive composes the same path — see [Tasks](tasks.md). Entity attachments (documents and files) are the same runtime — see [Files](files.md). Double-entry accounting is another composition of that path — see [Accounting](accounting.md). Generic commerce (Quote → Sales Order → Fulfillment → Invoice → Payment → Return) is the same composition — see [Commerce](commerce.md).
 
 `ctx.get` inside an operation transaction uses `SELECT … FOR UPDATE` so exclusive resources (a dining table, a room) cannot be acquired twice. HTTP 5xx responses use `QefroError::public_message`: SQL, credentials, and stack traces are not returned to clients.
 
@@ -166,6 +166,6 @@ Entity → Fields → Relations → Permissions → Workflow → Actions
        └── Connector (SDK, later)
 ```
 
-See [singletons](singletons.md), [field permissions](field-permissions.md), [allow on submit](allow-on-submit.md), [actions and links](actions-links.md), [attachments](attachments.md), [notifications](notifications.md), [webhooks](webhooks.md), [imports](imports.md), [search](search.md), [realtime](realtime.md), and [public forms](public-forms.md).
+See [singletons](singletons.md), [field permissions](field-permissions.md), [allow on submit](allow-on-submit.md), [actions and links](actions-links.md), [attachments](attachments.md), [notifications](notifications.md), [communications](communications.md), [webhooks](webhooks.md), [imports](imports.md), [search](search.md), [realtime](realtime.md), [public forms](public-forms.md), and [security audit](security-audit.md).
 
 

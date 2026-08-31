@@ -9,9 +9,10 @@ Every tenant-owned row includes `tenant_id`. That value is taken from the authen
 - Tenant A cannot invoke Tenant B's records through agent tools.
 - Tenant A cannot read or modify Tenant B branding, feature flags, dashboards, or enabled apps.
 - List queries always include `WHERE tenant_id = $1`.
+- `qefro_activity` also has a PostgreSQL RLS pilot (`qefro.tenant_id` GUC, `SET LOCAL` per transaction). Other tables remain application-authorization-only. See [rls.md](rls.md).
 - `GET /api/v1/tenants` returns the current tenant only.
 
-See [Tenant customization](tenants.md), [Identity](identity.md), and [Security](security.md).
+See [Tenant customization](tenants.md), [Identity](identity.md), [Security](security.md), and [Security audit](security-audit.md).
 
 ## Configuration
 

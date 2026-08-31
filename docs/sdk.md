@@ -21,10 +21,10 @@ Typed methods cover UI metadata, records, workflow, search, reports, dashboards,
 - `list` / `get` / `create` / `update` / `remove`
 - `action` / `transition` / `workflow` / `getWorkflow`
 - `activity` / `getActivity` / `addComment`
-- `attachments` / `getAttachments` / `uploadAttachment`
+- `attachments` / `getAttachments` / `uploadAttachment` / `files.list` / `files.upload` / `files.download` / `files.delete`
 - `notifications` / `getNotifications`
 - `audit` (Admin)
-- `upload` / `uploadAttachment`
+- `importPreview` / `importRun` / `importUpload` / `importJobs` / `importJob` / `cancelImport` / `retryImport`
 
 There is no `IdentityClient`, `WorkflowClient`, `ReportClient`, `DashboardClient`, or `SearchClient`. Studio, RelationPicker, Kanban drag, and entity pages all call this client. Do not add a second UI API.
 
@@ -35,4 +35,4 @@ There is no `IdentityClient`, `WorkflowClient`, `ReportClient`, `DashboardClient
 | Browser | `QefroClient` | REST `/api/v1` |
 | Agents | `EntityOps` | in-process `EntityService` |
 
-Same tenant, RBAC, validation, and workflow on every path.
+Same tenant, RBAC, validation, and workflow on every path. 422 responses throw `ValidationError` (subclass of `ApiError`) with `fields: [{ field, code, message }]`.

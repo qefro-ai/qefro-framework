@@ -30,7 +30,7 @@ RBAC and field permissions are enforced in `EntityService`, not in the generic U
 
 ### Malicious webhook
 
-Deliveries are HMAC-signed. Secrets are never returned by APIs. Delivery is **at-least-once** with retries and backoff; consumers must be idempotent using `event_id`. Invalid endpoints fail the job, not the business transaction.
+Deliveries are HMAC-signed. Secrets are never returned by APIs. Delivery is **at-least-once** with retries and backoff; consumers must be idempotent using `event_id`. Invalid endpoints fail the job, not the business transaction. Outbound URLs are restricted (http/https only, no private/loopback/metadata hosts, no redirects). DNS rebinding remains a residual; pair with network egress policy in production.
 
 ### Malicious public visitor
 
@@ -46,4 +46,4 @@ Treat PostgreSQL and `QEFRO_STORAGE_PATH` as trusted systems. Application-level 
 
 ## Residual risk
 
-In-memory rate limiting is per process. A distributed limiter can implement the same `RateLimiter` trait later. RLS is not generated in V1.0; tenant predicates in SQL remain the isolation mechanism.
+In-memory rate limiting is per process; multi-instance deployments need a proxy limiter or a future `RateLimitStore`. SPA access tokens live in `localStorage` (XSS can steal them); logout revokes the session, refresh rotates a still-valid JWT, and CSP/HTML sanitization reduce XSS. Entity tables do not use PostgreSQL RLS; `qefro_activity` has a small RLS pilot. See [security-audit.md](security-audit.md) and [rls.md](rls.md).

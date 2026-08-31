@@ -2,8 +2,8 @@ use crate::error::ApiError;
 use crate::extract::Auth;
 use crate::state::AppState;
 use axum::extract::{Multipart, Path, Query, State};
-use axum::http::{header, StatusCode};
-use axum::response::IntoResponse;
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use qefro_auth::AuthToken;
@@ -26,6 +26,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/auth/register", post(register))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/logout", post(logout))
+        .route("/api/v1/auth/refresh", post(refresh_session))
         .route("/api/v1/auth/me", get(me))
         .route("/api/v1/auth/switch-tenant", post(switch_tenant))
         .route("/api/v1/tenants", get(list_tenants).post(create_tenant))
@@ -36,6 +37,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/meta/workflows", get(meta_workflows))
         .route("/api/v1/meta/modules", get(meta_modules))
         .route("/api/v1/meta/dashboards", get(meta_dashboards))
+        .route("/api/v1/meta/pages", get(meta_pages))
+        .route("/api/v1/meta/pages/{name}", get(meta_page))
         .route("/api/v1/meta/reports", get(meta_reports))
         .route("/api/v1/meta/workspace", get(meta_workspace))
         .nest("/api/v1/studio", crate::studio::router())
@@ -44,6 +47,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/audit", get(list_audit))
         .route("/api/v1/tools", get(list_tools))
         .route("/api/v1/operations", get(list_operations))
+        .route("/api/v1/operation-runs/{id}", get(get_operation_run))
         .route("/api/v1/agent/tools", get(list_tools))
         .route("/api/v1/agent/tools/{name}/invoke", post(invoke_tool))
         .route("/api/v1/events", get(list_events))
@@ -89,11 +93,17 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/reports/{name}", get(get_report))
         .route("/api/v1/reports/{name}/run", post(run_report))
         .route("/api/v1/{slug}/aggregates", get(entity_aggregates))
+        .route("/api/v1/{slug}/availability", get(entity_availability))
         .route("/api/v1/{slug}/bulk", post(bulk_entities))
         .route("/api/v1/{slug}/export", get(export_entities))
         .route("/api/v1/{slug}/{id}/print", get(print_document))
         .route("/api/v1/{slug}/{id}/print.pdf", get(print_document_pdf))
         .route("/api/v1/{slug}/{id}/preview", get(print_document))
+        .route(
+            "/api/v1/{slug}/{id}/communications",
+            get(list_record_communications),
+        )
+        .route("/api/v1/communications", get(list_communications))
         .route("/api/v1/{slug}/{id}/workflow", get(get_workflow_state))
         .route("/api/v1/{slug}/{id}/transition", post(transition_entity))
         .route("/api/v1/{slug}/{id}/activity", get(list_activity))
@@ -166,8 +176,24 @@ struct RegisterBody {
 
 async fn register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<RegisterBody>,
 ) -> Result<Json<AuthToken>, ApiError> {
+    if !state.allow_register {
+        return Err(QefroError::forbidden("registration is disabled").into());
+    }
+    let email = body.email.to_ascii_lowercase();
+    let ip = client_ip(&headers);
+    rate_limit(
+        &state.auth_limiter,
+        &format!("register:{email}"),
+        "too many attempts",
+    )?;
+    rate_limit(
+        &state.auth_limiter,
+        &format!("register-ip:{ip}"),
+        "too many attempts",
+    )?;
     let token = state
         .auth
         .register(
@@ -190,19 +216,40 @@ struct LoginBody {
 
 async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<LoginBody>,
 ) -> Result<Json<AuthToken>, ApiError> {
-    if !state
-        .login_limiter
-        .allow(&format!("login:{}", body.email.to_ascii_lowercase()))
-    {
-        return Err(QefroError::rate_limited("too many login attempts").into());
-    }
+    let email = body.email.to_ascii_lowercase();
+    let ip = client_ip(&headers);
+    rate_limit(
+        &state.login_limiter,
+        &format!("login:{email}"),
+        "too many login attempts",
+    )?;
+    rate_limit(
+        &state.login_limiter,
+        &format!("login-ip:{ip}"),
+        "too many login attempts",
+    )?;
     let token = state
         .auth
         .login(&body.email, &body.password, body.tenant_slug.as_deref())
         .await?;
     Ok(Json(token))
+}
+
+async fn refresh_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<AuthToken>, ApiError> {
+    let header = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| QefroError::unauthorized("missing authorization header"))?;
+    let token = header
+        .strip_prefix("Bearer ")
+        .ok_or_else(|| QefroError::unauthorized("expected Bearer token"))?;
+    Ok(Json(state.auth.refresh(token).await?))
 }
 
 async fn logout(State(state): State<AppState>, Auth(ctx): Auth) -> Result<StatusCode, ApiError> {
@@ -237,9 +284,14 @@ async fn switch_tenant(
     Auth(ctx): Auth,
     Json(body): Json<SwitchBody>,
 ) -> Result<Json<AuthToken>, ApiError> {
+    rate_limit(
+        &state.auth_limiter,
+        &format!("switch:{}:{}", ctx.tenant_id, ctx.user_id),
+        "too many attempts",
+    )?;
     let token = state
         .auth
-        .switch_tenant(ctx.user_id, body.tenant_id)
+        .switch_tenant(ctx.user_id, body.tenant_id, ctx.session_id)
         .await?;
     Ok(Json(token))
 }
@@ -294,7 +346,7 @@ async fn meta_entity(
     Auth(ctx): Auth,
     Path(name): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let entity = state.entities.registry().get(&name)?;
+    let entity = state.entities.entity_for(&ctx, &name).await?;
     if !ctx.allows_app(entity.module.as_deref()) {
         return Err(QefroError::not_found(format!("entity '{name}' not found")).into());
     }
@@ -306,52 +358,76 @@ async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<
     let tenant = state.tenants.get(ctx.tenant_id).await.ok();
     let branding = state.resolve_branding(&ctx, &config, tenant.as_ref().map(|t| t.name.as_str()));
     let permissions = state.entities.permissions();
-    let entities: Vec<_> = state
-        .entities
-        .registry()
-        .list()
-        .into_iter()
-        .filter(|e| ctx.allows_app(e.module.as_deref()))
-        .map(|e| {
-            let mut meta = e.to_ui_meta();
-            meta.apply_terminology(&config.ui_config.terminology);
-            meta.permissions = Some(qefro_core::EntityPermissions {
-                list: permissions.allows(&ctx.roles, &e.name, Action::List),
-                create: permissions.allows(&ctx.roles, &e.name, Action::Create),
-                read: permissions.allows(&ctx.roles, &e.name, Action::Read),
-                update: permissions.allows(&ctx.roles, &e.name, Action::Update),
-                delete: permissions.allows(&ctx.roles, &e.name, Action::Delete),
-                export: permissions.allows(&ctx.roles, &e.name, Action::Export),
-            });
-            let ops = state.entities.operations().for_entity(&e.name);
-            if let Some(cap) = meta.capabilities.as_mut() {
-                cap.actions = cap.actions || !ops.is_empty();
+    let mut entities = Vec::new();
+    for e in state.entities.registry().list() {
+        if !ctx.allows_app(e.module.as_deref()) {
+            continue;
+        }
+        let effective = state
+            .entities
+            .entity_for(&ctx, &e.name)
+            .await
+            .unwrap_or(e.clone());
+        let mut meta = effective.to_ui_meta();
+        meta.apply_terminology(&config.ui_config.terminology);
+        meta.permissions = Some(qefro_core::EntityPermissions {
+            list: permissions.allows(&ctx.roles, &e.name, Action::List),
+            create: permissions.allows(&ctx.roles, &e.name, Action::Create),
+            read: permissions.allows(&ctx.roles, &e.name, Action::Read),
+            update: permissions.allows(&ctx.roles, &e.name, Action::Update),
+            delete: permissions.allows(&ctx.roles, &e.name, Action::Delete),
+            export: permissions.allows(&ctx.roles, &e.name, Action::Export),
+        });
+        let ops = state.entities.operations().for_entity(&e.name);
+        let comms: Vec<_> = state
+            .communications_live()
+            .into_iter()
+            .filter(|c| c.entity == e.name)
+            .collect();
+        if let Some(cap) = meta.capabilities.as_mut() {
+            cap.actions = cap.actions || !ops.is_empty();
+            cap.communication = !comms.is_empty();
+        }
+        meta.communications = comms
+            .iter()
+            .map(|c| qefro_core::CommunicationSummary {
+                name: c.name.clone(),
+                event: c.event.clone(),
+                channels: c.channels.clone(),
+                purpose: c.purpose.clone(),
+            })
+            .collect();
+        if !comms.is_empty() && !meta.actions.iter().any(|a| a.name == "send_communication") {
+            meta.actions.push(
+                qefro_core::EntityActionDef::new("send_communication")
+                    .label("Send message")
+                    .operation("send_communication"),
+            );
+        }
+        for binding in ops {
+            if meta
+                .actions
+                .iter()
+                .any(|a| a.name == binding.def.name || a.operation == binding.def.name)
+            {
+                continue;
             }
-            for binding in ops {
-                if meta
-                    .actions
-                    .iter()
-                    .any(|a| a.name == binding.def.name || a.operation == binding.def.name)
-                {
-                    continue;
-                }
-                let mut action = qefro_core::EntityActionDef::new(&binding.def.name)
-                    .label(&binding.def.label)
-                    .operation(&binding.def.name);
-                if binding.def.requires_confirmation {
-                    action = action.confirm(
-                        binding
-                            .def
-                            .confirmation_message
-                            .clone()
-                            .unwrap_or_else(|| format!("Run {}?", binding.def.label)),
-                    );
-                }
-                meta.actions.push(action);
+            let mut action = qefro_core::EntityActionDef::new(&binding.def.name)
+                .label(&binding.def.label)
+                .operation(&binding.def.name);
+            if binding.def.requires_confirmation {
+                action = action.confirm(
+                    binding
+                        .def
+                        .confirmation_message
+                        .clone()
+                        .unwrap_or_else(|| format!("Run {}?", binding.def.label)),
+                );
             }
-            meta
-        })
-        .collect();
+            meta.actions.push(action);
+        }
+        entities.push(meta);
+    }
     Ok(Json(json!({
         "schema_version": qefro_core::UI_SCHEMA_VERSION,
         "entities": entities,
@@ -528,6 +604,7 @@ fn reject_reserved(slug: &str) -> Result<(), ApiError> {
         "dashboards",
         "settings",
         "operations",
+        "operation-runs",
         "jobs",
         "files",
         "saved-filters",
@@ -542,6 +619,7 @@ fn reject_reserved(slug: &str) -> Result<(), ApiError> {
         "realtime",
         "public",
         "workspace",
+        "pages",
         "bulk",
         "export",
     ];
@@ -552,6 +630,27 @@ fn reject_reserved(slug: &str) -> Result<(), ApiError> {
     }
 }
 
+fn client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".into())
+}
+
+fn rate_limit(
+    limiter: &qefro_core::MemoryRateLimiter,
+    key: &str,
+    message: &str,
+) -> Result<(), ApiError> {
+    let decision = limiter.check(key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(message, decision.retry_after_secs()).into());
+    }
+    Ok(())
+}
+
 async fn bulk_entities(
     State(state): State<AppState>,
     Auth(ctx): Auth,
@@ -559,6 +658,11 @@ async fn bulk_entities(
     Json(body): Json<qefro_db::BulkRequest>,
 ) -> Result<Json<Value>, ApiError> {
     reject_reserved(&slug)?;
+    rate_limit(
+        &state.expensive_limiter,
+        &format!("bulk:{}:{}", ctx.tenant_id, ctx.user_id),
+        "rate limit exceeded",
+    )?;
     Ok(Json(state.entities.bulk(&ctx, &slug, body).await?))
 }
 
@@ -569,6 +673,11 @@ async fn export_entities(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, ApiError> {
     reject_reserved(&slug)?;
+    rate_limit(
+        &state.expensive_limiter,
+        &format!("export:{}:{}", ctx.tenant_id, ctx.user_id),
+        "rate limit exceeded",
+    )?;
     let entity = state.entities.registry().get(&slug)?;
     let ids = params.get("ids").and_then(|raw| {
         let parsed: Vec<Uuid> = raw
@@ -677,6 +786,8 @@ async fn transition_entity(
 #[derive(Deserialize)]
 struct CommentBody {
     message: String,
+    #[serde(default)]
+    attachment_id: Option<Uuid>,
 }
 
 async fn list_activity(
@@ -694,6 +805,66 @@ async fn list_activity(
     Ok(Json(json!({ "items": items })))
 }
 
+async fn list_record_communications(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path((slug, id)): Path<(String, Uuid)>,
+) -> Result<Json<Value>, ApiError> {
+    reject_reserved(&slug)?;
+    let _ = state.entities.get(&ctx, &slug, id).await?;
+    let entity = state.entities.registry().get(&slug)?;
+    let items: Vec<_> = state
+        .communications
+        .list_for_record(ctx.tenant_id, &entity.name, id)
+        .await?
+        .into_iter()
+        .map(|r| r.to_client_json())
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+#[derive(Deserialize)]
+struct CommunicationSearch {
+    entity: Option<String>,
+    record: Option<Uuid>,
+    channel: Option<String>,
+    status: Option<String>,
+    recipient: Option<String>,
+}
+
+async fn list_communications(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Query(q): Query<CommunicationSearch>,
+) -> Result<Json<Value>, ApiError> {
+    let entity = match q.entity.as_deref() {
+        Some(name) if !name.is_empty() => {
+            state
+                .entities
+                .permissions()
+                .check(&ctx, name, Action::Read)?;
+            Some(name)
+        }
+        _ if ctx.is_admin() => None,
+        _ => return Err(QefroError::forbidden("communication search requires an entity").into()),
+    };
+    let items: Vec<_> = state
+        .communications
+        .search(
+            ctx.tenant_id,
+            entity,
+            q.record,
+            q.channel.as_deref(),
+            q.status.as_deref(),
+            q.recipient.as_deref(),
+        )
+        .await?
+        .into_iter()
+        .map(|r| r.to_client_json())
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
 async fn add_comment(
     State(state): State<AppState>,
     Auth(ctx): Auth,
@@ -703,7 +874,7 @@ async fn add_comment(
     reject_reserved(&slug)?;
     let row = state
         .entities
-        .add_comment(&ctx, &slug, id, &body.message)
+        .add_comment_with_attachment(&ctx, &slug, id, &body.message, body.attachment_id)
         .await?;
     Ok((
         StatusCode::CREATED,
@@ -737,21 +908,170 @@ async fn execute_action(
     State(state): State<AppState>,
     Auth(ctx): Auth,
     Path((slug, id, name)): Path<(String, Uuid, String)>,
+    headers: HeaderMap,
     body: Option<Json<Value>>,
 ) -> Result<Json<Value>, ApiError> {
     reject_reserved(&slug)?;
+    if is_generate_document(&name) {
+        return generate_document_action(state, ctx, slug, id, body.map(|j| j.0)).await;
+    }
+    if is_send_communication(&name) {
+        return send_communication_action(state, ctx, slug, id, body.map(|j| j.0)).await;
+    }
+    let idempotency_key = headers
+        .get("idempotency-key")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     Ok(Json(
         state
             .entities
-            .execute(
+            .execute_with(
                 &ctx,
                 &slug,
                 id,
                 &name,
                 body.map(|j| j.0).unwrap_or_else(|| json!({})),
+                qefro_db::ExecuteOpts {
+                    idempotency_key,
+                    force_sync: false,
+                    operation_id: None,
+                },
             )
             .await?,
     ))
+}
+
+fn is_generate_document(name: &str) -> bool {
+    matches!(
+        name,
+        "generate_document" | "generate-document" | "generate_pdf" | "generate-pdf"
+    )
+}
+
+fn is_send_communication(name: &str) -> bool {
+    matches!(name, "send_communication" | "send-communication")
+}
+
+async fn send_communication_action(
+    state: AppState,
+    ctx: qefro_core::OpContext,
+    slug: String,
+    id: Uuid,
+    body: Option<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let entity = state.entities.registry().get(&slug)?;
+    state
+        .entities
+        .permissions()
+        .check(&ctx, &entity.name, Action::Read)?;
+    let template = body
+        .as_ref()
+        .and_then(|b| b.get("template").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .trim();
+    if template.is_empty() {
+        return Err(QefroError::bad_request("template is required").into());
+    }
+    let def = state
+        .communications_live()
+        .into_iter()
+        .find(|c| c.name == template && c.entity == entity.name)
+        .ok_or_else(|| QefroError::not_found(format!("communication '{template}' not found")))?;
+    let channel = body
+        .as_ref()
+        .and_then(|b| b.get("channel").and_then(|v| v.as_str()))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if body
+        .as_ref()
+        .and_then(|b| b.get("recipient").and_then(|v| v.as_str()))
+        .is_some()
+        && !ctx.is_admin()
+    {
+        return Err(QefroError::forbidden("arbitrary recipients require authorization").into());
+    }
+    let queued = qefro_db::enqueue_communication(
+        &state.entities.job_queue(),
+        &state.communications,
+        &state.entities,
+        &ctx,
+        &def,
+        None,
+        id,
+        channel,
+    )
+    .await?;
+    Ok(Json(json!({
+        "queued": queued.iter().map(|r| r.to_client_json()).collect::<Vec<_>>(),
+        "message": if queued.is_empty() {
+            "No message queued"
+        } else {
+            "Communication queued"
+        },
+    })))
+}
+
+async fn generate_document_action(
+    state: AppState,
+    ctx: qefro_core::OpContext,
+    slug: String,
+    id: Uuid,
+    body: Option<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let format_name = body
+        .as_ref()
+        .and_then(|b| b.get("format").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
+    let extra = state.print_formats_live();
+    let (format, record, items) = state
+        .entities
+        .print_document(&ctx, &slug, id, format_name.as_deref(), &extra)
+        .await?;
+    let entity = state.entities.registry().get(&slug)?;
+    let mut config = state.tenants.get_config(ctx.tenant_id).await?;
+    let tenant = state.tenants.get(ctx.tenant_id).await.ok();
+    config.branding =
+        state.resolve_branding(&ctx, &config, tenant.as_ref().map(|t| t.name.as_str()));
+    let lines = qefro_db::print::pdf_lines(&entity, &format, &record, &items, &config);
+    let bytes = qefro_db::print::render_pdf(&format.document_title(), &lines);
+    let filename = qefro_db::print::document_filename(&format, &entity, &record);
+    let message = format!("{} PDF generated", format.document_title());
+    if entity.attachments {
+        let row = state
+            .entities
+            .attach_generated_document(
+                &ctx,
+                &entity.name,
+                id,
+                &filename,
+                "application/pdf",
+                &bytes,
+                state.blob_store.as_ref(),
+                &state.attachments,
+                &message,
+            )
+            .await?;
+        return Ok(Json(json!({
+            "attachment": row.to_client_json(),
+            "filename": filename,
+            "message": message,
+        })));
+    }
+    Ok(Json(json!({
+        "filename": filename,
+        "download": format!("/api/v1/{slug}/{id}/print.pdf"),
+        "message": message,
+    })))
+}
+
+async fn get_operation_run(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let run = state.entities.get_operation_run(&ctx, id).await?;
+    Ok(Json(run.to_client_json()))
 }
 
 async fn get_workflow_state(
@@ -773,6 +1093,158 @@ async fn meta_dashboards(State(state): State<AppState>, Auth(ctx): Auth) -> Json
     Json(json!({ "dashboards": dashboards }))
 }
 
+async fn meta_pages(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
+    let pages: Vec<_> = state
+        .pages_live()
+        .into_iter()
+        .filter(|p| page_allowed(&state, &ctx, p))
+        .map(|p| visible_page(&state, &ctx, p))
+        .collect();
+    Json(json!({ "pages": pages }))
+}
+
+async fn meta_page(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let page = state
+        .pages_live()
+        .into_iter()
+        .find(|p| p.name == name || p.slug() == name)
+        .ok_or_else(|| QefroError::not_found(format!("page '{name}' not found")))?;
+    if !page_allowed(&state, &ctx, &page) {
+        return Err(QefroError::not_found(format!("page '{name}' not found")).into());
+    }
+    Ok(Json(visible_page(&state, &ctx, page)))
+}
+
+fn nav_item_visible(
+    state: &AppState,
+    ctx: &qefro_core::OpContext,
+    item: &qefro_core::WorkspaceNavItem,
+) -> bool {
+    if !ctx.allows_app(item.module.as_deref()) {
+        return false;
+    }
+    if let Some(page_slug) = &item.page {
+        return state
+            .pages_live()
+            .into_iter()
+            .find(|p| p.slug() == page_slug || p.name == *page_slug)
+            .is_some_and(|p| page_allowed(state, ctx, &p));
+    }
+    if item.entity.is_empty() {
+        return false;
+    }
+    state
+        .entities
+        .permissions()
+        .allows(&ctx.roles, &item.entity, Action::List)
+}
+
+fn page_allowed(state: &AppState, ctx: &qefro_core::OpContext, page: &qefro_core::PageDef) -> bool {
+    if !ctx.allows_app(page.module.as_deref()) {
+        return false;
+    }
+    if !page.roles.is_empty() && !ctx.is_admin() && !page.roles.iter().any(|r| ctx.has_role(r)) {
+        return false;
+    }
+    let _ = state;
+    true
+}
+
+fn section_allowed(
+    state: &AppState,
+    ctx: &qefro_core::OpContext,
+    section: &qefro_core::PageSection,
+) -> bool {
+    if !section.roles.is_empty()
+        && !ctx.is_admin()
+        && !section.roles.iter().any(|r| ctx.has_role(r))
+    {
+        return false;
+    }
+    let permissions = state.entities.permissions();
+    if let Some(entity) = section.entity_name() {
+        if !permissions.allows(&ctx.roles, entity, Action::List) {
+            return false;
+        }
+    }
+    if let Some(report_name) = &section.report {
+        if let Some(report) = state
+            .reports_live()
+            .into_iter()
+            .find(|r| r.name == *report_name)
+        {
+            if !ctx.allows_app(report.module.as_deref())
+                || !permissions.allows(&ctx.roles, &report.entity, Action::List)
+            {
+                return false;
+            }
+        }
+    }
+    if let Some(card) = &section.card {
+        if !card.entity.is_empty()
+            && !card.entity.starts_with('_')
+            && !permissions.allows(&ctx.roles, &card.entity, Action::List)
+        {
+            return false;
+        }
+        if !card.roles.is_empty() && !ctx.is_admin() && !card.roles.iter().any(|r| ctx.has_role(r))
+        {
+            return false;
+        }
+    } else if let Some(dash_name) = &section.dashboard {
+        let want = section
+            .widget
+            .as_deref()
+            .or(Some(section.title.as_str()))
+            .unwrap_or("");
+        if let Some(dashboard) = state
+            .dashboards_live()
+            .into_iter()
+            .find(|d| d.name == *dash_name)
+        {
+            if let Some(card) = dashboard
+                .cards
+                .iter()
+                .find(|c| c.title == want || c.title == section.title)
+            {
+                if !card.entity.is_empty()
+                    && !card.entity.starts_with('_')
+                    && !permissions.allows(&ctx.roles, &card.entity, Action::List)
+                {
+                    return false;
+                }
+                if !card.roles.is_empty()
+                    && !ctx.is_admin()
+                    && !card.roles.iter().any(|r| ctx.has_role(r))
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+fn visible_page(
+    state: &AppState,
+    ctx: &qefro_core::OpContext,
+    mut page: qefro_core::PageDef,
+) -> Value {
+    page.sections
+        .retain(|section| section_allowed(state, ctx, section));
+    page.actions.retain(|action| {
+        state
+            .entities
+            .permissions()
+            .allows(&ctx.roles, &action.entity, Action::List)
+    });
+    json!(page)
+}
+
 async fn meta_workspace(
     State(state): State<AppState>,
     Auth(ctx): Auth,
@@ -790,10 +1262,7 @@ fn workspace_payload(
     let navigation: Vec<_> = state
         .default_nav_items
         .iter()
-        .filter(|item| {
-            ctx.allows_app(item.module.as_deref())
-                && permissions.allows(&ctx.roles, &item.entity, Action::List)
-        })
+        .filter(|item| nav_item_visible(state, ctx, item))
         .cloned()
         .collect();
     let dashboards: Vec<_> = state
@@ -810,6 +1279,21 @@ fn workspace_payload(
             |r| json!({ "name": r.name, "label": r.label, "entity": r.entity, "module": r.module }),
         )
         .collect();
+    let pages: Vec<_> = state
+        .pages_live()
+        .into_iter()
+        .filter(|p| page_allowed(state, ctx, p))
+        .map(|p| {
+            json!({
+                "name": p.name,
+                "label": p.label,
+                "slug": p.slug(),
+                "module": p.module,
+                "layout": p.layout,
+                "route": p.route(),
+            })
+        })
+        .collect();
     let default_dashboard = if config
         .ui_config
         .default_dashboard
@@ -825,6 +1309,8 @@ fn workspace_payload(
     let mut seen_create = std::collections::HashSet::new();
     for item in &navigation {
         if seen_create.insert(item.entity.clone())
+            && !item.entity.is_empty()
+            && item.page.is_none()
             && permissions.allows(&ctx.roles, &item.entity, Action::Create)
         {
             let noun = item.label.trim_end_matches('s');
@@ -848,7 +1334,9 @@ fn workspace_payload(
                 search.push(format!("view={view}"));
             }
         }
-        let to = if search.is_empty() {
+        let to = if let Some(page) = &item.page {
+            format!("/pages/{page}")
+        } else if search.is_empty() {
             format!("/{}", item.slug)
         } else {
             format!("/{}?{}", item.slug, search.join("&"))
@@ -857,7 +1345,7 @@ fn workspace_payload(
             "label": item.label,
             "to": to,
             "entity": item.entity,
-            "kind": "list",
+            "kind": if item.page.is_some() { "page" } else { "list" },
         }));
     }
     if let Some(name) = &default_dashboard {
@@ -881,6 +1369,7 @@ fn workspace_payload(
         "shortcuts": shortcuts,
         "default_dashboard": default_dashboard,
         "dashboards": dashboards,
+        "pages": pages,
         "reports": reports,
     })
 }
@@ -899,6 +1388,11 @@ async fn get_dashboard(
     if !ctx.allows_app(dash.module.as_deref()) {
         return Err(QefroError::not_found(format!("dashboard '{name}' not found")).into());
     }
+    rate_limit(
+        &state.expensive_limiter,
+        &format!("dashboard:{}:{}", ctx.tenant_id, ctx.user_id),
+        "rate limit exceeded",
+    )?;
     let extra: Vec<qefro_core::ui::DashboardFilter> = params
         .into_iter()
         .filter(|(k, v)| !k.is_empty() && !v.is_empty() && !["name"].contains(&k.as_str()))
@@ -1049,6 +1543,11 @@ async fn run_report(
     if !ctx.allows_app(report.module.as_deref()) {
         return Err(QefroError::not_found(format!("report '{name}' not found")).into());
     }
+    rate_limit(
+        &state.expensive_limiter,
+        &format!("report:{}:{}", ctx.tenant_id, ctx.user_id),
+        "rate limit exceeded",
+    )?;
     let filters = body.get("filters").cloned().unwrap_or(json!([]));
     Ok(Json(
         state.entities.run_report(&ctx, &report, filters).await?,
@@ -1093,6 +1592,22 @@ async fn entity_aggregates(
     ))
 }
 
+async fn entity_availability(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(slug): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    reject_reserved(&slug)?;
+    let entity = state.entities.registry().get(&slug)?;
+    Ok(Json(
+        state
+            .entities
+            .availability(&ctx, &entity.name, &params)
+            .await?,
+    ))
+}
+
 async fn print_document(
     State(state): State<AppState>,
     Auth(ctx): Auth,
@@ -1101,9 +1616,10 @@ async fn print_document(
 ) -> Result<axum::response::Html<String>, ApiError> {
     reject_reserved(&slug)?;
     let format_name = params.get("format").map(|s| s.as_str());
+    let extra = state.print_formats_live();
     let (format, record, items) = state
         .entities
-        .print_document(&ctx, &slug, id, format_name)
+        .print_document(&ctx, &slug, id, format_name, &extra)
         .await?;
     let entity = state.entities.registry().get(&slug)?;
     let mut config = state.tenants.get_config(ctx.tenant_id).await?;
@@ -1119,27 +1635,31 @@ async fn print_document_pdf(
     Auth(ctx): Auth,
     Path((slug, id)): Path<(String, Uuid)>,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     reject_reserved(&slug)?;
     let format_name = params.get("format").map(|s| s.as_str());
-    let (_format, record, items) = state
+    let extra = state.print_formats_live();
+    let (format, record, items) = state
         .entities
-        .print_document(&ctx, &slug, id, format_name)
+        .print_document(&ctx, &slug, id, format_name, &extra)
         .await?;
     let entity = state.entities.registry().get(&slug)?;
-    let lines = qefro_db::print::pdf_lines(&entity, &record, &items);
-    let bytes = qefro_db::print::render_pdf(&entity.label, &lines);
-    Ok((
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "application/pdf"),
-            (
-                header::CONTENT_DISPOSITION,
-                "inline; filename=\"document.pdf\"",
-            ),
-        ],
-        bytes,
-    ))
+    let mut config = state.tenants.get_config(ctx.tenant_id).await?;
+    let tenant = state.tenants.get(ctx.tenant_id).await.ok();
+    config.branding =
+        state.resolve_branding(&ctx, &config, tenant.as_ref().map(|t| t.name.as_str()));
+    let lines = qefro_db::print::pdf_lines(&entity, &format, &record, &items, &config);
+    let bytes = qefro_db::print::render_pdf(&format.document_title(), &lines);
+    let filename = qefro_db::print::document_filename(&format, &entity, &record);
+    let mut res = (StatusCode::OK, bytes).into_response();
+    res.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/pdf"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&format!("inline; filename=\"{filename}\"")) {
+        res.headers_mut().insert(header::CONTENT_DISPOSITION, value);
+    }
+    Ok(res)
 }
 
 async fn get_tenant_config(

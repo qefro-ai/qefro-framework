@@ -37,8 +37,7 @@ fn app() -> InstalledApp {
                     .field(FieldDef::string("first_name").nullable())
                     .field(FieldDef::string("last_name").nullable())
                     .field(
-                        FieldDef::string("full_name")
-                            .computed(r#"first_name + " " + last_name"#),
+                        FieldDef::string("full_name").computed(r#"first_name + " " + last_name"#),
                     )
                     .field(FieldDef::integer("qty").greater_than(0.0).nullable())
                     .field(FieldDef::assigned_to())
@@ -94,10 +93,22 @@ fn app() -> InstalledApp {
             )
             .automation(
                 AutomationDef::new(
-                    "daily_ping",
-                    AutomationTrigger::scheduled("* * * * *"),
+                    "ticket_created_followup",
+                    AutomationTrigger::event("entity.created"),
                 )
-                .action(AutomationAction::notify("Staff")),
+                .conditions(Condition::field_equals("entity", "AutoTicket"))
+                .step(qefro_core::AutomationStep::wait("0s"))
+                .step(qefro_core::AutomationStep::branch(
+                    Condition::field_equals("status", "Draft"),
+                    vec![qefro_core::AutomationStep::action(
+                        AutomationAction::create_activity("Still draft"),
+                    )],
+                    vec![qefro_core::AutomationStep::End { end: true }],
+                )),
+            )
+            .automation(
+                AutomationDef::new("daily_ping", AutomationTrigger::scheduled("* * * * *"))
+                    .action(AutomationAction::notify("Staff")),
             )
             .build(),
     )
@@ -207,7 +218,12 @@ async fn validation_greater_than_and_computed_name() {
     let _lock = TEST_LOCK.lock().await;
     let (router, _state) = runtime().await;
     let suffix = &uuid::Uuid::new_v4().to_string()[..8];
-    let token = register(&router, &format!("a-{suffix}@ex.com"), &format!("at-{suffix}")).await;
+    let token = register(
+        &router,
+        &format!("a-{suffix}@ex.com"),
+        &format!("at-{suffix}"),
+    )
+    .await;
     let (status, body) = json(
         clone_router(&router),
         post(
@@ -238,7 +254,12 @@ async fn workflow_automation_notify_activity_webhook_and_idempotency() {
     let _lock = TEST_LOCK.lock().await;
     let (router, state) = runtime().await;
     let suffix = &uuid::Uuid::new_v4().to_string()[..8];
-    let token = register(&router, &format!("b-{suffix}@ex.com"), &format!("bt-{suffix}")).await;
+    let token = register(
+        &router,
+        &format!("b-{suffix}@ex.com"),
+        &format!("bt-{suffix}"),
+    )
+    .await;
 
     let (status, created) = json(
         clone_router(&router),
@@ -272,7 +293,9 @@ async fn workflow_automation_notify_activity_webhook_and_idempotency() {
     assert_eq!(status, StatusCode::OK, "{notes}");
     let items = notes["items"].as_array().cloned().unwrap_or_default();
     assert!(
-        items.iter().any(|n| n["title"].as_str() == Some("Ticket submitted")),
+        items
+            .iter()
+            .any(|n| n["title"].as_str() == Some("Ticket submitted")),
         "{notes}"
     );
 
@@ -294,16 +317,12 @@ async fn workflow_automation_notify_activity_webhook_and_idempotency() {
         "{activity}"
     );
 
-    let (status, events) = json(
-        clone_router(&router),
-        get("/api/v1/events", Some(&token)),
-    )
-    .await;
+    let (status, events) = json(clone_router(&router), get("/api/v1/events", Some(&token))).await;
     assert_eq!(status, StatusCode::OK, "{events}");
     let ev = events["items"].as_array().cloned().unwrap_or_default();
-    assert!(ev.iter().any(|e| {
-        e["event_type"] == "workflow.transitioned" && e.get("record_id").is_some()
-    }));
+    assert!(ev
+        .iter()
+        .any(|e| { e["event_type"] == "workflow.transitioned" && e.get("record_id").is_some() }));
 
     let before = items.len();
     let _ = state.entities.dispatch_outbox().await;
@@ -324,7 +343,10 @@ async fn workflow_automation_notify_activity_webhook_and_idempotency() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{deliveries}");
-    let rows = deliveries["deliveries"].as_array().cloned().unwrap_or_default();
+    let rows = deliveries["deliveries"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(
         !rows.is_empty(),
         "webhook should be delivered via JobQueue: {deliveries}"
@@ -336,8 +358,18 @@ async fn tenant_isolation_and_studio_inspect() {
     let _lock = TEST_LOCK.lock().await;
     let (router, state) = runtime().await;
     let suffix = &uuid::Uuid::new_v4().to_string()[..8];
-    let a = register(&router, &format!("c-{suffix}@ex.com"), &format!("ct-a-{suffix}")).await;
-    let b = register(&router, &format!("d-{suffix}@ex.com"), &format!("ct-b-{suffix}")).await;
+    let a = register(
+        &router,
+        &format!("c-{suffix}@ex.com"),
+        &format!("ct-a-{suffix}"),
+    )
+    .await;
+    let b = register(
+        &router,
+        &format!("d-{suffix}@ex.com"),
+        &format!("ct-b-{suffix}"),
+    )
+    .await;
 
     let (status, created) = json(
         clone_router(&router),
@@ -369,7 +401,9 @@ async fn tenant_isolation_and_studio_inspect() {
     assert_eq!(status, StatusCode::OK, "{notes_b}");
     let items = notes_b["items"].as_array().cloned().unwrap_or_default();
     assert!(
-        !items.iter().any(|n| n["title"].as_str() == Some("Ticket submitted")),
+        !items
+            .iter()
+            .any(|n| n["title"].as_str() == Some("Ticket submitted")),
         "tenant B must not see tenant A notifications: {notes_b}"
     );
 
@@ -379,13 +413,23 @@ async fn tenant_isolation_and_studio_inspect() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{studio}");
-    let autos = studio["automations"].as_array().cloned().unwrap_or_default();
-    assert!(autos
-        .iter()
-        .any(|d| d["name"] == "ticket_submitted_notify"));
+    let autos = studio["automations"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(autos.iter().any(|d| d["name"] == "ticket_submitted_notify"));
     let blob = studio.to_string();
-    for key in ["password", "password_hash", "secret_env", "storage_key", "session"] {
-        assert!(!blob.contains(key), "secret leaked in studio automations: {studio}");
+    for key in [
+        "password",
+        "password_hash",
+        "secret_env",
+        "storage_key",
+        "session",
+    ] {
+        assert!(
+            !blob.contains(key),
+            "secret leaked in studio automations: {studio}"
+        );
     }
 
     let (status, ui) = json(clone_router(&router), get("/api/v1/meta/ui", Some(&a))).await;
@@ -407,7 +451,12 @@ async fn workflow_status_cannot_be_patched() {
     let _lock = TEST_LOCK.lock().await;
     let (router, _state) = runtime().await;
     let suffix = &uuid::Uuid::new_v4().to_string()[..8];
-    let token = register(&router, &format!("e-{suffix}@ex.com"), &format!("et-{suffix}")).await;
+    let token = register(
+        &router,
+        &format!("e-{suffix}@ex.com"),
+        &format!("et-{suffix}"),
+    )
+    .await;
     let (status, created) = json(
         clone_router(&router),
         post(
@@ -431,4 +480,120 @@ async fn workflow_status_cannot_be_patched() {
     )
     .await;
     assert!(status.is_client_error(), "{body}");
+}
+
+#[tokio::test]
+async fn wait_branch_preview_runs_and_secret_publish() {
+    let _lock = TEST_LOCK.lock().await;
+    let (router, state) = runtime().await;
+    let suffix = &uuid::Uuid::new_v4().to_string()[..8];
+    let token = register(
+        &router,
+        &format!("f-{suffix}@ex.com"),
+        &format!("ft-{suffix}"),
+    )
+    .await;
+
+    let (status, created) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/auto-tickets",
+            Some(&token),
+            json!({ "title": "Wait me", "qty": 1 }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["id"].as_str().unwrap();
+    drain_jobs(&state).await;
+
+    let (status, activity) = json(
+        clone_router(&router),
+        get(&format!("/api/v1/auto-tickets/{id}/activity"), Some(&token)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{activity}");
+    let acts = activity["items"].as_array().cloned().unwrap_or_default();
+    assert!(
+        acts.iter()
+            .any(|a| a["message"].as_str() == Some("Still draft")),
+        "wait+branch automation: {activity}"
+    );
+
+    let (status, preview) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/studio/automations/ticket_created_followup/preview",
+            Some(&token),
+            json!({ "entity": "AutoTicket", "payload": { "status": "Draft" } }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["dry_run"], json!(true));
+    assert_eq!(preview["side_effects"], json!(false));
+    let plan = preview["would_execute"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(plan.iter().any(|s| s["kind"] == "wait"), "{preview}");
+
+    let (status, runs) = json(
+        clone_router(&router),
+        get(
+            "/api/v1/studio/automations/ticket_created_followup/runs",
+            Some(&token),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{runs}");
+    let items = runs["runs"].as_array().cloned().unwrap_or_default();
+    assert!(!items.is_empty(), "{runs}");
+    assert!(items.iter().all(|r| r["error"]
+        .as_str()
+        .map(|e| !e.contains("password"))
+        .unwrap_or(true)));
+
+    let token_b = register(
+        &router,
+        &format!("g-{suffix}@ex.com"),
+        &format!("gt-{suffix}"),
+    )
+    .await;
+    let (status, runs_b) = json(
+        clone_router(&router),
+        get(
+            "/api/v1/studio/automations/ticket_created_followup/runs",
+            Some(&token_b),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{runs_b}");
+    let items_b = runs_b["runs"].as_array().cloned().unwrap_or_default();
+    assert!(
+        items_b.is_empty(),
+        "tenant B must not see tenant A runs: {runs_b}"
+    );
+
+    let (status, denied) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/studio/publish",
+            Some(&token),
+            json!({
+                "kind": "automation",
+                "target": "ticket_created_followup",
+                "payload": {
+                    "name": "ticket_created_followup",
+                    "trigger": { "event": "entity.created" },
+                    "api_key": "should-not-store",
+                    "steps": [{ "notify": { "role": "Staff" } }]
+                }
+            }),
+        ),
+    )
+    .await;
+    assert!(status.is_client_error(), "{denied}");
+    let blob = denied.to_string();
+    assert!(!blob.contains("should-not-store") || denied["error"].is_string());
 }

@@ -104,6 +104,23 @@ pub fn validate_bundle(bundle: &AppBundle, installed: &[InstalledAppRef]) -> Val
             }
         }
         for field in &entity.fields {
+            if field.custom {
+                if let Err(e) = crate::custom::validate_custom_field(entity, field) {
+                    report.error(e.to_string());
+                }
+                if entity
+                    .fields
+                    .iter()
+                    .filter(|f| f.name == field.name)
+                    .count()
+                    > 1
+                {
+                    report.error(format!(
+                        "duplicate field '{}' on entity '{}'",
+                        field.name, entity.name
+                    ));
+                }
+            }
             if let Some(rel) = &field.relation {
                 if matches!(
                     rel.kind,
@@ -168,7 +185,7 @@ pub fn validate_bundle(bundle: &AppBundle, installed: &[InstalledAppRef]) -> Val
     }
     for dash in &bundle.dashboards {
         for card in &dash.cards {
-            if registry.try_get(&card.entity).is_none() {
+            if registry.try_get(&card.entity).is_none() && !card.entity.starts_with('_') {
                 report.error(format!(
                     "dashboard '{}' card '{}' references missing entity '{}'",
                     dash.name, card.title, card.entity
@@ -176,15 +193,74 @@ pub fn validate_bundle(bundle: &AppBundle, installed: &[InstalledAppRef]) -> Val
             }
         }
     }
+    let entity_slugs: Vec<String> = bundle.entities.iter().map(|e| e.slug.clone()).collect();
+    let mut page_slugs = HashSet::new();
+    let mut page_names = HashSet::new();
+    for page in &bundle.pages {
+        if !page_names.insert(page.name.clone()) {
+            report.error(format!("duplicate page '{}'", page.name));
+        }
+        let slug = if page.slug.is_empty() {
+            crate::ident::slugify(&page.name)
+        } else {
+            page.slug.clone()
+        };
+        if !page_slugs.insert(slug.clone()) {
+            report.error(format!("duplicate page route '/pages/{slug}'"));
+        }
+        for err in crate::page::validate_page(
+            page,
+            &registry,
+            &bundle.reports,
+            &bundle.dashboards,
+            &entity_slugs,
+        ) {
+            report.error(err);
+        }
+    }
     for fmt in &bundle.print_formats {
-        if registry.try_get(&fmt.entity).is_none() {
-            report.error(format!(
-                "print format '{}' references missing entity '{}'",
-                fmt.name, fmt.entity
-            ));
+        for err in crate::document::validate_print_format(fmt, &registry) {
+            report.error(err);
+        }
+    }
+    for entity in &bundle.entities {
+        for fmt in &entity.print_formats {
+            for err in crate::document::validate_print_format(fmt, &registry) {
+                report.error(err);
+            }
+        }
+    }
+    for def in &bundle.communications {
+        for err in crate::communication::validate_communication(def, &registry) {
+            report.error(err);
+        }
+    }
+    for entity in &bundle.entities {
+        for err in crate::scheduling::validate_scheduling(entity, Some(&registry)) {
+            report.error(err);
         }
     }
     for item in &bundle.manifest.navigation {
+        if let Some(page_name) = &item.page {
+            if !bundle
+                .pages
+                .iter()
+                .any(|p| p.name == *page_name || p.slug == *page_name)
+            {
+                report.error(format!(
+                    "navigation '{}' references missing page '{}'",
+                    item.label, page_name
+                ));
+            }
+            continue;
+        }
+        if item.entity.is_empty() {
+            report.error(format!(
+                "navigation '{}' is missing entity or page",
+                item.label
+            ));
+            continue;
+        }
         if registry.try_get(&item.entity).is_none() {
             report.error(format!(
                 "navigation '{}' references missing entity '{}'",
@@ -378,7 +454,9 @@ mod tests {
             permissions: Vec::new(),
             reports: Vec::new(),
             dashboards: Vec::new(),
+            pages: Vec::new(),
             print_formats: Vec::new(),
+            communications: Vec::new(),
             seeds: Vec::new(),
             hooks: Vec::new(),
             migrations: Vec::new(),
@@ -474,5 +552,41 @@ mod tests {
         to.entities[0].fields.clear();
         let dropped = destructive_field_removals(&from, &to);
         assert!(dropped.iter().any(|d| d.contains("name")));
+    }
+
+    #[test]
+    fn unknown_page_entity_fails() {
+        let mut bundle = empty_bundle("shop");
+        bundle
+            .pages
+            .push(crate::page::PageDef::new("ops", "Ops").section(
+                crate::page::PageSection::entity_view("Ghost", "Missing", "list"),
+            ));
+        let report = validate_bundle(&bundle, &[]);
+        assert!(!report.ok());
+        assert!(report.errors.iter().any(|e| e.contains("unknown entity")));
+    }
+
+    #[test]
+    fn valid_page_composition() {
+        let mut bundle = empty_bundle("shop");
+        bundle.pages.push(
+            crate::page::PageDef::new("customer-workspace", "Customers")
+                .layout("stack")
+                .section(crate::page::PageSection::entity_view(
+                    "Customers",
+                    "Customer",
+                    "list",
+                )),
+        );
+        bundle
+            .manifest
+            .navigation
+            .push(crate::app::NavItem::page_link(
+                "Workspace",
+                "customer-workspace",
+            ));
+        let report = validate_bundle(&bundle, &[]);
+        assert!(report.ok(), "{:?}", report.errors);
     }
 }

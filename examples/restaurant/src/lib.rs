@@ -1,13 +1,15 @@
 mod dashboard;
 mod entities;
 mod operations;
+mod pages;
 mod permissions;
 mod workflows;
 
 use qefro_api::InstalledApp;
 use qefro_core::{
-    AppModule, AutomationAction, AutomationDef, AutomationTrigger, Condition, NavItem,
-    NotificationDef, ReportDef, TenantBranding, WebhookDef,
+    AppModule, AutomationAction, AutomationDef, AutomationStep, AutomationTrigger,
+    CommunicationDef, Condition, FieldDef, NavItem, NotificationDef, ReportDef, TenantBranding,
+    WebhookDef, CHANNEL_EMAIL, CHANNEL_IN_APP, CHANNEL_WHATSAPP, PURPOSE_TRANSACTIONAL,
 };
 use qefro_permissions::PermissionGrant;
 use qefro_workflow::WorkflowDef;
@@ -24,6 +26,7 @@ pub fn branding() -> TenantBranding {
         accent_color: Some("#c2410c".into()),
         company_name: None,
         app_name: Some("Qefro Kitchen".into()),
+        ..Default::default()
     }
 }
 
@@ -33,6 +36,7 @@ pub fn module() -> AppModule {
         .label("Restaurant")
         .description("Tables, reservations, menus, dine-in and takeaway orders, and payments")
         .branding(branding())
+        .nav(NavItem::page_link("Operations", "restaurant-operations").section("Operations"))
         .nav(NavItem::new("Orders", "Order").section("Operations"))
         .nav(NavItem::new("Reservations", "Reservation").section("Operations"))
         .nav(
@@ -44,6 +48,7 @@ pub fn module() -> AppModule {
         .nav(NavItem::new("Tables", "DiningTable").section("Operations"))
         .nav(NavItem::new("Menu", "MenuItem").section("Catalog"))
         .nav(NavItem::new("Customers", "Customer").section("Catalog"))
+        .nav(NavItem::page_link("Customer Workspace", "customer-workspace").section("Catalog"))
         .entity(entities::customer())
         .entity(entities::restaurant())
         .entity(entities::restaurant_settings())
@@ -57,7 +62,27 @@ pub fn module() -> AppModule {
         .entity(entities::payment())
         .entity(entities::ui_showcase())
         .entity(entities::showcase_line())
+        .extend_entity(
+            "Product",
+            vec![
+                FieldDef::string("manufacturer")
+                    .nullable()
+                    .label("Manufacturer")
+                    .section("Custom"),
+                FieldDef::integer("warranty_months")
+                    .nullable()
+                    .min(0.0)
+                    .label("Warranty Months")
+                    .section("Custom"),
+                FieldDef::string("color")
+                    .nullable()
+                    .label("Color")
+                    .section("Custom"),
+            ],
+        )
         .dashboard(dashboard::ops())
+        .page(pages::restaurant_operations())
+        .page(pages::customer_workspace())
         .report(
             ReportDef::new("sales-by-day", "Order")
                 .label("Sales By Day")
@@ -74,6 +99,24 @@ pub fn module() -> AppModule {
                 .fields(&["status", "grand_total"])
                 .group_by(&["status"])
                 .sum("grand_total")
+                .count("id")
+                .chart("bar"),
+        )
+        .report(
+            ReportDef::new("bookings-by-day", "Reservation")
+                .label("Bookings By Day")
+                .module("restaurant")
+                .fields(&["reservation_date"])
+                .group_by(&["reservation_date"])
+                .count("id")
+                .chart("bar"),
+        )
+        .report(
+            ReportDef::new("table-utilization", "Reservation")
+                .label("Table Utilization")
+                .module("restaurant")
+                .fields(&["table_id"])
+                .group_by(&["table_id"])
                 .count("id")
                 .chart("bar"),
         )
@@ -96,6 +139,39 @@ pub fn module() -> AppModule {
                 .channels(&["in_app"])
                 .recipients(&["Admin", "Staff", "Manager", "owner"])
                 .title("Order is ready")
+                .module("restaurant"),
+        )
+        .communication(
+            CommunicationDef::new("order_confirmed", "order.confirmed", "Order")
+                .channels(&[CHANNEL_WHATSAPP, CHANNEL_EMAIL, CHANNEL_IN_APP])
+                .purpose(PURPOSE_TRANSACTIONAL)
+                .subject("Order {{ number }} confirmed")
+                .body("Hello {{ customer.name }},\nyour order {{ number }} is confirmed.\nTotal: {{ total | currency }}")
+                .recipient_path("customer")
+                .preferred_channel_field("communication_channel")
+                .opt_out_field("marketing_opt_out")
+                .module("restaurant"),
+        )
+        .communication(
+            CommunicationDef::new("reservation_confirmed", "reservation.confirmed", "Reservation")
+                .channels(&[CHANNEL_WHATSAPP, CHANNEL_EMAIL, CHANNEL_IN_APP])
+                .purpose(PURPOSE_TRANSACTIONAL)
+                .subject("Reservation confirmed")
+                .body("Hello {{ customer.name }},\nyour reservation is confirmed.")
+                .recipient_path("customer")
+                .preferred_channel_field("communication_channel")
+                .opt_out_field("marketing_opt_out")
+                .module("restaurant"),
+        )
+        .communication(
+            CommunicationDef::new("reservation_reminder", "reservation.reminder", "Reservation")
+                .channels(&[CHANNEL_WHATSAPP, CHANNEL_EMAIL, CHANNEL_IN_APP])
+                .purpose(PURPOSE_TRANSACTIONAL)
+                .subject("Reservation reminder")
+                .body("Hello {{ customer.name }},\nthis is a reminder of your reservation.")
+                .recipient_path("customer")
+                .preferred_channel_field("communication_channel")
+                .opt_out_field("marketing_opt_out")
                 .module("restaurant"),
         )
         .webhook(
@@ -149,7 +225,27 @@ pub fn module() -> AppModule {
                 Condition::field_equals("entity", "Order"),
                 Condition::field_equals("to_state", "Confirmed"),
             ]))
-            .action(AutomationAction::create_activity("Kitchen: order confirmed")),
+            .action(AutomationAction::create_activity(
+                "Kitchen: order confirmed",
+            )),
+        )
+        .automation(
+            AutomationDef::new(
+                "order_confirmed_followup",
+                AutomationTrigger::event("order.confirmed"),
+            )
+            .description(
+                "Send confirmation, wait, and notify a manager if the order is still Preparing",
+            )
+            .step(AutomationStep::action(AutomationAction::send_communication(
+                "order_confirmed",
+            )))
+            .step(AutomationStep::wait("30m"))
+            .step(AutomationStep::branch(
+                Condition::field_equals("status", "Preparing"),
+                vec![AutomationStep::action(AutomationAction::notify("Manager"))],
+                vec![AutomationStep::End { end: true }],
+            )),
         )
         .build()
 }
@@ -361,6 +457,7 @@ mod tests {
         assert!(customer.get_field("party_type").is_some());
         assert!(customer.get_field("organization_id").is_some());
         assert!(customer.get_field("tasks").is_some());
+        assert!(customer.attachments);
         assert!(customer
             .links
             .iter()
@@ -394,7 +491,15 @@ mod tests {
             .collect();
         assert!(names.contains(&"order_confirmed"), "{names:?}");
         assert!(names.contains(&"order_ready"), "{names:?}");
+        let comms: Vec<_> = module
+            .communications
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert!(comms.contains(&"order_confirmed"), "{comms:?}");
+        assert!(comms.contains(&"reservation_confirmed"), "{comms:?}");
         let autos: Vec<_> = module.automations.iter().map(|a| a.name.as_str()).collect();
         assert!(autos.contains(&"order_ready_notification"), "{autos:?}");
+        assert!(autos.contains(&"order_confirmed_followup"), "{autos:?}");
     }
 }

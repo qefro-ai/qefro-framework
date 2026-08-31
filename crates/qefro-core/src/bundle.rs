@@ -2,11 +2,13 @@
 
 use crate::app::{AppManifest, AppModule};
 use crate::catalog::{load_yaml_docs, parse_app_toml, AppFileManifest};
+use crate::communication::CommunicationDef;
 use crate::document::{PrintFormat, ReportDef};
 use crate::entity::EntityDef;
 use crate::error::{QefroError, QefroResult};
 use crate::lifecycle::LifecycleHookDef;
 use crate::migration::{parse_migration_file, AppMigration};
+use crate::page::PageDef;
 use crate::seed::{parse_seed_file, SeedBatch};
 use crate::ui::DashboardDef;
 use serde_json::Value;
@@ -23,7 +25,9 @@ pub struct AppBundle {
     pub permissions: Vec<Value>,
     pub reports: Vec<ReportDef>,
     pub dashboards: Vec<DashboardDef>,
+    pub pages: Vec<PageDef>,
     pub print_formats: Vec<PrintFormat>,
+    pub communications: Vec<CommunicationDef>,
     pub seeds: Vec<SeedBatch>,
     pub hooks: Vec<LifecycleHookDef>,
     pub migrations: Vec<AppMigration>,
@@ -56,7 +60,21 @@ impl AppBundle {
                 dash.module = Some(manifest.name.clone());
             }
         }
+        let mut pages: Vec<PageDef> = load_yaml_docs(&root.join("pages"))?;
+        for page in &mut pages {
+            if page.module.is_none() {
+                page.module = Some(manifest.name.clone());
+            }
+            page.normalize();
+        }
         let print_formats: Vec<PrintFormat> = load_yaml_docs(&root.join("print_formats"))?;
+        let mut communications: Vec<CommunicationDef> =
+            load_yaml_docs(&root.join("communications"))?;
+        for def in &mut communications {
+            if def.module.is_none() {
+                def.module = Some(manifest.name.clone());
+            }
+        }
         let workflows = load_raw_docs(&root.join("workflows"))?;
         let permissions = load_permission_docs(&root.join("permissions"))?;
         let seeds = load_seeds(&root.join("seeds"))?;
@@ -71,7 +89,9 @@ impl AppBundle {
             permissions,
             reports,
             dashboards,
+            pages,
             print_formats,
+            communications,
             seeds,
             hooks,
             migrations,
@@ -108,11 +128,17 @@ impl AppBundle {
         for dash in self.dashboards {
             builder = builder.dashboard(dash);
         }
+        for page in self.pages {
+            builder = builder.page(page);
+        }
         for report in self.reports {
             builder = builder.report(report);
         }
         for fmt in self.print_formats {
             builder = builder.print_format(fmt);
+        }
+        for def in self.communications {
+            builder = builder.communication(def);
         }
         builder.build()
     }

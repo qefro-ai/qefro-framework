@@ -3,12 +3,14 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type UiEntity } from "../../api";
 import { can, groupedEntities } from "../StudioApp";
 import SourceView from "../components/SourceView";
-import FieldEditor from "../editors/FieldEditor";
+import CustomFieldsEditor from "../editors/CustomFieldsEditor";
 import FormulaEditor from "../editors/FormulaEditor";
 import FormPreview from "../preview/FormPreview";
 import ViewsPreview from "../preview/ViewsPreview";
 import ViewsEditor from "../editors/ViewsEditor";
 import LayoutEditor from "../editors/LayoutEditor";
+import FieldEditor from "../editors/FieldEditor";
+import SchedulingEditor from "../editors/SchedulingEditor";
 
 type EntityPayload = {
   entity?: Record<string, unknown>;
@@ -89,6 +91,24 @@ export default function Entities({ caps }: { caps: string[] }) {
         {def?.singleton ? <span className="badge">Singleton</span> : null}
         {def?.attachments ? <span className="badge">Attachments</span> : null}
       </h2>
+      {def ? (
+        <>
+          <ul className="capability-list" aria-label="Capabilities">
+            <li><label><input type="checkbox" checked={Boolean(def.attachments)} readOnly /> Attachments</label></li>
+            <li><label><input type="checkbox" checked={Boolean(def.activity)} readOnly /> Activity</label></li>
+            <li><label><input type="checkbox" checked={Boolean(def.audit)} readOnly /> Audit</label></li>
+            <li><label><input type="checkbox" checked={Boolean(def.workflow)} readOnly /> Workflow</label></li>
+            <li><label><input type="checkbox" checked={Boolean(def.scheduling)} readOnly /> Scheduling</label></li>
+            <li><label><input type="checkbox" checked={Boolean(ui?.capabilities?.import)} readOnly /> Import</label></li>
+          </ul>
+          {ui?.capabilities?.import ? (
+            <p className="muted">
+              Matching:{" "}
+              {fields.filter((f) => f.unique).map((f) => String(f.name)).join(", ") || "unique fields on EntityDef"}
+            </p>
+          ) : null}
+        </>
+      ) : null}
       {detail?.source_managed ? <p className="muted">Custom Rust operations remain source-managed.</p> : null}
       {detail?.referrers && detail.referrers.length > 0 ? (
         <p className="error">
@@ -97,7 +117,7 @@ export default function Entities({ caps }: { caps: string[] }) {
         </p>
       ) : null}
       <div className="studio-tabs">
-        {["fields", "relations", "child tables", "computed", "actions", "links", "public form", "layout", "views", "preview", "source"].map((name) => (
+        {["fields", "custom fields", "relations", "child tables", "computed", "actions", "links", "public form", "layout", "views", "scheduling", "preview", "source"].map((name) => (
           <button
             key={name}
             className={tab === name ? "" : "ghost"}
@@ -119,6 +139,19 @@ export default function Entities({ caps }: { caps: string[] }) {
         <FieldEditor
           entity={entity}
           fields={fields}
+          canEdit={can(caps, "studio.edit")}
+          canPublish={can(caps, "studio.publish")}
+          onSaved={async () => {
+            setDetail(await api.studioEntity(entity));
+            setMessage("Published.");
+          }}
+        />
+      )}
+      {tab === "custom fields" && (
+        <CustomFieldsEditor
+          entity={entity}
+          fields={fields}
+          ui={ui}
           canEdit={can(caps, "studio.edit")}
           canPublish={can(caps, "studio.publish")}
           onSaved={async () => {
@@ -250,6 +283,18 @@ export default function Entities({ caps }: { caps: string[] }) {
           />
           <ViewsPreview entity={ui} />
         </>
+      )}
+      {tab === "scheduling" && (
+        <SchedulingEditor
+          entity={entity}
+          def={def}
+          ui={ui}
+          canPublish={can(caps, "studio.publish")}
+          onSaved={async () => {
+            setDetail(await api.studioEntity(entity));
+            setMessage("Published scheduling.");
+          }}
+        />
       )}
       {tab === "preview" && ui && <FormPreview entity={ui} />}
       {tab === "source" && (

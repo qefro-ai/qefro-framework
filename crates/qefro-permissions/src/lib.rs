@@ -121,6 +121,64 @@ pub fn task_grants() -> Vec<PermissionGrant> {
     ]
 }
 
+/// Accounting platform entities. Admin is added via `ensure_admin`.
+pub fn accounting_grants() -> Vec<PermissionGrant> {
+    vec![
+        PermissionGrant::crud(ROLE_MANAGER, "Account"),
+        PermissionGrant::new(ROLE_MANAGER, "Account", vec![Action::Export]),
+        PermissionGrant::read(ROLE_STAFF, "Account"),
+        PermissionGrant::crud(ROLE_MANAGER, "JournalEntry"),
+        PermissionGrant::new(ROLE_MANAGER, "JournalEntry", vec![Action::Export]),
+        PermissionGrant::new(
+            ROLE_STAFF,
+            "JournalEntry",
+            vec![Action::Create, Action::Read, Action::Update, Action::List],
+        ),
+        PermissionGrant::crud(ROLE_MANAGER, "JournalLine"),
+        PermissionGrant::new(
+            ROLE_STAFF,
+            "JournalLine",
+            vec![Action::Create, Action::Read, Action::Update, Action::List],
+        ),
+        PermissionGrant::crud(ROLE_MANAGER, "FiscalPeriod"),
+        PermissionGrant::read(ROLE_STAFF, "FiscalPeriod"),
+    ]
+}
+
+/// Commerce platform entities. Admin is added via `ensure_admin`.
+pub fn commerce_grants() -> Vec<PermissionGrant> {
+    let manager_entities = [
+        "Product",
+        "Quote",
+        "QuoteItem",
+        "SalesOrder",
+        "SalesOrderItem",
+        "Shipment",
+        "ShipmentItem",
+        "Invoice",
+        "InvoiceItem",
+        "SalesPayment",
+        "PaymentAllocation",
+        "SalesReturn",
+        "SalesReturnItem",
+    ];
+    let mut grants = Vec::new();
+    for entity in manager_entities {
+        grants.push(PermissionGrant::crud(ROLE_MANAGER, entity));
+        grants.push(PermissionGrant::new(
+            ROLE_MANAGER,
+            entity,
+            vec![Action::Export],
+        ));
+        grants.push(PermissionGrant::new(
+            ROLE_STAFF,
+            entity,
+            vec![Action::Create, Action::Read, Action::Update, Action::List],
+        ));
+    }
+    grants
+}
+
 /// Role access to fields at or below `level`. Level 0 is always allowed for
 /// callers who already passed entity RBAC.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

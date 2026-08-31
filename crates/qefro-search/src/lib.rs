@@ -110,6 +110,15 @@ impl Query {
         if self.filters.len() > 20 {
             return Err(QefroError::bad_request("too many filters (max 20)"));
         }
+        for filter in &self.filters {
+            let count = match filter {
+                Filter::In { values, .. } | Filter::NotIn { values, .. } => values.len(),
+                _ => 0,
+            };
+            if count > 100 {
+                return Err(QefroError::bad_request("IN filter is too large (max 100)"));
+            }
+        }
         if self.sort.len() > 3 {
             self.sort.truncate(3);
         }
@@ -120,7 +129,7 @@ impl Query {
         }
         for filter in &self.filters {
             let name = filter.field_name();
-            if !entity.has_column(name) {
+            if !entity.is_filterable_field(name) {
                 return Err(QefroError::bad_request(format!(
                     "cannot filter on unknown field '{name}'"
                 )));
@@ -133,7 +142,7 @@ impl Query {
             });
         }
         for sort in &self.sort {
-            if !entity.has_column(&sort.field) {
+            if !entity.is_sortable_field(&sort.field) {
                 return Err(QefroError::bad_request(format!(
                     "cannot sort on unknown field '{}'",
                     sort.field
@@ -247,7 +256,7 @@ fn parse_filter(entity: &EntityDef, key: &str, value: &str) -> QefroResult<Optio
     if field == "tenant_id" {
         return Err(QefroError::bad_request("tenant_id is not a client filter"));
     }
-    if !entity.has_column(field) {
+    if !entity.is_filterable_field(field) {
         // Ignore unknown keys so clients can pass extra UI params.
         return Ok(None);
     }
@@ -409,6 +418,17 @@ mod tests {
     fn tenant_id_not_filterable() {
         let entity = customer();
         let raw = vec![("tenant_id".into(), "x".into())];
+        assert!(parse_query(&entity, &raw).is_err());
+    }
+
+    #[test]
+    fn rejects_huge_in_list() {
+        let entity = customer();
+        let values = (0..101)
+            .map(|i| format!("n{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let raw = vec![("name.in".into(), values)];
         assert!(parse_query(&entity, &raw).is_err());
     }
 }

@@ -101,7 +101,10 @@ async fn jobs_execute_retry_fail_and_preserve_tenant() {
     let failed = queue.get(tenant_id, fail_id).await.unwrap();
     assert_eq!(failed.status, "failed");
     assert_eq!(failed.attempts, 2);
-    assert!(failed.last_error.as_deref().unwrap().contains("boom"));
+    assert_eq!(
+        failed.last_error.as_deref(),
+        Some("an internal error occurred")
+    );
     assert_eq!(failed.tenant_id, tenant_id);
 
     let key = format!("notify-{}", Uuid::new_v4());

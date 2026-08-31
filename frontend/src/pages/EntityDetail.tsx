@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   api,
   detailVisible,
@@ -10,6 +10,7 @@ import {
 import { ActionBar } from "../components/actions/ActionBar";
 import { AttachmentsPanel } from "../components/attachments/AttachmentsPanel";
 import { Timeline } from "../components/timeline/Timeline";
+import AutomationRuns from "../components/automation/AutomationRuns";
 import { EmptyState, ErrorState, Skeleton } from "../components/ui/EmptyState";
 import { PageHeader } from "../components/ui/PageHeader";
 import { SectionHeader } from "../components/ui/SectionHeader";
@@ -29,6 +30,7 @@ import { useRealtime } from "../realtime";
 
 export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const { slug, id } = useParams();
+  const [params, setParams] = useSearchParams();
   const meta = entities.find((e) => e.slug === slug);
   const navigate = useNavigate();
   const [row, setRow] = useState<Record<string, unknown> | null>(null);
@@ -36,11 +38,19 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const [activity, setActivity] = useState<Array<Record<string, unknown>>>([]);
   const [attachments, setAttachments] = useState<Array<Record<string, unknown>>>([]);
   const [comment, setComment] = useState("");
+  const [commentFile, setCommentFile] = useState<File | null>(null);
   const [commentBusy, setCommentBusy] = useState(false);
   const [pending, setPending] = useState<"delete" | "archive" | "restore" | null>(null);
+  const [preview, setPreview] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendTemplate, setSendTemplate] = useState("");
+  const [sendChannel, setSendChannel] = useState("");
+  const [comms, setComms] = useState<Array<Record<string, unknown>>>([]);
   const [busy, setBusy] = useState(false);
   const theme = useTenantTheme();
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(params.get("tab") || "overview");
   const { setRecord } = useBreadcrumbRecord();
 
   async function load() {
@@ -72,6 +82,12 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
         .then((d) => setAttachments(d.items ?? []))
         .catch(() => setAttachments([]));
     }
+    if (tab === "communication" && meta?.capabilities?.communication) {
+      api
+        .communications(slug, id)
+        .then((d) => setComms(d.items ?? []))
+        .catch(() => setComms([]));
+    }
   }, [tab, slug, id, row, meta?.attachments]);
 
   useRealtime({ entity: meta?.entity, recordId: id }, () => {
@@ -85,7 +101,13 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const workflow = row._workflow as
     | { current?: string; transitions?: WorkflowAction[] }
     | undefined;
-  const actions = (row._actions as EntityAction[] | undefined) ?? [];
+  const actions = ((row._actions as EntityAction[] | undefined) ?? []).filter(
+    (a) =>
+      a.name !== "generate_document" &&
+      a.name !== "generate-document" &&
+      a.name !== "send_communication" &&
+      a.name !== "send-communication",
+  );
   const related = (row._related ?? {}) as Record<
     string,
     {
@@ -134,6 +156,9 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
   const showAttachments = Boolean(meta.attachments || caps?.attachments);
   const showRelated = links.length > 0 || Object.keys(related).length > 0;
   const allowArchive = Boolean(caps?.archive) && canUpdateRecord(meta, row);
+  const allowPrint = Boolean(caps?.print);
+  const allowCommunication = Boolean(caps?.communication);
+  const templates = meta.communications ?? [];
   const archived = Boolean(row.archived_at);
 
   const chrome = [
@@ -141,17 +166,25 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
     ...childTables.map((c) => ({ id: `items:${c.name}`, label: c.label })),
     { id: "related", label: "Related records", hide: !showRelated },
     { id: "files", label: "Attachments", hide: !showAttachments },
+    { id: "communication", label: "Communication", hide: !allowCommunication },
     { id: "activity", label: "Activity", hide: !showActivity },
   ].filter((t) => !t.hide);
 
-  async function runAction(name: string) {
+  async function runAction(name: string, action?: EntityAction, input: Record<string, unknown> = {}) {
     if (!slug || !id) return;
     try {
-      await api.action(slug, id, name);
+      const result = await api.action(slug, id, name, input);
       setError("");
+      const nav = result._operation as
+        | { navigate?: { slug?: string; id?: string }; message?: string; status?: string }
+        | undefined;
+      if (nav?.navigate?.slug && nav.navigate.id) {
+        showSnackbar(nav.message || (action?.label ? `${action.label} done` : "Done"));
+        navigate(`/${nav.navigate.slug}/${nav.navigate.id}`);
+        return;
+      }
       await load();
-      const action = actions.find((a) => a.name === name);
-      showSnackbar(action?.label ? `${action.label} done` : "Done");
+      showSnackbar(nav?.message || (action?.label ? `${action.label} done` : "Done"));
     } catch (e) {
       setError(friendlyError(e));
     }
@@ -207,10 +240,51 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
                 <button type="button">Edit</button>
               </Link>
             ) : null}
+            {allowPrint ? (
+              <>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => {
+                    setPreviewBusy(true);
+                    setPreview(true);
+                    api
+                      .printHtml(slug, id)
+                      .then((html) => setPreviewHtml(html))
+                      .catch((e) => setError(friendlyError(e)))
+                      .finally(() => setPreviewBusy(false));
+                  }}
+                >
+                  Print
+                </button>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() =>
+                    void api.downloadPdf(slug, id).catch((e) => setError(friendlyError(e)))
+                  }
+                >
+                  Download PDF
+                </button>
+              </>
+            ) : null}
+            {allowCommunication ? (
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => {
+                  setSendTemplate(templates[0]?.name ?? "");
+                  setSendChannel(templates[0]?.channels?.[0] ?? "");
+                  setSendOpen(true);
+                }}
+              >
+                Send message
+              </button>
+            ) : null}
             <ActionBar
               actions={actions}
               transitions={workflow?.transitions}
-              onAction={(name) => void runAction(name)}
+              onAction={(name, action, input) => void runAction(name, action, input)}
               onTransition={async (name) => {
                 try {
                   const next = await api.transition(slug, id, name);
@@ -225,8 +299,46 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
             />
             <ActionMenu
               items={[
-                { key: "print", label: "Print", href: `/api/v1/${slug}/${id}/print`, target: "_blank" },
-                { key: "pdf", label: "Download PDF", href: `/api/v1/${slug}/${id}/print.pdf`, target: "_blank" },
+                {
+                  key: "print",
+                  label: "Print",
+                  hidden: !allowPrint,
+                  onSelect: () => {
+                    setPreviewBusy(true);
+                    setPreview(true);
+                    api
+                      .printHtml(slug, id)
+                      .then((html) => setPreviewHtml(html))
+                      .catch((e) => setError(friendlyError(e)))
+                      .finally(() => setPreviewBusy(false));
+                  },
+                },
+                {
+                  key: "pdf",
+                  label: "Download PDF",
+                  hidden: !allowPrint,
+                  onSelect: () => {
+                    void api.downloadPdf(slug, id).catch((e) => setError(friendlyError(e)));
+                  },
+                },
+                {
+                  key: "send-communication",
+                  label: "Send message",
+                  hidden: !allowCommunication,
+                  onSelect: () => {
+                    setSendTemplate(templates[0]?.name ?? "");
+                    setSendChannel(templates[0]?.channels?.[0] ?? "");
+                    setSendOpen(true);
+                  },
+                },
+                {
+                  key: "attach-pdf",
+                  label: "Attach PDF",
+                  hidden: !allowPrint || !showAttachments,
+                  onSelect: () => {
+                    void runAction("generate_document");
+                  },
+                },
                 {
                   key: "archive",
                   label: archived ? "Restore" : "Archive",
@@ -263,7 +375,13 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
             role="tab"
             aria-selected={tab === t.id}
             className={tab === t.id ? "is-active" : "ghost"}
-            onClick={() => setTab(t.id)}
+            onClick={() => {
+              setTab(t.id);
+              const next = new URLSearchParams(params);
+              if (t.id === "overview") next.delete("tab");
+              else next.set("tab", t.id);
+              setParams(next, { replace: true });
+            }}
           >
             {t.label}
           </button>
@@ -291,6 +409,25 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
           <AttachmentsPanel slug={slug} id={id} items={attachments} onChanged={() => void load()} />
         </div>
       ) : null}
+      {tab === "communication" && allowCommunication ? (
+        <div className="panel detail-panel">
+          <SectionHeader title="Communication" />
+          {comms.length === 0 ? (
+            <p className="muted">No messages yet.</p>
+          ) : (
+            <ul className="stack">
+              {comms.map((item) => (
+                <li key={String(item.id)} className="row-line">
+                  <strong>{String(item.channel ?? "")}</strong>
+                  <StatusBadge value={item.status} />
+                  <span className="muted">{String(item.template ?? "")}</span>
+                  <span className="muted">{String(item.recipient ?? "")}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
       {tab === "activity" && showActivity ? (
         <div className="panel detail-panel">
           <SectionHeader title="Activity" />
@@ -299,12 +436,20 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
               className="comment-form"
               onSubmit={async (e) => {
                 e.preventDefault();
-                if (!comment.trim() || commentBusy) return;
+                if ((!comment.trim() && !commentFile) || commentBusy) return;
                 setCommentBusy(true);
                 try {
-                  await api.addComment(slug, id, comment.trim());
+                  let attachmentId: string | undefined;
+                  if (commentFile && slug && id) {
+                    const uploaded = await api.uploadAttachment(slug, id, commentFile);
+                    attachmentId = String(uploaded.id ?? "");
+                  }
+                  await api.addComment(slug, id, comment.trim() || `Attached ${commentFile?.name ?? "file"}`, attachmentId);
                   setComment("");
+                  setCommentFile(null);
                   await load();
+                  const activityData = await api.activity(slug, id);
+                  setActivity(activityData.items ?? []);
                 } catch (err) {
                   setError(friendlyError(err));
                 } finally {
@@ -321,9 +466,17 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
                   placeholder={t("comment.placeholder")}
                 />
               </label>
-              <button type="submit" disabled={commentBusy || !comment.trim()}>
-                Comment
+              <button type="submit" disabled={commentBusy || (!comment.trim() && !commentFile)}>
+                Send comment
               </button>
+              <label className="comment-attach">
+                <span className="sr-only">Attach file</span>
+                <input
+                  type="file"
+                  onChange={(e) => setCommentFile(e.target.files?.[0] ?? null)}
+                />
+                {commentFile ? <span className="muted">📎 {commentFile.name}</span> : <span className="muted">📎 Attach file</span>}
+              </label>
             </form>
           ) : null}
           <Timeline
@@ -342,12 +495,91 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
               created_at: item.created_at,
               summary: String(item.message ?? item.summary ?? item.action ?? item.event ?? "updated"),
               message: item.message ? String(item.message) : undefined,
+              filename: (() => {
+                const meta = item.metadata as Record<string, unknown> | undefined;
+                return meta?.filename ? String(meta.filename) : undefined;
+              })(),
             }))}
             timezone={theme.timezone}
             locale={theme.locale}
           />
+          <SectionHeader title="Automation Runs" />
+          <AutomationRuns entity={meta.entity} recordId={id} />
         </div>
       ) : null}
+      <ConfirmDialog
+        open={preview}
+        title={`${meta.label} preview`}
+        confirmLabel="Print"
+        cancelLabel="Close"
+        confirmDisabled={previewBusy || !previewHtml}
+        className="print-preview-dialog"
+        onCancel={() => {
+          setPreview(false);
+          setPreviewHtml("");
+        }}
+        onConfirm={() => {
+          const frame = document.querySelector<HTMLIFrameElement>("iframe.print-preview");
+          frame?.contentWindow?.focus();
+          frame?.contentWindow?.print();
+        }}
+      >
+        {previewBusy ? <p>Loading document…</p> : null}
+        {previewHtml ? (
+          <iframe title="Document preview" className="print-preview" srcDoc={previewHtml} />
+        ) : null}
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={sendOpen}
+        title="Send message"
+        confirmLabel="Queue"
+        cancelLabel="Cancel"
+        confirmDisabled={!sendTemplate}
+        onCancel={() => setSendOpen(false)}
+        onConfirm={() => {
+          const body: { template: string; channel?: string } = { template: sendTemplate };
+          if (sendChannel) body.channel = sendChannel;
+          void api
+            .sendCommunication(slug, id, body)
+            .then((res) => {
+              setSendOpen(false);
+              showSnackbar(res.message || "Communication queued");
+              if (tab === "communication") {
+                return api.communications(slug, id).then((d) => setComms(d.items ?? []));
+              }
+            })
+            .catch((e) => setError(friendlyError(e)));
+        }}
+      >
+        <label>
+          Template
+          <select
+            value={sendTemplate}
+            onChange={(e) => {
+              const name = e.target.value;
+              setSendTemplate(name);
+              const next = templates.find((t) => t.name === name);
+              setSendChannel(next?.channels?.[0] ?? "");
+            }}
+          >
+            {templates.map((t) => (
+              <option key={t.name} value={t.name}>
+                {t.name.replaceAll("_", " ")}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Channel
+          <select value={sendChannel} onChange={(e) => setSendChannel(e.target.value)}>
+            {(templates.find((t) => t.name === sendTemplate)?.channels ?? ["email"]).map((ch) => (
+              <option key={ch} value={ch}>
+                {ch}
+              </option>
+            ))}
+          </select>
+        </label>
+      </ConfirmDialog>
       <ConfirmDialog
         open={pending === "delete"}
         title={t("record.deleteTitle", { entity: meta.label })}

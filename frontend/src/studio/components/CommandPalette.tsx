@@ -44,6 +44,8 @@ export default function CommandPalette({ caps }: { caps: string[] }) {
         { label: "Open Automations", path: "/studio/automations" },
         { label: "Open Public Forms", path: "/studio/public-forms" },
         { label: "Open Reports", path: "/studio/reports" },
+        { label: "Open Dashboards", path: "/studio/dashboards" },
+        { label: "Open Pages", path: "/studio/pages" },
         { label: "Open Tenant settings", path: "/studio/system" },
       ].filter((c) => c.label.toLowerCase().includes(q.toLowerCase()) || !q),
     [q],
@@ -110,8 +112,12 @@ function pathFor(r: { kind: string; name: string; entity?: string }) {
       return `/studio/reports/${r.name}`;
     case "dashboard":
       return `/studio/dashboards/${r.name}`;
+    case "page":
+      return `/studio/pages/${r.name}`;
     case "print_format":
       return `/studio/print-formats/${r.name}`;
+    case "communication":
+      return `/studio/communications/${r.name}`;
     default:
       return "/studio";
   }

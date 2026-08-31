@@ -2,11 +2,12 @@ use qefro_agent::ToolRegistry;
 use qefro_auth::AuthService;
 use qefro_core::{
     AppManifest, BlobStore, DashboardDef, Entitlements, MemoryRateLimiter, NotificationDef,
-    OpContext, PrintFormat, ReportDef, StudioCatalog, TenantBranding, TenantConfig, WebhookDef,
+    OpContext, PageDef, PrintFormat, ReportDef, StudioCatalog, TenantBranding, TenantConfig,
+    WebhookDef,
 };
 use qefro_db::{
-    AttachmentStore, AutomationEngine, BlobMetaStore, EntityService, MetadataChangeService,
-    NotificationStore, SavedFilterStore, WebhookLog,
+    AttachmentStore, AutomationEngine, BlobMetaStore, CommunicationHub, CommunicationStore,
+    EntityService, MetadataChangeService, NotificationStore, SavedFilterStore, WebhookLog,
 };
 use qefro_tenant::TenantService;
 use std::sync::Arc;
@@ -21,6 +22,7 @@ pub struct AppState {
     pub tools: Arc<ToolRegistry>,
     pub modules: Vec<AppManifest>,
     pub dashboards: Vec<DashboardDef>,
+    pub pages: Vec<PageDef>,
     pub reports: Vec<qefro_core::ReportDef>,
     pub print_formats: Vec<qefro_core::PrintFormat>,
     pub entitlements: Entitlements,
@@ -28,6 +30,8 @@ pub struct AppState {
     pub public_limiter: Arc<MemoryRateLimiter>,
     pub search_limiter: Arc<MemoryRateLimiter>,
     pub login_limiter: Arc<MemoryRateLimiter>,
+    pub auth_limiter: Arc<MemoryRateLimiter>,
+    pub expensive_limiter: Arc<MemoryRateLimiter>,
     pub installed_apps: Vec<String>,
     pub default_navigation: Vec<String>,
     pub default_nav_items: Vec<qefro_core::WorkspaceNavItem>,
@@ -45,6 +49,10 @@ pub struct AppState {
     pub notification_defs: Vec<NotificationDef>,
     pub webhooks: Vec<WebhookDef>,
     pub automation: Arc<AutomationEngine>,
+    pub communications: Arc<CommunicationStore>,
+    pub communication_defs: Vec<qefro_core::CommunicationDef>,
+    pub communication_hub: Arc<CommunicationHub>,
+    pub allow_register: bool,
 }
 
 impl AppState {
@@ -54,6 +62,10 @@ impl AppState {
 
     pub fn dashboards_live(&self) -> Vec<DashboardDef> {
         self.catalog.merge_dashboards(&self.dashboards)
+    }
+
+    pub fn pages_live(&self) -> Vec<PageDef> {
+        self.catalog.merge_pages(&self.pages)
     }
 
     /// Application dashboards win over platform ones (e.g. Task) when the tenant
@@ -68,6 +80,10 @@ impl AppState {
 
     pub fn print_formats_live(&self) -> Vec<PrintFormat> {
         self.catalog.merge_print_formats(&self.print_formats)
+    }
+
+    pub fn communications_live(&self) -> Vec<qefro_core::CommunicationDef> {
+        self.catalog.merge_communications(&self.communication_defs)
     }
 
     /// Tenant branding wins; empty fields take enabled-app defaults, then tenant name.

@@ -37,14 +37,24 @@ pub fn router() -> Router<AppState> {
         .route("/reports/{report}", get(get_report))
         .route("/dashboards", get(list_dashboards))
         .route("/dashboards/{dashboard}", get(get_dashboard))
+        .route("/pages", get(list_pages))
+        .route("/pages/{page}", get(get_page))
         .route("/print-formats", get(list_print_formats))
         .route("/print-formats/{format}", get(get_print_format))
         .route("/print-formats/{format}/preview", get(preview_print_format))
+        .route("/communications", get(list_communications_studio))
+        .route("/communications/{name}", get(get_communication))
+        .route("/communications/{name}/preview", get(preview_communication))
         .route("/tenant", get(tenant_studio))
         .route("/notifications", get(list_notifications))
         .route("/webhooks", get(list_webhooks))
         .route("/automations", get(list_automations))
+        .route("/automations/runs", get(list_automation_runs))
         .route("/automations/{name}", get(get_automation))
+        .route("/automations/{name}/preview", post(preview_automation))
+        .route("/automations/{name}/runs", get(list_named_automation_runs))
+        .route("/automations/{name}/disable", post(disable_automation))
+        .route("/automations/{name}/enable", post(enable_automation))
         .route("/public-forms", get(list_public_forms))
         .route("/drafts", get(list_drafts).post(create_draft))
         .route("/drafts/{id}", get(get_draft))
@@ -115,7 +125,9 @@ async fn overview(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json
         "workflows": workflows.len(),
         "reports": state.reports_live().len(),
         "dashboards": state.dashboards_live().len(),
+        "pages": state.pages_live().len(),
         "print_formats": state.print_formats_live().len(),
+        "communications": state.communications_live().len(),
         "automations": state.automation.defs().len(),
         "apps": apps,
         "warnings": warnings,
@@ -197,11 +209,23 @@ async fn get_app(
         .filter(|d| d.module.as_deref() == Some(app.as_str()))
         .map(|d| d.name)
         .collect::<Vec<_>>());
+    body["pages"] = json!(state
+        .pages_live()
+        .into_iter()
+        .filter(|p| p.module.as_deref() == Some(app.as_str()))
+        .map(|p| p.name)
+        .collect::<Vec<_>>());
     body["print_formats"] = json!(state
         .print_formats_live()
         .into_iter()
         .filter(|p| p.module.as_deref() == Some(app.as_str()))
         .map(|p| p.name)
+        .collect::<Vec<_>>());
+    body["communications"] = json!(state
+        .communications_live()
+        .into_iter()
+        .filter(|c| c.module.as_deref() == Some(app.as_str()))
+        .map(|c| c.name)
         .collect::<Vec<_>>());
     body["navigation"] = json!(module.navigation);
     body["reverse_dependencies"] = json!(reverse);
@@ -330,7 +354,7 @@ async fn get_entity(
     Path(entity): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     require(&ctx, &state.env, CAP_VIEW)?;
-    let def = state.entities.registry().get(&entity)?;
+    let def = state.entities.entity_for(&ctx, &entity).await?;
     if !ctx.allows_app(def.module.as_deref()) {
         return Err(QefroError::not_found(format!("entity '{entity}' not found")).into());
     }
@@ -441,11 +465,18 @@ async fn get_operations(
             json!({
                 "name": b.def.name,
                 "label": b.def.label,
+                "description": b.def.description,
                 "roles": b.def.roles,
                 "permission": b.def.permission,
                 "kind": b.def.kind,
                 "source_managed": true,
                 "workflow_transition": b.def.workflow_transition,
+                "event": b.def.event,
+                "execution": b.def.execution,
+                "idempotent": b.def.idempotent,
+                "input_schema": b.def.input_schema,
+                "requires_confirmation": b.def.requires_confirmation,
+                "confirmation_message": b.def.confirmation_message,
             })
         })
         .collect();
@@ -504,6 +535,32 @@ async fn get_dashboard(
     })))
 }
 
+async fn list_pages(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    Ok(Json(json!({ "pages": state.pages_live() })))
+}
+
+async fn get_page(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(page): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let def = state
+        .pages_live()
+        .into_iter()
+        .find(|p| p.name == page || p.slug() == page)
+        .ok_or_else(|| QefroError::not_found(format!("page '{page}' not found")))?;
+    Ok(Json(json!({
+        "page": def,
+        "json": serde_json::to_string_pretty(&def).unwrap_or_default(),
+        "yaml": to_yaml(&def)?,
+    })))
+}
+
 async fn list_print_formats(
     State(state): State<AppState>,
     Auth(ctx): Auth,
@@ -549,6 +606,80 @@ async fn preview_print_format(
     Ok(Json(
         json!({ "html": html, "sample": sample, "items": items }),
     ))
+}
+
+async fn list_communications_studio(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    Ok(Json(
+        json!({ "communications": state.communications_live() }),
+    ))
+}
+
+async fn get_communication(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let def = state
+        .communications_live()
+        .into_iter()
+        .find(|c| c.name == name)
+        .ok_or_else(|| QefroError::not_found(format!("communication '{name}' not found")))?;
+    Ok(Json(json!({
+        "communication": def,
+        "json": serde_json::to_string_pretty(&def).unwrap_or_default(),
+        "yaml": to_yaml(&def)?,
+    })))
+}
+
+async fn preview_communication(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let def = state
+        .communications_live()
+        .into_iter()
+        .find(|c| c.name == name)
+        .ok_or_else(|| QefroError::not_found(format!("communication '{name}' not found")))?;
+    let entity = state.entities.registry().get(&def.entity)?;
+    let sample = sample_record(&entity);
+    let mut extras = std::collections::HashMap::new();
+    if let Some(path) = &def.recipient_path {
+        extras.insert(
+            path.clone(),
+            json!({
+                "name": "Ahmed",
+                "email": "ahmed@example.com",
+                "phone": "+10000000000"
+            }),
+        );
+    }
+    let ctx_value = qefro_core::wrap_record(&def.entity, sample.clone(), extras);
+    let opts = qefro_core::FormatOpts {
+        currency: ctx.currency.clone(),
+        locale: ctx.locale.clone(),
+        date_format: "YYYY-MM-DD".into(),
+    };
+    let subject = if let Some(s) = &def.subject {
+        qefro_core::render_template(s, &ctx_value, &opts).unwrap_or_default()
+    } else {
+        def.name.replace('_', " ")
+    };
+    let body = qefro_core::render_template(&def.body, &ctx_value, &opts).unwrap_or_default();
+    Ok(Json(json!({
+        "preview": true,
+        "sent": false,
+        "subject": subject,
+        "body": body,
+        "channel": def.channels.first().cloned().unwrap_or_else(|| "in_app".into()),
+        "sample": sample,
+    })))
 }
 
 fn sample_record(entity: &qefro_core::EntityDef) -> Value {
@@ -648,9 +779,8 @@ async fn get_automation(
     Path(name): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     require(&ctx, &state.env, CAP_VIEW)?;
-    let def = state
-        .automation
-        .defs()
+    let defs = state.automation.defs();
+    let def = defs
         .iter()
         .find(|d| d.name == name || d.id_key() == name)
         .ok_or_else(|| QefroError::not_found(format!("automation '{name}' not found")))?;
@@ -659,6 +789,132 @@ async fn get_automation(
         "json": serde_json::to_string_pretty(def).unwrap_or_default(),
         "yaml": to_yaml(def)?,
     })))
+}
+
+#[derive(Debug, Deserialize)]
+struct AutomationPreviewBody {
+    #[serde(default)]
+    event: Option<String>,
+    #[serde(default)]
+    entity: Option<String>,
+    #[serde(default)]
+    record_id: Option<Uuid>,
+    #[serde(default)]
+    payload: Value,
+}
+
+async fn preview_automation(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+    Json(body): Json<AutomationPreviewBody>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let def = state
+        .automation
+        .defs()
+        .into_iter()
+        .find(|d| d.name == name || d.id_key() == name)
+        .ok_or_else(|| QefroError::not_found(format!("automation '{name}' not found")))?;
+    let event_name = body
+        .event
+        .or(def.trigger.event.clone())
+        .unwrap_or_else(|| "entity.updated".into());
+    let entity = body.entity.unwrap_or_default();
+    let mut event = qefro_events::DomainEvent::new(
+        event_name,
+        entity,
+        body.record_id.unwrap_or(Uuid::nil()),
+        ctx.tenant_id,
+        body.payload,
+    );
+    event.user_id = Some(ctx.user_id);
+    let plan = state.automation.preview(&ctx, &name, &event).await?;
+    Ok(Json(plan))
+}
+
+async fn list_automation_runs(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let automation_id = params.get("automation").map(|s| s.as_str());
+    let entity = params.get("entity").map(|s| s.as_str());
+    let record_id = params
+        .get("record_id")
+        .and_then(|s| Uuid::parse_str(s).ok());
+    let runs = state
+        .automation
+        .list_runs(&ctx, automation_id, entity, record_id, 50)
+        .await?;
+    Ok(Json(json!({ "runs": runs })))
+}
+
+async fn list_named_automation_runs(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let runs = state
+        .automation
+        .list_runs(&ctx, Some(&name), None, None, 50)
+        .await?;
+    Ok(Json(json!({ "runs": runs })))
+}
+
+async fn disable_automation(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_PUBLISH)?;
+    set_automation_enabled(&state, &ctx, &name, false).await
+}
+
+async fn enable_automation(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_PUBLISH)?;
+    set_automation_enabled(&state, &ctx, &name, true).await
+}
+
+async fn set_automation_enabled(
+    state: &AppState,
+    ctx: &qefro_core::OpContext,
+    name: &str,
+    enabled: bool,
+) -> Result<Json<Value>, ApiError> {
+    let mut def = state
+        .automation
+        .defs()
+        .into_iter()
+        .find(|d| d.name == name || d.id_key() == name)
+        .ok_or_else(|| QefroError::not_found(format!("automation '{name}' not found")))?;
+    def.enabled = enabled;
+    let payload = serde_json::to_value(&def).unwrap_or(json!({}));
+    let result = state
+        .studio
+        .publish(
+            ctx,
+            PublishRequest {
+                draft_id: None,
+                kind: "automation".into(),
+                target: def.name.clone(),
+                payload,
+                confirm_migration: false,
+                summary: if enabled {
+                    format!("Enable automation {}", def.name)
+                } else {
+                    format!("Disable automation {}", def.name)
+                },
+            },
+        )
+        .await?;
+    Ok(Json(result))
 }
 
 async fn list_public_forms(
@@ -742,9 +998,27 @@ async fn search(
             results.push(json!({ "kind": "dashboard", "name": dash.name, "label": dash.label }));
         }
     }
+    for page in state.pages_live() {
+        if page.name.to_lowercase().contains(&q) || page.label.to_lowercase().contains(&q) {
+            results.push(json!({ "kind": "page", "name": page.name, "label": page.label }));
+        }
+    }
     for pf in state.print_formats_live() {
         if pf.name.to_lowercase().contains(&q) {
             results.push(json!({ "kind": "print_format", "name": pf.name, "entity": pf.entity }));
+        }
+    }
+    for def in state.communications_live() {
+        if def.name.to_lowercase().contains(&q)
+            || def.entity.to_lowercase().contains(&q)
+            || def.event.to_lowercase().contains(&q)
+        {
+            results.push(json!({
+                "kind": "communication",
+                "name": def.name,
+                "entity": def.entity,
+                "label": def.event,
+            }));
         }
     }
     for def in state.automation.defs() {

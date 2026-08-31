@@ -19,6 +19,15 @@ export function fieldVisible(
   return matchesWhen(field.visible_when, record);
 }
 
+export function fieldRequired(
+  field: { required?: boolean; required_when?: UiWhen },
+  record: Record<string, unknown>,
+): boolean {
+  if (field.required) return true;
+  if (!field.required_when) return false;
+  return matchesWhen(field.required_when, record);
+}
+
 export function fieldReadonly(
   field: { readonly?: boolean; readonly_when?: UiWhen; read_only_when?: UiWhen; disabled?: boolean },
   record: Record<string, unknown>,

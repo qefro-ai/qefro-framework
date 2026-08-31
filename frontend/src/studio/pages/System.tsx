@@ -63,6 +63,42 @@ export default function System({ caps }: { caps: string[] }) {
             />
           </label>
           <label>
+            Address
+            <input
+              value={config.branding.address ?? ""}
+              onChange={(e) =>
+                setConfig({ ...config, branding: { ...config.branding, address: e.target.value } })
+              }
+            />
+          </label>
+          <label>
+            Phone
+            <input
+              value={config.branding.phone ?? ""}
+              onChange={(e) =>
+                setConfig({ ...config, branding: { ...config.branding, phone: e.target.value } })
+              }
+            />
+          </label>
+          <label>
+            Email
+            <input
+              value={config.branding.email ?? ""}
+              onChange={(e) =>
+                setConfig({ ...config, branding: { ...config.branding, email: e.target.value } })
+              }
+            />
+          </label>
+          <label>
+            Website
+            <input
+              value={config.branding.website ?? ""}
+              onChange={(e) =>
+                setConfig({ ...config, branding: { ...config.branding, website: e.target.value } })
+              }
+            />
+          </label>
+          <label>
             Primary color
             <input
               value={config.branding.primary_color ?? ""}
@@ -112,6 +148,45 @@ export default function System({ caps }: { caps: string[] }) {
                   business: { ...config.business, currency: e.target.value },
                 })
               }
+            />
+          </label>
+          <label>
+            Cash account code
+            <input
+              value={config.business?.cash_account ?? ""}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  business: { ...config.business, cash_account: e.target.value },
+                })
+              }
+              placeholder="1100"
+            />
+          </label>
+          <label>
+            Receivable account code
+            <input
+              value={config.business?.receivable_account ?? ""}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  business: { ...config.business, receivable_account: e.target.value },
+                })
+              }
+              placeholder="1200"
+            />
+          </label>
+          <label>
+            Sales account code
+            <input
+              value={config.business?.sales_account ?? ""}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  business: { ...config.business, sales_account: e.target.value },
+                })
+              }
+              placeholder="4100"
             />
           </label>
           <label>

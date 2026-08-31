@@ -13,10 +13,13 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::StreamExt;
 use qefro_core::{OpContext, QefroError, RateLimiter, ROLE_PUBLIC};
-use qefro_db::{signed_headers, ImportMapping};
+use qefro_db::{
+    signed_headers, DuplicatePolicy, ImportFormat, ImportMapping, ImportMode, ImportOptions,
+};
 use qefro_permissions::Action;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::time::Duration;
 use tokio_stream::wrappers::BroadcastStream;
@@ -36,8 +39,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/webhooks/{name}/test", post(test_webhook))
         .route(
             "/api/v1/attachments/{id}",
-            get(get_attachment).delete(delete_attachment),
+            get(get_attachment)
+                .patch(patch_attachment)
+                .delete(delete_attachment),
         )
+        .route("/api/v1/attachments/{id}/replace", post(replace_attachment))
         .route("/api/v1/realtime", get(realtime))
         .route(
             "/api/v1/{slug}/{id}/attachments",
@@ -45,6 +51,13 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/v1/{slug}/import/preview", post(import_preview))
         .route("/api/v1/{slug}/import", post(run_import))
+        .route("/api/v1/{slug}/import/upload", post(upload_import))
+        .route("/api/v1/{slug}/imports", get(list_entity_imports))
+        .route("/api/v1/imports", get(list_imports))
+        .route("/api/v1/imports/{id}", get(get_import))
+        .route("/api/v1/imports/{id}/cancel", post(cancel_import))
+        .route("/api/v1/imports/{id}/retry", post(retry_import))
+        .route("/api/v1/imports/{id}/errors", get(download_import_errors))
 }
 
 pub fn public_router() -> Router<AppState> {
@@ -91,8 +104,13 @@ async fn global_search(
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let key = format!("search:{}:{}", ctx.tenant_id, ctx.user_id);
-    if !state.search_limiter.allow(&key) {
-        return Err(QefroError::rate_limited("search rate limit exceeded").into());
+    let decision = state.search_limiter.check(&key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(
+            "search rate limit exceeded",
+            decision.retry_after_secs(),
+        )
+        .into());
     }
     let results = state
         .entities
@@ -202,26 +220,24 @@ async fn list_attachments(
     State(state): State<AppState>,
     Auth(ctx): Auth,
     Path((slug, id)): Path<(String, Uuid)>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, ApiError> {
     let entity = state.entities.entity_by_slug(&slug)?;
-    let items = state
+    let page = params.get("page").and_then(|s| s.parse().ok()).unwrap_or(1);
+    let page_size = params
+        .get("page_size")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+    let listed = state
         .entities
-        .list_attachments(&ctx, &entity.name, id, &state.attachments)
+        .list_attachments_page(&ctx, &entity.name, id, &state.attachments, page, page_size)
         .await?;
-    Ok(Json(json!({ "items": items })))
+    Ok(Json(listed.to_client_json()))
 }
 
-async fn upload_attachment(
-    State(state): State<AppState>,
-    Auth(ctx): Auth,
-    Path((slug, id)): Path<(String, Uuid)>,
-    mut multipart: Multipart,
-) -> Result<Json<Value>, ApiError> {
-    let key = format!("upload:{}:{}", ctx.tenant_id, ctx.user_id);
-    if !state.rate_limiter.allow(&key) {
-        return Err(QefroError::rate_limited("upload rate limit exceeded").into());
-    }
-    let entity = state.entities.entity_by_slug(&slug)?;
+async fn read_multipart_file(
+    multipart: &mut Multipart,
+) -> Result<(String, String, Vec<u8>), ApiError> {
     let mut filename = String::from("file");
     let mut mime = String::from("application/octet-stream");
     let mut bytes = Vec::new();
@@ -241,6 +257,26 @@ async fn upload_attachment(
             .map_err(|e| QefroError::bad_request(e.to_string()))?
             .to_vec();
     }
+    Ok((filename, mime, bytes))
+}
+
+async fn upload_attachment(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path((slug, id)): Path<(String, Uuid)>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, ApiError> {
+    let key = format!("upload:{}:{}", ctx.tenant_id, ctx.user_id);
+    let decision = state.rate_limiter.check(&key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(
+            "upload rate limit exceeded",
+            decision.retry_after_secs(),
+        )
+        .into());
+    }
+    let entity = state.entities.entity_by_slug(&slug)?;
+    let (filename, mime, bytes) = read_multipart_file(&mut multipart).await?;
     let row = state
         .entities
         .create_attachment(
@@ -254,28 +290,103 @@ async fn upload_attachment(
             &state.attachments,
         )
         .await?;
-    Ok(Json(serde_json::to_value(row).unwrap_or(json!({}))))
+    Ok(Json(row.to_client_json()))
+}
+
+#[derive(Deserialize)]
+struct AttachmentQuery {
+    #[serde(default)]
+    disposition: Option<String>,
+    #[serde(default)]
+    inline: Option<bool>,
 }
 
 async fn get_attachment(
     State(state): State<AppState>,
     Auth(ctx): Auth,
     Path(id): Path<Uuid>,
+    Query(query): Query<AttachmentQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let (meta, bytes) = state
         .entities
         .get_attachment(&ctx, id, &state.attachments, state.blob_store.as_ref())
         .await?;
+    let inline = query.inline.unwrap_or(false)
+        || query
+            .disposition
+            .as_deref()
+            .is_some_and(|d| d.eq_ignore_ascii_case("inline"));
+    let filename = meta.filename.replace(['"', '\\', '\r', '\n'], "");
+    let disposition = if inline {
+        format!("inline; filename=\"{filename}\"")
+    } else {
+        format!("attachment; filename=\"{filename}\"")
+    };
     Ok((
         [
             (header::CONTENT_TYPE, meta.mime_type),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{}\"", meta.filename),
-            ),
+            (header::CONTENT_DISPOSITION, disposition),
         ],
         bytes,
     ))
+}
+
+#[derive(Deserialize)]
+struct PatchAttachmentBody {
+    #[serde(default)]
+    filename: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+async fn patch_attachment(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PatchAttachmentBody>,
+) -> Result<Json<Value>, ApiError> {
+    let row = state
+        .entities
+        .update_attachment_meta(
+            &ctx,
+            id,
+            body.filename.as_deref(),
+            body.description.as_deref(),
+            &state.attachments,
+        )
+        .await?;
+    Ok(Json(row.to_client_json()))
+}
+
+async fn replace_attachment(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, ApiError> {
+    let key = format!("upload:{}:{}", ctx.tenant_id, ctx.user_id);
+    let decision = state.rate_limiter.check(&key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(
+            "upload rate limit exceeded",
+            decision.retry_after_secs(),
+        )
+        .into());
+    }
+    let (filename, mime, bytes) = read_multipart_file(&mut multipart).await?;
+    let row = state
+        .entities
+        .replace_attachment(
+            &ctx,
+            id,
+            &filename,
+            &mime,
+            &bytes,
+            &state.attachments,
+            state.blob_store.as_ref(),
+        )
+        .await?;
+    Ok(Json(row.to_client_json()))
 }
 
 async fn delete_attachment(
@@ -292,11 +403,60 @@ async fn delete_attachment(
 
 #[derive(Deserialize)]
 struct ImportBody {
+    #[serde(default)]
     csv: String,
+    #[serde(default)]
+    json: Option<String>,
     #[serde(default)]
     mapping: Vec<ImportMapping>,
     #[serde(default)]
     batch_size: Option<usize>,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    duplicate_policy: Option<String>,
+    #[serde(default)]
+    match_field: Option<String>,
+    #[serde(default)]
+    dry_run: Option<bool>,
+    #[serde(default)]
+    strict: Option<bool>,
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    idempotency_key: Option<String>,
+    #[serde(default)]
+    blob_key: Option<String>,
+}
+
+fn import_opts(body: &ImportBody) -> Result<ImportOptions, ApiError> {
+    let format = if body.json.is_some() {
+        ImportFormat::Json
+    } else {
+        ImportFormat::parse(body.format.as_deref())
+    };
+    Ok(ImportOptions {
+        mapping: body.mapping.clone(),
+        mode: ImportMode::parse(body.mode.as_deref())?,
+        duplicate_policy: DuplicatePolicy::parse(body.duplicate_policy.as_deref())?,
+        match_field: body.match_field.clone(),
+        dry_run: body.dry_run.unwrap_or(false),
+        batch_size: body.batch_size.unwrap_or(100),
+        strict: body.strict.unwrap_or(false),
+        format,
+        idempotency_key: body.idempotency_key.clone(),
+        filename: None,
+    })
+}
+
+fn import_text(body: &ImportBody) -> Result<&str, ApiError> {
+    if let Some(json) = body.json.as_deref().filter(|s| !s.is_empty()) {
+        return Ok(json);
+    }
+    if !body.csv.is_empty() {
+        return Ok(&body.csv);
+    }
+    Err(QefroError::bad_request("csv or json is required").into())
 }
 
 async fn import_preview(
@@ -306,9 +466,11 @@ async fn import_preview(
     Json(body): Json<ImportBody>,
 ) -> Result<Json<Value>, ApiError> {
     let entity = state.entities.entity_by_slug(&slug)?;
+    let opts = import_opts(&body)?;
     let preview = state
         .entities
-        .preview_import(&ctx, &entity.name, &body.csv, &body.mapping)?;
+        .preview_import_source(&ctx, &entity.name, import_text(&body)?, &opts)
+        .await?;
     Ok(Json(serde_json::to_value(preview).unwrap_or(json!({}))))
 }
 
@@ -319,21 +481,167 @@ async fn run_import(
     Json(body): Json<ImportBody>,
 ) -> Result<Json<Value>, ApiError> {
     let key = format!("import:{}:{}", ctx.tenant_id, ctx.user_id);
-    if !state.rate_limiter.allow(&key) {
-        return Err(QefroError::rate_limited("import rate limit exceeded").into());
+    let decision = state.rate_limiter.check(&key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(
+            "import rate limit exceeded",
+            decision.retry_after_secs(),
+        )
+        .into());
     }
     let entity = state.entities.entity_by_slug(&slug)?;
-    let result = state
+    let opts = import_opts(&body)?;
+    let result = if let Some(blob_key) = body.blob_key.as_deref().filter(|s| !s.is_empty()) {
+        state
+            .entities
+            .submit_import_blob(
+                &ctx,
+                &entity.name,
+                blob_key,
+                &opts,
+                state.blob_store.as_ref(),
+                Some(state.blobs.as_ref()),
+                Some(state.notifications.as_ref()),
+            )
+            .await?
+    } else {
+        state
+            .entities
+            .run_import_source(
+                &ctx,
+                &entity.name,
+                import_text(&body)?,
+                &opts,
+                Some(state.blob_store.as_ref()),
+                Some(state.blobs.as_ref()),
+                Some(state.notifications.as_ref()),
+            )
+            .await?
+    };
+    Ok(Json(serde_json::to_value(result).unwrap_or(json!({}))))
+}
+
+async fn upload_import(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(slug): Path<String>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, ApiError> {
+    let key = format!("import:{}:{}", ctx.tenant_id, ctx.user_id);
+    let decision = state.rate_limiter.check(&key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(
+            "import rate limit exceeded",
+            decision.retry_after_secs(),
+        )
+        .into());
+    }
+    let entity = state.entities.entity_by_slug(&slug)?;
+    let (filename, mime, bytes) = read_multipart_file(&mut multipart).await?;
+    let (blob_key, filename, format) = state
         .entities
-        .run_import(
+        .store_import_file(
             &ctx,
             &entity.name,
-            &body.csv,
-            &body.mapping,
-            body.batch_size.unwrap_or(100),
+            &filename,
+            &mime,
+            &bytes,
+            state.blob_store.as_ref(),
+            state.blobs.as_ref(),
         )
         .await?;
-    Ok(Json(serde_json::to_value(result).unwrap_or(json!({}))))
+    let text = qefro_db::import::decode_text(&bytes)?;
+    let opts = ImportOptions {
+        format,
+        filename: Some(filename.clone()),
+        ..ImportOptions::default()
+    };
+    let preview = state
+        .entities
+        .preview_import_source(&ctx, &entity.name, &text, &opts)
+        .await?;
+    Ok(Json(json!({
+        "blob_key": blob_key,
+        "filename": filename,
+        "format": format,
+        "preview": preview,
+    })))
+}
+
+async fn list_entity_imports(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(slug): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let entity = state.entities.entity_by_slug(&slug)?;
+    let items = state
+        .entities
+        .list_import_jobs(&ctx, Some(&entity.name))
+        .await?;
+    Ok(Json(json!({
+        "items": items.iter().map(|j| j.to_client_json()).collect::<Vec<_>>()
+    })))
+}
+
+async fn list_imports(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    let entity = params.get("entity").map(String::as_str);
+    let items = state.entities.list_import_jobs(&ctx, entity).await?;
+    Ok(Json(json!({
+        "items": items.iter().map(|j| j.to_client_json()).collect::<Vec<_>>()
+    })))
+}
+
+async fn get_import(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let job = state.entities.get_import_job(&ctx, id).await?;
+    Ok(Json(job.to_client_json()))
+}
+
+async fn cancel_import(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let job = state.entities.cancel_import_job(&ctx, id).await?;
+    Ok(Json(job.to_client_json()))
+}
+
+async fn retry_import(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let job = state.entities.retry_import_job(&ctx, id).await?;
+    Ok(Json(job.to_client_json()))
+}
+
+async fn download_import_errors(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let (filename, bytes) = state
+        .entities
+        .import_error_report(&ctx, id, state.blob_store.as_ref())
+        .await?;
+    let filename = filename.replace(['"', '\\', '\r', '\n'], "");
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{filename}\""),
+            ),
+        ],
+        bytes,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -362,11 +670,29 @@ async fn realtime(
     let tenant = ctx.tenant_id;
     let entity_filter = q.entity;
     let record_filter = q.record_id;
+    let allowed_entities: std::collections::HashSet<String> = state
+        .entities
+        .registry()
+        .list()
+        .into_iter()
+        .filter(|entity| {
+            state
+                .entities
+                .permissions()
+                .check(&ctx, &entity.name, Action::Read)
+                .is_ok()
+        })
+        .map(|entity| entity.name.clone())
+        .collect();
     let stream = BroadcastStream::new(rx).filter_map(move |msg| {
         let entity_filter = entity_filter.clone();
+        let allowed_entities = allowed_entities.clone();
         async move {
             let Ok(msg) = msg else { return None };
             if msg.tenant_id != tenant {
+                return None;
+            }
+            if !allowed_entities.contains(&msg.entity) {
                 return None;
             }
             if let Some(entity) = &entity_filter {
@@ -420,8 +746,13 @@ async fn public_form_submit(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("unknown");
     let key = format!("public:{ip}:{tenant}:{form}");
-    if !state.public_limiter.allow(&key) {
-        return Err(QefroError::rate_limited("public form rate limit exceeded").into());
+    let decision = state.public_limiter.check(&key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(
+            "public form rate limit exceeded",
+            decision.retry_after_secs(),
+        )
+        .into());
     }
     let (ctx, entity, public) = resolve_public(&state, &tenant, &form).await?;
     if let Some(obj) = body.as_object_mut() {
@@ -535,6 +866,22 @@ impl qefro_db::JobHandler for WebhookDeliverJob {
                 .await?;
             return Ok(());
         }
+        if let Err(err) = ensure_public_http_url(target).await {
+            self.log
+                .record(
+                    ctx.tenant_id,
+                    webhook,
+                    event,
+                    event_id,
+                    target,
+                    None,
+                    false,
+                    1,
+                    Some("outbound URL is not allowed"),
+                )
+                .await?;
+            return Err(err);
+        }
         let mut req = self.client.post(target).body(bytes);
         for (k, v) in headers {
             req = req.header(k, v);
@@ -579,6 +926,55 @@ impl qefro_db::JobHandler for WebhookDeliverJob {
             }
         }
     }
+}
+
+async fn ensure_public_http_url(raw: &str) -> qefro_core::QefroResult<()> {
+    qefro_core::validate_http_url(raw)?;
+    if raw.trim().starts_with("test://") {
+        return Ok(());
+    }
+    let rest = raw.split_once("://").map(|(_, r)| r).unwrap_or("");
+    let hostport = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let https = raw.trim().to_ascii_lowercase().starts_with("https://");
+    let default_port = if https { 443 } else { 80 };
+    let (host, port) = if hostport.starts_with('[') {
+        let host = hostport
+            .split(']')
+            .next()
+            .unwrap_or("")
+            .trim_start_matches('[')
+            .to_string();
+        let port = hostport
+            .split("]:")
+            .nth(1)
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(default_port);
+        (host, port)
+    } else {
+        let mut parts = hostport.split(':');
+        let host = parts.next().unwrap_or("").to_string();
+        let port = parts
+            .next()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(default_port);
+        (host, port)
+    };
+    if host.is_empty() {
+        return Err(QefroError::bad_request("outbound URL is not allowed"));
+    }
+    let lookup = format!("{host}:{port}");
+    let addrs = tokio::net::lookup_host(&lookup)
+        .await
+        .map_err(|_| QefroError::bad_request("outbound URL is not allowed"))?;
+    let mut any = false;
+    for addr in addrs {
+        any = true;
+        qefro_core::assert_public_ip(addr.ip())?;
+    }
+    if !any {
+        return Err(QefroError::bad_request("outbound URL is not allowed"));
+    }
+    Ok(())
 }
 
 #[allow(dead_code)]

@@ -1,4 +1,4 @@
-use qefro_core::{quote_ident, OpContext, QefroError, QefroResult};
+use qefro_core::{quote_ident, OpContext, QefroError, QefroResult, RowPolicy};
 use qefro_permissions::Action;
 use serde_json::{json, Value};
 use sqlx::{Postgres, QueryBuilder, Row};
@@ -149,6 +149,7 @@ impl EntityService {
                 qb.push(quote_ident("deleted_at")?);
                 qb.push(" IS NULL AND ");
             }
+            apply_search_row_policy(&mut qb, ctx, &entity)?;
             qb.push("(");
             let mut clause = 0usize;
             for field in &searchable {
@@ -303,16 +304,21 @@ impl EntityService {
                 });
             }
         }
+        self.search_attachments(ctx, q, &needle, per.min(5), &mut hits)
+            .await;
         hits.sort_by(|a, b| b.score.cmp(&a.score).then(a.label.cmp(&b.label)));
         hits.truncate(per.saturating_mul(4));
         let mut grouped: BTreeMap<String, SearchGroup> = BTreeMap::new();
         for hit in &hits {
             let entry = grouped.entry(hit.entity.clone()).or_insert_with(|| {
-                let label = self
-                    .registry()
-                    .try_get(&hit.entity)
-                    .map(|e| e.label_plural.clone())
-                    .unwrap_or_else(|| hit.entity.clone());
+                let label = if hit.entity == "_attachment" {
+                    "Attachments".into()
+                } else {
+                    self.registry()
+                        .try_get(&hit.entity)
+                        .map(|e| e.label_plural.clone())
+                        .unwrap_or_else(|| hit.entity.clone())
+                };
                 SearchGroup {
                     entity: hit.entity.clone(),
                     label,
@@ -326,6 +332,60 @@ impl EntityService {
             results: hits,
             groups,
         })
+    }
+
+    async fn search_attachments(
+        &self,
+        ctx: &OpContext,
+        q: &str,
+        needle: &str,
+        limit: usize,
+        hits: &mut Vec<SearchHit>,
+    ) {
+        let store = crate::attachments::AttachmentStore::new(self.pool().clone());
+        let Ok(rows) = store.search(ctx.tenant_id, q, limit as i64).await else {
+            return;
+        };
+        for row in rows {
+            let Some(entity) = self.registry().try_get(&row.entity) else {
+                continue;
+            };
+            if !entity.attachments {
+                continue;
+            }
+            if !ctx.allows_app(entity.module.as_deref()) {
+                continue;
+            }
+            if self
+                .permissions()
+                .check(ctx, &entity.name, Action::Read)
+                .is_err()
+            {
+                continue;
+            }
+            let Ok(record) = self.get(ctx, &entity.name, row.record_id).await else {
+                continue;
+            };
+            let parent_label = entity.display_label(&record);
+            let filename_score = rank_text(needle, &row.filename, 10);
+            let desc_score = row
+                .description
+                .as_deref()
+                .map(|d| rank_text(needle, d, 6))
+                .unwrap_or(0);
+            let score = filename_score.max(desc_score);
+            if score <= 0 {
+                continue;
+            }
+            hits.push(SearchHit {
+                entity: "_attachment".into(),
+                slug: entity.slug.clone(),
+                id: row.record_id.to_string(),
+                label: row.filename.clone(),
+                snippet: parent_label,
+                score,
+            });
+        }
     }
 
     fn strip_search_fields(
@@ -349,6 +409,45 @@ impl EntityService {
         }
         let _ = json!(null);
     }
+}
+
+fn apply_search_row_policy(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    ctx: &OpContext,
+    entity: &qefro_core::EntityDef,
+) -> QefroResult<()> {
+    if ctx.is_admin() {
+        return Ok(());
+    }
+    match entity.row_policy {
+        Some(RowPolicy::AssignedTo) if entity.get_field("assigned_to").is_some() => {
+            qb.push(quote_ident("assigned_to")?);
+            qb.push(" = ");
+            qb.push_bind(ctx.user_id);
+            qb.push(" AND ");
+        }
+        Some(RowPolicy::CreatedBy) => {
+            qb.push(quote_ident("created_by")?);
+            qb.push(" = ");
+            qb.push_bind(ctx.user_id);
+            qb.push(" AND ");
+        }
+        Some(RowPolicy::AssignedToOrCreatedBy) => {
+            qb.push("(");
+            if entity.get_field("assigned_to").is_some() {
+                qb.push(quote_ident("assigned_to")?);
+                qb.push(" = ");
+                qb.push_bind(ctx.user_id);
+                qb.push(" OR ");
+            }
+            qb.push(quote_ident("created_by")?);
+            qb.push(" = ");
+            qb.push_bind(ctx.user_id);
+            qb.push(") AND ");
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 fn search_needle(q: &str) -> String {

@@ -65,7 +65,7 @@ That script creates role `qefro` / database `qefro` (password `qefro`) on `127.0
 
 | Path | Command | Use when |
 | --- | --- | --- |
-| YAML app | `qefro app new myshop` | CRUD, relations, child tables, formulas, workflows, permissions, YAML reports/dashboards |
+| YAML app | `qefro app new myshop` | CRUD, relations, child tables, formulas, workflows, permissions, YAML reports/dashboards/pages |
 | Rust app | `qefro new my-app` | Same as YAML, plus **business operations** (`OperationHandler`) |
 
 YAML apps cannot register `OperationHandler`s. Those live on `InstalledApp` in Rust (restaurant and CRM follow that path). Both paths share the same generic frontend. Do not scaffold a second React app.
@@ -88,6 +88,7 @@ apps/myshop/
 ├── workflows/
 ├── reports/
 ├── dashboards/
+├── pages/
 ├── print_formats/
 ├── seeds/
 └── README.md
@@ -372,6 +373,6 @@ qefro app install myshop-0.1.0.qefro
 | Permissions | [permissions.md](permissions.md) |
 | Generic UI | [ui.md](ui.md), [views.md](views.md) |
 | Studio overlays | [studio.md](studio.md) |
-| Reports / dashboards | [reports.md](reports.md), [dashboards.md](dashboards.md) |
+| Reports / dashboards / pages | [reports.md](reports.md), [dashboards.md](dashboards.md), [pages.md](pages.md) |
 | Agents | [agents.md](agents.md) |
 | Deploy | [deployment.md](deployment.md) |

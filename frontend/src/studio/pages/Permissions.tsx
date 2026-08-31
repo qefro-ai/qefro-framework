@@ -105,7 +105,16 @@ export default function Permissions({ caps }: { caps: string[] }) {
       <ul>
         {ops.map((op) => (
           <li key={String(op.name)}>
-            {String(op.label || op.name)} · {(op.roles as string[] | undefined)?.join(", ") || "any role"}
+            {String(op.label || op.name)}
+            {op.description ? <span className="muted"> — {String(op.description)}</span> : null}
+            {op.workflow_transition ? (
+              <span className="muted"> · transition {String(op.workflow_transition)}</span>
+            ) : null}
+            {op.execution && op.execution !== "sync" ? (
+              <span className="muted"> · {String(op.execution)}</span>
+            ) : null}
+            {" · "}
+            {(op.roles as string[] | undefined)?.join(", ") || "any role"}
             {op.source_managed ? <span className="muted"> · Custom Rust operation · Source-managed</span> : null}
           </li>
         ))}

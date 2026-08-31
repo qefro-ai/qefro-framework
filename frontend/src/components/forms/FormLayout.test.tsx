@@ -174,4 +174,70 @@ describe("FormLayout", () => {
     expect(container.querySelector(".form-columns")).toBeTruthy();
     expect(container.querySelectorAll(".form-column")).toHaveLength(2);
   });
+
+  it("shows required_when, readonly_when, computed, and child-row errors", () => {
+    render(
+      <FormLayout
+        fields={[
+          {
+            ...fields[0],
+            name: "contact_method",
+            label: "Contact method",
+            required: false,
+            widget: "select",
+            enum_values: ["email", "phone"],
+          },
+          {
+            ...fields[0],
+            name: "email",
+            label: "Email",
+            required: false,
+            required_when: { field: "contact_method", equals: "email" },
+          },
+          {
+            ...fields[0],
+            name: "total",
+            label: "Total",
+            required: false,
+            computed: true,
+            formula: "quantity * unit_price",
+            readonly: true,
+            widget: "number",
+          },
+          {
+            ...fields[0],
+            name: "items",
+            label: "Items",
+            required: false,
+            widget: "text",
+          },
+        ]}
+        values={{ contact_method: "email", email: "", total: 40, items: [] }}
+        entities={[]}
+        fieldErrors={{ email: "Email is required", "items.0.quantity": "must be >= 1" }}
+        onChange={() => undefined}
+      />,
+    );
+    expect(screen.getByText(/Email \*/)).toBeInTheDocument();
+    expect(screen.getByText(/calculated/i)).toBeInTheDocument();
+    expect(screen.getByText("Email is required")).toBeInTheDocument();
+    expect(screen.getByText(/must be >= 1/)).toBeInTheDocument();
+  });
+
+  it("shows a generic debit/credit balance hint", () => {
+    render(
+      <FormLayout
+        fields={[
+          { ...fields[0], name: "total_debit", label: "Debit", required: false, computed: true, widget: "number" },
+          { ...fields[0], name: "total_credit", label: "Credit", required: false, computed: true, widget: "number" },
+        ]}
+        values={{ total_debit: 100, total_credit: 90 }}
+        entities={[]}
+        fieldErrors={{}}
+        onChange={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(/Not balanced/);
+    expect(screen.getByRole("status")).toHaveTextContent(/Difference: 10/);
+  });
 });

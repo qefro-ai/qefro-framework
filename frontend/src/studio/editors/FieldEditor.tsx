@@ -58,6 +58,9 @@ export default function FieldEditor({
       allow_on_submit: draft.allow_on_submit ?? field?.allow_on_submit ?? false,
       visible_when: whenFrom(draft.visible_when_field ?? (ui.visible_when as { field?: string } | undefined)?.field, draft.visible_when_equals ?? (ui.visible_when as { equals?: unknown } | undefined)?.equals),
       readonly_when: whenFrom(draft.readonly_when_field ?? (ui.readonly_when as { field?: string } | undefined)?.field, draft.readonly_when_equals ?? (ui.readonly_when as { equals?: unknown } | undefined)?.equals),
+      required_when: whenFrom(draft.required_when_field ?? (field?.required_when as { field?: string } | undefined)?.field, draft.required_when_equals ?? (field?.required_when as { equals?: unknown } | undefined)?.equals),
+      min: draft.min ?? (field?.validation as { min?: number } | undefined)?.min,
+      greater_than: draft.greater_than ?? (field?.validation as { greater_than?: number } | undefined)?.greater_than,
     };
   }
 
@@ -99,6 +102,7 @@ export default function FieldEditor({
             >
               {String(f.label || f.name)}
               <span className="muted"> {String(f.type)}</span>
+              {f.custom ? <span className="muted"> / Custom</span> : null}
               {f.computed ? <span className="muted"> / Computed</span> : null}
             </button>
           </li>
@@ -258,6 +262,49 @@ export default function FieldEditor({
             <input
               value={String(draft.readonly_when_equals ?? (ui.readonly_when as { equals?: unknown } | undefined)?.equals ?? "")}
               onChange={(e) => setDraft({ ...draft, readonly_when_equals: e.target.value })}
+            />
+          </label>
+          <label>
+            Required when field
+            <input
+              value={String(draft.required_when_field ?? (field.required_when as { field?: string } | undefined)?.field ?? "")}
+              onChange={(e) => setDraft({ ...draft, required_when_field: e.target.value })}
+              placeholder="contact_method"
+            />
+          </label>
+          <label>
+            Required when equals
+            <input
+              value={String(draft.required_when_equals ?? (field.required_when as { equals?: unknown } | undefined)?.equals ?? "")}
+              onChange={(e) => setDraft({ ...draft, required_when_equals: e.target.value })}
+              placeholder="email"
+            />
+          </label>
+          <label>
+            Greater than
+            <input
+              type="number"
+              value={String(draft.greater_than ?? (field.validation as { greater_than?: number } | undefined)?.greater_than ?? "")}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  greater_than: e.target.value === "" ? undefined : Number(e.target.value),
+                })
+              }
+              placeholder="0"
+            />
+          </label>
+          <label>
+            Minimum
+            <input
+              type="number"
+              value={String(draft.min ?? (field.validation as { min?: number } | undefined)?.min ?? "")}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  min: e.target.value === "" ? undefined : Number(e.target.value),
+                })
+              }
             />
           </label>
           {preview ? (

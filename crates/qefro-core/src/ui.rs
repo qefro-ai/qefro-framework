@@ -133,23 +133,7 @@ impl UiWhen {
     }
 
     pub fn matches(&self, record: &Value) -> bool {
-        record
-            .get(&self.field)
-            .map(|v| values_equal(v, &self.equals))
-            .unwrap_or(false)
-    }
-}
-
-fn values_equal(left: &Value, right: &Value) -> bool {
-    if left == right {
-        return true;
-    }
-    match (left, right) {
-        (Value::String(a), other) => {
-            a == &other.to_string().trim_matches('"').to_string() || other.as_str() == Some(a)
-        }
-        (other, Value::String(b)) => other.as_str() == Some(b),
-        _ => false,
+        crate::condition::values_equal(crate::condition::lookup(record, &self.field), &self.equals)
     }
 }
 
@@ -411,6 +395,12 @@ pub struct UiEntityMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capabilities: Option<EntityCapabilities>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub print_formats: Vec<PrintFormatSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub communications: Vec<CommunicationSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduling: Option<crate::scheduling::SchedulingSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<crate::platform::EntityActionDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<crate::platform::LinkDef>,
@@ -434,6 +424,17 @@ pub struct EntityPermissions {
     pub delete: bool,
     #[serde(default)]
     pub export: bool,
+}
+
+/// Print formats advertised to the generic UI. Presentation only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PrintFormatSummary {
+    pub name: String,
+    pub title: String,
+    #[serde(default)]
+    pub variant: String,
+    #[serde(default)]
+    pub version: u32,
 }
 
 /// Which business-object surfaces the generic UI may offer. Not authorization.
@@ -463,6 +464,27 @@ pub struct EntityCapabilities {
     pub export: bool,
     #[serde(default)]
     pub bulk: bool,
+    /// Entity has at least one print format (or a document definition that can print).
+    #[serde(default)]
+    pub print: bool,
+    /// Entity has at least one communication template.
+    #[serde(default)]
+    pub communication: bool,
+    /// Entity opted into the scheduling capability.
+    #[serde(default)]
+    pub scheduling: bool,
+}
+
+/// Templates advertised to the generic UI. Presentation only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CommunicationSummary {
+    pub name: String,
+    #[serde(default)]
+    pub event: String,
+    #[serde(default)]
+    pub channels: Vec<String>,
+    #[serde(default)]
+    pub purpose: String,
 }
 
 fn default_true_standalone() -> bool {
@@ -765,6 +787,8 @@ pub struct UiFieldView {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_when: Option<UiWhen>,
     pub list: bool,
     pub list_visible: bool,
     pub form: bool,
@@ -824,6 +848,11 @@ pub struct UiFieldView {
     pub allow_on_submit: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub secret: bool,
+    /// Extension field from application or tenant metadata.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub custom: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub child_entity: Option<String>,
 }
@@ -1075,6 +1104,53 @@ pub struct WorkspaceNavItem {
     /// Workspace section heading, e.g. Operations / Catalog / Analytics.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
+    /// Composed page slug. When set, the shell links to `/pages/{page}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
+}
+
+impl WorkspaceNavItem {
+    pub fn new(
+        label: impl Into<String>,
+        entity: impl Into<String>,
+        slug: impl Into<String>,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            entity: entity.into(),
+            slug: slug.into(),
+            query: None,
+            view: None,
+            module: None,
+            section: None,
+            page: None,
+        }
+    }
+
+    pub fn query(mut self, query: impl Into<String>) -> Self {
+        self.query = Some(query.into());
+        self
+    }
+
+    pub fn view(mut self, view: impl Into<String>) -> Self {
+        self.view = Some(view.into());
+        self
+    }
+
+    pub fn module(mut self, module: impl Into<String>) -> Self {
+        self.module = Some(module.into());
+        self
+    }
+
+    pub fn section(mut self, section: impl Into<String>) -> Self {
+        self.section = Some(section.into());
+        self
+    }
+
+    pub fn page(mut self, page: impl Into<String>) -> Self {
+        self.page = Some(page.into());
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1093,6 +1169,14 @@ pub struct TenantBranding {
     pub company_name: Option<String>,
     #[serde(default)]
     pub app_name: Option<String>,
+    #[serde(default)]
+    pub address: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub website: Option<String>,
 }
 
 impl TenantBranding {
@@ -1112,6 +1196,10 @@ impl TenantBranding {
             && Self::blank(&self.accent_color)
             && Self::blank(&self.company_name)
             && Self::blank(&self.app_name)
+            && Self::blank(&self.address)
+            && Self::blank(&self.phone)
+            && Self::blank(&self.email)
+            && Self::blank(&self.website)
     }
 
     /// Fill empty fields from app or other defaults. Stored tenant values win.
@@ -1136,6 +1224,18 @@ impl TenantBranding {
         }
         if Self::blank(&self.app_name) {
             self.app_name = other.app_name.clone();
+        }
+        if Self::blank(&self.address) {
+            self.address = other.address.clone();
+        }
+        if Self::blank(&self.phone) {
+            self.phone = other.phone.clone();
+        }
+        if Self::blank(&self.email) {
+            self.email = other.email.clone();
+        }
+        if Self::blank(&self.website) {
+            self.website = other.website.clone();
         }
     }
 
@@ -1189,6 +1289,19 @@ pub struct TenantBusinessConfig {
     pub date_format: String,
     #[serde(default = "default_number_format")]
     pub number_format: String,
+    /// Chart of accounts codes for this tenant. Never hardcoded account IDs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cash_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receivable_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payable_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sales_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cogs_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory_account: Option<String>,
 }
 
 fn default_currency() -> String {
@@ -1215,6 +1328,12 @@ impl Default for TenantBusinessConfig {
             locale: default_locale(),
             date_format: default_date_format(),
             number_format: default_number_format(),
+            cash_account: None,
+            receivable_account: None,
+            payable_account: None,
+            sales_account: None,
+            cogs_account: None,
+            inventory_account: None,
         }
     }
 }

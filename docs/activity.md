@@ -31,7 +31,7 @@ GET  /api/v1/{slug}/{id}/activity
 POST /api/v1/{slug}/{id}/comments   { "message": "…" }
 ```
 
-List requires read access to the record (404 across tenants). Comments are Activity rows with `activity_type = comment`. There is no separate messaging system.
+List requires read access to the record (404 across tenants), which applies RowPolicy via `EntityService::get`. Dashboard activity widgets and recent-activity counts use the same `get` path so a hidden record cannot appear as “12 activities”. Comments are Activity rows with `activity_type = comment`. There is no separate messaging system.
 
 `QefroClient.activity` / `getActivity` / `addComment` and `EntityOps.list_activity` / `add_comment` use the same `EntityService` path.
 

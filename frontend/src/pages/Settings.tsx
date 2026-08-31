@@ -27,11 +27,18 @@ export default function Settings({
   const [accent, setAccent] = useState("");
   const [logo, setLogo] = useState("");
   const [favicon, setFavicon] = useState("");
+  const [address, setAddress] = useState("");
+  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
+  const [website, setWebsite] = useState("");
   const [navigation, setNavigation] = useState("");
   const [apps, setApps] = useState("");
   const [timezone, setTimezone] = useState("");
   const [locale, setLocale] = useState("");
   const [currency, setCurrency] = useState("");
+  const [cashAccount, setCashAccount] = useState("");
+  const [receivableAccount, setReceivableAccount] = useState("");
+  const [salesAccount, setSalesAccount] = useState("");
   const [dateFormat, setDateFormat] = useState("");
   const [terminology, setTerminology] = useState("");
   const [error, setError] = useState("");
@@ -53,11 +60,18 @@ export default function Settings({
     setAccent(config.branding.accent_color ?? "");
     setLogo(config.branding.logo ?? "");
     setFavicon(config.branding.favicon ?? "");
+    setAddress(config.branding.address ?? "");
+    setPhone(config.branding.phone ?? "");
+    setEmail(config.branding.email ?? "");
+    setWebsite(config.branding.website ?? "");
     setNavigation((config.ui_config.navigation ?? []).join(", "));
     setApps((config.enabled_apps ?? []).join(", "));
     setTimezone(config.business?.timezone ?? "UTC");
     setLocale(config.business?.locale ?? "en-US");
     setCurrency(config.business?.currency ?? "USD");
+    setCashAccount(config.business?.cash_account ?? "");
+    setReceivableAccount(config.business?.receivable_account ?? "");
+    setSalesAccount(config.business?.sales_account ?? "");
     setDateFormat(config.business?.date_format ?? "YYYY-MM-DD");
     const terms = config.ui_config.terminology ?? {};
     setTerminology(
@@ -89,6 +103,10 @@ export default function Settings({
         accent_color: accent || null,
         logo: logo || null,
         favicon: favicon || null,
+        address: address || null,
+        phone: phone || null,
+        email: email || null,
+        website: website || null,
       },
       ui_config: {
         ...config.ui_config,
@@ -108,6 +126,12 @@ export default function Settings({
         currency: currency || "USD",
         date_format: dateFormat || "YYYY-MM-DD",
         number_format: config.business?.number_format ?? "1,234.56",
+        cash_account: cashAccount || null,
+        receivable_account: receivableAccount || null,
+        sales_account: salesAccount || null,
+        payable_account: config.business?.payable_account ?? null,
+        cogs_account: config.business?.cogs_account ?? null,
+        inventory_account: config.business?.inventory_account ?? null,
       },
     };
     try {
@@ -196,6 +220,22 @@ export default function Settings({
           <input value={appName} onChange={(e) => setAppName(e.target.value)} />
         </label>
         <label className="field-cell width-half">
+          Address
+          <input value={address} onChange={(e) => setAddress(e.target.value)} />
+        </label>
+        <label className="field-cell width-half">
+          Phone
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} />
+        </label>
+        <label className="field-cell width-half">
+          Email
+          <input value={email} onChange={(e) => setEmail(e.target.value)} />
+        </label>
+        <label className="field-cell width-half">
+          Website
+          <input value={website} onChange={(e) => setWebsite(e.target.value)} />
+        </label>
+        <label className="field-cell width-half">
           Primary color
           <input value={primary} onChange={(e) => setPrimary(e.target.value)} placeholder="#9a3412" />
         </label>
@@ -252,6 +292,18 @@ export default function Settings({
         <label className="field-cell width-half">
           Currency
           <input value={currency} onChange={(e) => setCurrency(e.target.value)} placeholder="USD" />
+        </label>
+        <label className="field-cell width-half">
+          Cash account code
+          <input value={cashAccount} onChange={(e) => setCashAccount(e.target.value)} placeholder="1100" />
+        </label>
+        <label className="field-cell width-half">
+          Receivable account code
+          <input value={receivableAccount} onChange={(e) => setReceivableAccount(e.target.value)} placeholder="1200" />
+        </label>
+        <label className="field-cell width-half">
+          Sales account code
+          <input value={salesAccount} onChange={(e) => setSalesAccount(e.target.value)} placeholder="4100" />
         </label>
         <label className="field-cell width-half">
           Date format

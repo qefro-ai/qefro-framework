@@ -38,6 +38,18 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace -- --test-threads=1
 
+  cargo-audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ignore: RUSTSEC-2026-0235,RUSTSEC-2023-0071
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

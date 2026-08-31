@@ -2,6 +2,8 @@
 
 Authoritative validation runs on the server in `EntityService` (`validate_record` + entity-level rules). The generic UI may mirror rules for UX. REST, SDK, and automation all share the same checks.
 
+The full rule model (required, `required_when`, defaults, readonly, visibility, computed, workflow guards) is documented in [business-rules.md](business-rules.md).
+
 Do not replace per-field `ValidationRules`. Entity-level `validation:` is additive.
 
 ## Field rules
@@ -26,7 +28,7 @@ FieldDef::integer("score").range(0.0, 100.0)
 | `regex` | Pattern |
 | `email` / `phone` / `url` | Format |
 
-`UiWhen` remains presentation-only. Hidden fields are still validated.
+`UiWhen` `visible_when` is presentation-only for show/hide. Hidden fields are still validated. `readonly_when` is enforced on update by EntityService.
 
 ## Entity-level YAML
 

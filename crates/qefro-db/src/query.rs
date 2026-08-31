@@ -1,5 +1,7 @@
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
-use qefro_core::{quote_ident, EntityDef, FieldDef, FieldType, QefroError, QefroResult};
+use qefro_core::{
+    parse_money, quote_ident, EntityDef, FieldDef, FieldType, QefroError, QefroResult,
+};
 use qefro_search::{Filter, Query, SortDir};
 use serde_json::{Map, Value};
 use sqlx::{Postgres, QueryBuilder};
@@ -31,9 +33,7 @@ pub fn push_bind_owned(
     value: &Value,
 ) {
     match value {
-        Value::Null => {
-            qb.push_bind(Option::<String>::None);
-        }
+        Value::Null => push_null(qb, field),
         Value::Bool(b) => {
             qb.push_bind(*b);
         }
@@ -43,6 +43,10 @@ pub fn push_bind_owned(
                     qb.push_bind(i);
                     return;
                 }
+            }
+            if matches!(field.map(|f| &f.field_type), Some(FieldType::Decimal)) {
+                push_numeric(qb, &decimal_bind(value));
+                return;
             }
             if let Some(i) = n.as_i64() {
                 qb.push_bind(i);
@@ -101,14 +105,9 @@ pub fn push_bind_owned(
                     qb.push_bind(s.clone());
                 }
             },
-            Some(FieldType::Decimal) => match s.parse::<f64>() {
-                Ok(f) => {
-                    qb.push_bind(f);
-                }
-                Err(_) => {
-                    qb.push_bind(s.clone());
-                }
-            },
+            Some(FieldType::Decimal) => {
+                push_numeric(qb, &decimal_bind(value));
+            }
             Some(FieldType::Json) => {
                 qb.push_bind(sqlx::types::Json(value.clone()));
             }
@@ -122,6 +121,55 @@ pub fn push_bind_owned(
         },
         Value::Array(_) | Value::Object(_) => {
             qb.push_bind(sqlx::types::Json(value.clone()));
+        }
+    }
+}
+
+fn decimal_bind(value: &Value) -> String {
+    parse_money(value)
+        .map(|d| d.normalize().to_string())
+        .unwrap_or_else(|_| match value {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            _ => "0".into(),
+        })
+}
+
+/// Bind decimals as `NUMERIC`, not `float8` or `text`. `float8` overflows
+/// `NUMERIC(18,6)` for values such as `0.1`; raw `text` is the wrong OID.
+fn push_numeric(qb: &mut QueryBuilder<'_, Postgres>, digits: &str) {
+    qb.push("CAST(");
+    qb.push_bind(digits.to_string());
+    qb.push(" AS NUMERIC)");
+}
+
+fn push_null(qb: &mut QueryBuilder<'_, Postgres>, field: Option<&FieldDef>) {
+    match field.map(|f| &f.field_type) {
+        Some(FieldType::Decimal) => {
+            qb.push("CAST(");
+            qb.push_bind(Option::<String>::None);
+            qb.push(" AS NUMERIC)");
+        }
+        Some(FieldType::Uuid) | Some(FieldType::Relation) => {
+            qb.push_bind(Option::<Uuid>::None);
+        }
+        Some(FieldType::DateTime) => {
+            qb.push_bind(Option::<DateTime<Utc>>::None);
+        }
+        Some(FieldType::Date) => {
+            qb.push_bind(Option::<NaiveDate>::None);
+        }
+        Some(FieldType::Time) => {
+            qb.push_bind(Option::<NaiveTime>::None);
+        }
+        Some(FieldType::Boolean) => {
+            qb.push_bind(Option::<bool>::None);
+        }
+        Some(FieldType::Integer) => {
+            qb.push_bind(Option::<i64>::None);
+        }
+        _ => {
+            qb.push_bind(Option::<String>::None);
         }
     }
 }
@@ -168,12 +216,16 @@ pub fn apply_filters(
                     if clause > 0 {
                         qb.push(" OR ");
                     }
-                    qb.push(quote_ident(&field.column_name())?);
-                    if field.search_exact {
+                    if field.custom {
+                        push_custom_extract(qb, &field.name)?;
+                        qb.push(" ILIKE ");
+                    } else {
+                        qb.push(quote_ident(&field.column_name())?);
                         qb.push("::text ILIKE ");
+                    }
+                    if field.search_exact {
                         qb.push_bind(search.clone());
                     } else {
-                        qb.push("::text ILIKE ");
                         qb.push_bind(format!("%{search}%"));
                     }
                     clause += 1;
@@ -194,6 +246,10 @@ fn apply_filter(
     filter: &Filter,
 ) -> QefroResult<()> {
     let field_name = filter.field_name();
+    let field = entity.get_field(field_name);
+    if field.is_some_and(|f| f.custom) {
+        return apply_custom_filter(qb, field, filter);
+    }
     let col = column_ident(entity, field_name)?;
     let field = entity.get_field(field_name);
     match filter {
@@ -284,6 +340,120 @@ fn apply_filter(
     Ok(())
 }
 
+fn push_custom_extract(qb: &mut QueryBuilder<'_, Postgres>, name: &str) -> QefroResult<()> {
+    qb.push("(");
+    qb.push(quote_ident(qefro_core::CUSTOM_BAG_COLUMN)?);
+    qb.push(" ->> ");
+    qb.push_bind(name.to_string());
+    qb.push(")");
+    Ok(())
+}
+
+fn json_text(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Null => String::new(),
+        other => other.to_string().trim_matches('"').to_string(),
+    }
+}
+
+fn apply_custom_filter(
+    qb: &mut QueryBuilder<'_, Postgres>,
+    field: Option<&FieldDef>,
+    filter: &Filter,
+) -> QefroResult<()> {
+    let name = filter.field_name();
+    match filter {
+        Filter::Eq { value, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" = ");
+            qb.push_bind(json_text(value));
+        }
+        Filter::Neq { value, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" <> ");
+            qb.push_bind(json_text(value));
+        }
+        Filter::Contains { value, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" ILIKE ");
+            qb.push_bind(format!("%{value}%"));
+        }
+        Filter::StartsWith { value, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" ILIKE ");
+            qb.push_bind(format!("{value}%"));
+        }
+        Filter::Gt { value, .. }
+        | Filter::Gte { value, .. }
+        | Filter::Lt { value, .. }
+        | Filter::Lte { value, .. } => {
+            if field.is_some_and(|f| f.field_type.is_numeric()) {
+                qb.push("(");
+                push_custom_extract(qb, name)?;
+                qb.push(")::numeric");
+            } else {
+                push_custom_extract(qb, name)?;
+            }
+            qb.push(match filter {
+                Filter::Gt { .. } => " > ",
+                Filter::Gte { .. } => " >= ",
+                Filter::Lt { .. } => " < ",
+                _ => " <= ",
+            });
+            if field.is_some_and(|f| f.field_type.is_numeric()) {
+                push_bind_owned(qb, field, value);
+            } else {
+                qb.push_bind(json_text(value));
+            }
+        }
+        Filter::In { values, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" IN (");
+            for (i, v) in values.iter().enumerate() {
+                if i > 0 {
+                    qb.push(", ");
+                }
+                qb.push_bind(json_text(v));
+            }
+            qb.push(")");
+        }
+        Filter::NotIn { values, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" NOT IN (");
+            for (i, v) in values.iter().enumerate() {
+                if i > 0 {
+                    qb.push(", ");
+                }
+                qb.push_bind(json_text(v));
+            }
+            qb.push(")");
+        }
+        Filter::Empty { .. } => {
+            qb.push("(");
+            push_custom_extract(qb, name)?;
+            qb.push(" IS NULL OR ");
+            push_custom_extract(qb, name)?;
+            qb.push(" = '')");
+        }
+        Filter::NotEmpty { .. } => {
+            qb.push("(");
+            push_custom_extract(qb, name)?;
+            qb.push(" IS NOT NULL AND ");
+            push_custom_extract(qb, name)?;
+            qb.push(" <> '')");
+        }
+        Filter::Between { from, to, .. } => {
+            push_custom_extract(qb, name)?;
+            qb.push(" BETWEEN ");
+            qb.push_bind(json_text(from));
+            qb.push(" AND ");
+            qb.push_bind(json_text(to));
+        }
+    }
+    Ok(())
+}
+
 pub fn apply_sort(
     qb: &mut QueryBuilder<'_, Postgres>,
     entity: &EntityDef,
@@ -332,6 +502,23 @@ mod tests {
     use super::*;
     use qefro_core::FieldDef;
     use qefro_search::parse_query;
+
+    #[test]
+    fn decimal_values_are_bound_as_numeric_not_float() {
+        let entity = EntityDef::new("Line")
+            .field(FieldDef::currency("debit"))
+            .build();
+        let mut qb = QueryBuilder::<Postgres>::new("INSERT INTO t (debit) VALUES (");
+        push_bind_owned(
+            &mut qb,
+            entity.get_field("debit"),
+            &serde_json::json!("100.00"),
+        );
+        qb.push(")");
+        let sql = qb.sql();
+        assert!(sql.contains("CAST("), "{sql}");
+        assert!(sql.contains("AS NUMERIC"), "{sql}");
+    }
 
     #[test]
     fn query_sql_never_inlines_search_text() {

@@ -503,9 +503,11 @@ async fn empty_tenant_branding_picks_up_restaurant_defaults() {
         .filter_map(|v| v.as_str())
         .collect();
     assert_eq!(
-        nav,
-        vec!["orders", "reservations", "tables", "menu-items", "customers"]
+        &nav[..5],
+        ["orders", "reservations", "tables", "menu-items", "customers"]
     );
+    assert!(nav.contains(&"sales-orders"), "{nav:?}");
+    assert!(nav.contains(&"products"), "{nav:?}");
     let hidden: Vec<&str> = ui["hidden_entities"]
         .as_array()
         .unwrap()
@@ -774,4 +776,18 @@ async fn takeaway_walk_in_and_scheduled_pickup() {
     .await;
     assert_eq!(status, StatusCode::OK, "{completed}");
     assert_eq!(completed["status"], "Completed");
+    let (status, follow_ups) = json(
+        clone_router(&router),
+        get("/api/v1/tasks", &token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{follow_ups}");
+    assert!(
+        follow_ups["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["entity_id"] == booked_id && t["entity_type"] == "Order"),
+        "complete order should create a related task: {follow_ups}"
+    );
 }

@@ -24,7 +24,7 @@ Admin bypasses role lists after authentication. Workers use role `Worker` and on
 
 `GET /api/v1/meta/ui` includes per-entity `permissions: { list, create, read, update, delete }`. GET records include `_permissions: { update, delete }`. The generic UI uses those to hide New / Edit / Delete. They are chrome hints, not a security boundary. Unauthorized writes still return **403** from `EntityService`. Tenant isolation is `WHERE tenant_id = $1` plus a post-read check (mismatch is **404**), not a UI filter.
 
-Search, reports, dashboards, and saved views use the same pipeline. Unauthorized search hits, report fields, dashboard widgets, and saved views are denied or skipped. Audit widgets remain Admin-only.
+Search, reports, dashboards, saved views, **and Activity timelines** use the same pipeline, including RowPolicy. Unauthorized search hits, report fields, dashboard widgets, activity items, and saved views are denied or skipped. Audit widgets remain Admin-only.
 
 ## Field permissions
 

@@ -1,10 +1,11 @@
 use chrono::{DateTime, Duration, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use qefro_core::{OpContext, QefroError, QefroResult, USER_ENTITY};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use std::sync::OnceLock;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -56,6 +57,15 @@ impl AuthService {
             jwt_secret: jwt_secret.into(),
             token_ttl_hours: 12,
         }
+    }
+
+    pub fn with_token_ttl_hours(mut self, hours: i64) -> Self {
+        self.token_ttl_hours = hours.clamp(1, 24 * 30);
+        self
+    }
+
+    pub fn token_ttl_hours(&self) -> i64 {
+        self.token_ttl_hours
     }
 
     pub async fn register(
@@ -133,14 +143,18 @@ impl AuthService {
         .bind(&email)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| QefroError::database(e.to_string()))?
-        .ok_or_else(|| QefroError::unauthorized("invalid credentials"))?;
+        .map_err(|e| QefroError::database(e.to_string()))?;
 
-        if !row.enabled {
+        // Always verify against a hash so missing users cost Argon2 like real ones.
+        let hash = row
+            .as_ref()
+            .map(|r| r.password_hash.as_str())
+            .unwrap_or_else(|| dummy_password_hash());
+        let password_ok = verify_password(password, hash)?;
+        let Some(row) = row else {
             return Err(QefroError::unauthorized("invalid credentials"));
-        }
-
-        if !verify_password(password, &row.password_hash)? {
+        };
+        if !row.enabled || !password_ok {
             return Err(QefroError::unauthorized("invalid credentials"));
         }
 
@@ -157,29 +171,25 @@ impl AuthService {
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
 
-        if memberships.is_empty() {
-            return Err(QefroError::forbidden("user has no tenant membership"));
-        }
-
         let membership = if let Some(slug) = tenant_slug {
-            memberships
-                .iter()
-                .find(|m| m.slug == slug)
-                .ok_or_else(|| QefroError::forbidden("not a member of that tenant"))?
-                .clone()
+            memberships.iter().find(|m| m.slug == slug)
         } else {
-            memberships[0].clone()
+            memberships.first()
+        };
+        let Some(membership) = membership.filter(|m| m.enabled) else {
+            return Err(QefroError::unauthorized("invalid credentials"));
         };
 
-        if !membership.enabled {
-            return Err(QefroError::forbidden("user is disabled in this tenant"));
-        }
-
-        self.issue_token(row.id, membership.tenant_id, membership.roles)
+        self.issue_token(row.id, membership.tenant_id, membership.roles.clone())
             .await
     }
 
-    pub async fn switch_tenant(&self, user_id: Uuid, tenant_id: Uuid) -> QefroResult<AuthToken> {
+    pub async fn switch_tenant(
+        &self,
+        user_id: Uuid,
+        tenant_id: Uuid,
+        current_session: Option<Uuid>,
+    ) -> QefroResult<AuthToken> {
         let membership = sqlx::query_as::<_, Membership>(
             r#"
             SELECT t.id as tenant_id, t.slug, ut.roles, ut.enabled
@@ -197,6 +207,9 @@ impl AuthService {
         if !membership.enabled {
             return Err(QefroError::forbidden("user is disabled in this tenant"));
         }
+        if let Some(sid) = current_session {
+            self.logout(sid).await?;
+        }
         self.issue_token(user_id, membership.tenant_id, membership.roles)
             .await
     }
@@ -210,11 +223,26 @@ impl AuthService {
         Ok(())
     }
 
+    /// Issue a new access token for the same session. The JWT must still be
+    /// valid; this is not a second secret. Browser clients refresh before expiry.
+    /// Server SDKs may keep using the original token until it expires.
+    pub async fn refresh(&self, token: &str) -> QefroResult<AuthToken> {
+        let ctx = self.authenticate(token).await?;
+        let sid = ctx
+            .session_id
+            .ok_or_else(|| QefroError::unauthorized("invalid token"))?;
+        self.reissue(sid, ctx.user_id, ctx.tenant_id, ctx.roles.clone())
+            .await
+    }
+
     pub async fn authenticate(&self, token: &str) -> QefroResult<OpContext> {
+        let mut validation = Validation::new(Algorithm::HS256);
+        validation.algorithms = vec![Algorithm::HS256];
+        validation.validate_exp = true;
         let claims = decode::<Claims>(
             token,
             &DecodingKey::from_secret(self.jwt_secret.as_bytes()),
-            &Validation::default(),
+            &validation,
         )
         .map_err(|_| QefroError::unauthorized("invalid token"))?
         .claims;
@@ -560,6 +588,28 @@ impl AuthService {
         Ok(current)
     }
 
+    async fn reissue(
+        &self,
+        session_id: Uuid,
+        user_id: Uuid,
+        tenant_id: Uuid,
+        roles: Vec<String>,
+    ) -> QefroResult<AuthToken> {
+        let expires_at = Utc::now() + Duration::hours(self.token_ttl_hours);
+        let updated =
+            sqlx::query("UPDATE sessions SET expires_at = $2 WHERE id = $1 AND revoked_at IS NULL")
+                .bind(session_id)
+                .bind(expires_at)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| QefroError::database(e.to_string()))?;
+        if updated.rows_affected() == 0 {
+            return Err(QefroError::unauthorized("session expired"));
+        }
+        self.encode_token(session_id, user_id, tenant_id, roles, expires_at)
+            .await
+    }
+
     async fn issue_token(
         &self,
         user_id: Uuid,
@@ -584,7 +634,18 @@ impl AuthService {
         .execute(&self.pool)
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
+        self.encode_token(session_id, user_id, tenant_id, roles, expires_at)
+            .await
+    }
 
+    async fn encode_token(
+        &self,
+        session_id: Uuid,
+        user_id: Uuid,
+        tenant_id: Uuid,
+        roles: Vec<String>,
+        expires_at: DateTime<Utc>,
+    ) -> QefroResult<AuthToken> {
         let now = Utc::now().timestamp();
         let claims = Claims {
             sub: user_id,
@@ -595,7 +656,7 @@ impl AuthService {
             exp: expires_at.timestamp(),
         };
         let access_token = encode(
-            &Header::default(),
+            &Header::new(Algorithm::HS256),
             &claims,
             &EncodingKey::from_secret(self.jwt_secret.as_bytes()),
         )
@@ -723,6 +784,15 @@ struct SessionRow {
     revoked_at: Option<DateTime<Utc>>,
 }
 
+fn dummy_password_hash() -> &'static str {
+    static HASH: OnceLock<String> = OnceLock::new();
+    HASH.get_or_init(|| {
+        hash_password("qefro-timing-dummy").unwrap_or_else(|_| {
+            "$argon2id$v=19$m=19456,t=2,p=1$cWVmcm90aW1pbmdzYWx0$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".into()
+        })
+    })
+}
+
 fn hash_password(password: &str) -> QefroResult<String> {
     use argon2::password_hash::{rand_core::OsRng, SaltString};
     use argon2::{Argon2, PasswordHasher};
@@ -750,7 +820,7 @@ fn sha256_hex(value: &str) -> String {
 fn map_db(err: sqlx::Error) -> QefroError {
     if let sqlx::Error::Database(db) = &err {
         if db.code().as_deref() == Some("23505") {
-            return QefroError::conflict("email or tenant slug already exists");
+            return QefroError::conflict("could not create account");
         }
     }
     QefroError::database(err.to_string())

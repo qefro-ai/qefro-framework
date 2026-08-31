@@ -15,6 +15,8 @@ It shows fields, relations, child tables, computed formulas, form/list/detail la
 
 The **Layout** tab publishes field order / section / tab / label via `entity.field.ui`. The **Views** tab publishes `entity.views` and previews with the production view registry (including Cards). There is no page builder.
 
+The **custom fields** tab publishes `entity.custom_field`. That is **Safe** (JSONB bag, no `ADD COLUMN`). See [custom fields](custom-fields.md).
+
 ## Additive edits (migration required)
 
 Adding a stored field publishes an overlay and runs the existing `apply_schema` path (`ADD COLUMN IF NOT EXISTS`). In production, `confirm_migration` must be true.

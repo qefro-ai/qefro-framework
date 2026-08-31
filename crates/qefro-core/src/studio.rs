@@ -9,6 +9,7 @@ use crate::entity::EntityDef;
 use crate::error::{QefroError, QefroResult};
 use crate::field::{FieldDef, FieldType};
 use crate::formula::{eval_formula, parse_formula, FormulaContext};
+use crate::page::PageDef;
 use crate::registry::EntityRegistry;
 use crate::ui::{DashboardDef, WidgetOptions};
 use serde::{Deserialize, Serialize};
@@ -122,6 +123,14 @@ pub struct FieldUiPatch {
     pub visible_when: Option<crate::ui::UiWhen>,
     #[serde(default, alias = "read_only_when")]
     pub readonly_when: Option<crate::ui::UiWhen>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_when: Option<crate::ui::UiWhen>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub greater_than: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -276,6 +285,20 @@ pub fn apply_field_ui_patch(field: &mut FieldDef, patch: &FieldUiPatch) {
     if let Some(when) = &patch.readonly_when {
         field.ui.readonly_when = Some(when.clone());
     }
+    if let Some(when) = &patch.required_when {
+        field.required_when = Some(when.clone());
+    }
+    if let Some(min) = patch.min {
+        field.validation.min = Some(min);
+        field.ui.widget_options.min = Some(serde_json::Value::from(min));
+    }
+    if let Some(max) = patch.max {
+        field.validation.max = Some(max);
+        field.ui.widget_options.max = Some(serde_json::Value::from(max));
+    }
+    if let Some(gt) = patch.greater_than {
+        field.validation.greater_than = Some(gt);
+    }
 }
 
 pub fn classify_entity_change(before: &EntityDef, after: &EntityDef) -> ChangeAnalysis {
@@ -301,6 +324,11 @@ pub fn classify_entity_change(before: &EntityDef, after: &EntityDef) -> ChangeAn
             None => {
                 if field.is_child_table() {
                     analysis.diff.push(format!("+ child table {name}"));
+                } else if field.custom {
+                    analysis.diff.push(format!(
+                        "+ custom field {name} ({})",
+                        field.field_type.as_str()
+                    ));
                 } else {
                     analysis.impact = analysis.impact.merge(SchemaImpact::Additive);
                     analysis.migration_required = true;
@@ -324,6 +352,12 @@ pub fn classify_entity_change(before: &EntityDef, after: &EntityDef) -> ChangeAn
         if after_fields.contains_key(name) {
             continue;
         }
+        if field.custom {
+            analysis
+                .diff
+                .push(format!("- custom field {name} (disabled; data retained)"));
+            continue;
+        }
         analysis.impact = SchemaImpact::Destructive;
         analysis.migration_required = true;
         analysis.warnings.push(format!(
@@ -340,6 +374,24 @@ fn classify_field(before: &FieldDef, after: &FieldDef, analysis: &mut ChangeAnal
     if std::mem::discriminant(&before.field_type) != std::mem::discriminant(&after.field_type)
         || field_type_key(&before.field_type) != field_type_key(&after.field_type)
     {
+        if before.custom && after.custom {
+            if !crate::custom::custom_types_compatible(&before.field_type, &after.field_type) {
+                analysis.impact = SchemaImpact::Destructive;
+                analysis.warnings.push(format!(
+                    "Custom field '{}' type change {} → {} is incompatible with existing data.",
+                    after.name,
+                    before.field_type.as_str(),
+                    after.field_type.as_str()
+                ));
+            }
+            analysis.diff.push(format!(
+                "~ custom field {} type {} → {}",
+                after.name,
+                before.field_type.as_str(),
+                after.field_type.as_str()
+            ));
+            return;
+        }
         analysis.impact = SchemaImpact::Destructive;
         analysis.migration_required = true;
         analysis.warnings.push(format!(
@@ -524,7 +576,10 @@ pub const FORMULA_FUNCTIONS: &[&str] = &[
 pub struct StudioCatalog {
     reports: RwLock<HashMap<String, ReportDef>>,
     dashboards: RwLock<HashMap<String, DashboardDef>>,
+    pages: RwLock<HashMap<String, PageDef>>,
     print_formats: RwLock<HashMap<String, PrintFormat>>,
+    communications: RwLock<HashMap<String, crate::communication::CommunicationDef>>,
+    automations: RwLock<HashMap<String, crate::automation::AutomationDef>>,
 }
 
 impl StudioCatalog {
@@ -540,8 +595,26 @@ impl StudioCatalog {
         }
     }
 
+    pub fn upsert_page(&self, def: PageDef) {
+        if let Ok(mut g) = self.pages.write() {
+            g.insert(def.name.clone(), def);
+        }
+    }
+
     pub fn upsert_print_format(&self, def: PrintFormat) {
         if let Ok(mut g) = self.print_formats.write() {
+            g.insert(def.name.clone(), def);
+        }
+    }
+
+    pub fn upsert_communication(&self, def: crate::communication::CommunicationDef) {
+        if let Ok(mut g) = self.communications.write() {
+            g.insert(def.name.clone(), def);
+        }
+    }
+
+    pub fn upsert_automation(&self, def: crate::automation::AutomationDef) {
+        if let Ok(mut g) = self.automations.write() {
             g.insert(def.name.clone(), def);
         }
     }
@@ -554,8 +627,20 @@ impl StudioCatalog {
         self.dashboards.read().ok()?.get(name).cloned()
     }
 
+    pub fn page(&self, name: &str) -> Option<PageDef> {
+        self.pages.read().ok()?.get(name).cloned()
+    }
+
     pub fn print_format(&self, name: &str) -> Option<PrintFormat> {
         self.print_formats.read().ok()?.get(name).cloned()
+    }
+
+    pub fn communication(&self, name: &str) -> Option<crate::communication::CommunicationDef> {
+        self.communications.read().ok()?.get(name).cloned()
+    }
+
+    pub fn automation(&self, name: &str) -> Option<crate::automation::AutomationDef> {
+        self.automations.read().ok()?.get(name).cloned()
     }
 
     pub fn merge_reports(&self, base: &[ReportDef]) -> Vec<ReportDef> {
@@ -570,9 +655,31 @@ impl StudioCatalog {
         })
     }
 
+    pub fn merge_pages(&self, base: &[PageDef]) -> Vec<PageDef> {
+        merge_named(base, self.pages.read().ok().as_deref(), |p| p.name.clone())
+    }
+
     pub fn merge_print_formats(&self, base: &[PrintFormat]) -> Vec<PrintFormat> {
         merge_named(base, self.print_formats.read().ok().as_deref(), |p| {
             p.name.clone()
+        })
+    }
+
+    pub fn merge_communications(
+        &self,
+        base: &[crate::communication::CommunicationDef],
+    ) -> Vec<crate::communication::CommunicationDef> {
+        merge_named(base, self.communications.read().ok().as_deref(), |c| {
+            c.name.clone()
+        })
+    }
+
+    pub fn merge_automations(
+        &self,
+        base: &[crate::automation::AutomationDef],
+    ) -> Vec<crate::automation::AutomationDef> {
+        merge_named(base, self.automations.read().ok().as_deref(), |a| {
+            a.name.clone()
         })
     }
 }
@@ -651,6 +758,24 @@ mod tests {
         let a = classify_entity_change(&before, &after);
         assert_eq!(a.impact, SchemaImpact::Additive);
         assert!(a.migration_required);
+    }
+
+    #[test]
+    fn add_custom_field_is_safe() {
+        let before = EntityDef::new("Customer")
+            .field(FieldDef::string("name"))
+            .build();
+        let after = EntityDef::new("Customer")
+            .field(FieldDef::string("name"))
+            .custom_field(FieldDef::enum_values(
+                "loyalty_tier",
+                vec!["Bronze", "Silver", "Gold"],
+            ))
+            .build();
+        let a = classify_entity_change(&before, &after);
+        assert_eq!(a.impact, SchemaImpact::Safe);
+        assert!(!a.migration_required);
+        assert!(a.diff.iter().any(|l| l.contains("loyalty_tier")));
     }
 
     #[test]

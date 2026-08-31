@@ -3,16 +3,22 @@ use crate::realtime::{RealtimeFanout, RealtimeHub};
 use crate::routes;
 use crate::state::AppState;
 use anyhow::Context;
+use axum::http::{header, HeaderValue, Method, Request};
+use axum::middleware::Next;
+use axum::response::Response;
 use qefro_agent::ToolRegistry;
 use qefro_auth::AuthService;
 use qefro_core::{
     AppModule, EntityRegistry, HookRegistry, LocalBlobStore, OperationDef, StudioCatalog,
 };
 use qefro_db::{
-    apply_schema, connect, AttachmentStore, AutomationEngine, BlobMetaStore, DueReminderJob,
-    EmailNotifyJob, EntityService, JobHandler, JobQueue, JobRegistry, LogNotificationJob,
-    MetadataChangeService, NotificationStore, OperationHandler, OperationRegistry,
-    PlatformDispatcher, SavedFilterStore, WebhookLog, DUE_REMINDER_JOB,
+    apply_schema, connect, AttachmentPurgeJob, AttachmentStore, AutomationEngine, BlobMetaStore,
+    CommunicationDeliverJob, CommunicationDispatcher, CommunicationHub, CommunicationStore,
+    CustomFieldStore, DueReminderJob, EmailNotifyJob, EntityService, ImportRunJob, JobHandler,
+    JobQueue, JobRegistry, LogNotificationJob, MetadataChangeService, NotificationStore,
+    OperationExecuteJob, OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore,
+    ScheduleReminderJob, WebhookLog, ATTACHMENT_PURGE_JOB, COMMUNICATION_DELIVER_JOB,
+    DUE_REMINDER_JOB, IMPORT_RUN_JOB, OPERATION_EXECUTE_JOB, SCHEDULE_REMINDER_JOB,
 };
 use qefro_events::InProcessEventBus;
 use qefro_permissions::{PermissionGrant, PermissionRegistry};
@@ -21,7 +27,7 @@ use qefro_workflow::{WorkflowDef, WorkflowRegistry};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 #[derive(Clone, Debug)]
@@ -37,6 +43,15 @@ pub struct Config {
     /// When true, the HTTP process also polls jobs. Production compose runs
     /// `qefro worker` separately and sets this false.
     pub embed_worker: bool,
+    /// Open self-service tenant registration. Default true in development,
+    /// false in production unless `QEFRO_ALLOW_REGISTER=true`.
+    pub allow_register: bool,
+    /// Allowed browser origins. Empty in development means any origin.
+    /// Production never uses `*`; unset falls back to `public_url`.
+    pub cors_origins: Vec<String>,
+    /// Access-token lifetime in hours. Default 12. Browser clients refresh
+    /// before expiry; SDKs may keep the original token.
+    pub token_ttl_hours: i64,
 }
 
 impl Default for Config {
@@ -51,6 +66,9 @@ impl Default for Config {
             storage_path: "./var/qefro-storage".into(),
             auto_migrate: true,
             embed_worker: true,
+            allow_register: true,
+            cors_origins: Vec::new(),
+            token_ttl_hours: 12,
         }
     }
 }
@@ -58,10 +76,24 @@ impl Default for Config {
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         let env = std::env::var("QEFRO_ENV").unwrap_or_else(|_| "development".into());
+        let production = env.eq_ignore_ascii_case("production");
         let auto_migrate = match std::env::var("QEFRO_AUTO_MIGRATE") {
             Ok(v) => matches!(v.as_str(), "1" | "true" | "TRUE" | "yes"),
-            Err(_) => env != "production",
+            Err(_) => !production,
         };
+        let allow_register = match std::env::var("QEFRO_ALLOW_REGISTER") {
+            Ok(v) => matches!(v.as_str(), "1" | "true" | "TRUE" | "yes"),
+            Err(_) => !production,
+        };
+        let cors_origins = std::env::var("QEFRO_CORS_ORIGINS")
+            .ok()
+            .map(|raw| {
+                raw.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         Ok(Self {
             database_url: std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgres://qefro:qefro@127.0.0.1:5432/qefro".into()),
@@ -77,10 +109,31 @@ impl Config {
             auto_migrate,
             embed_worker: match std::env::var("QEFRO_EMBED_WORKER") {
                 Ok(v) => matches!(v.as_str(), "1" | "true" | "TRUE" | "yes"),
-                Err(_) => env != "production",
+                Err(_) => !production,
             },
+            allow_register,
+            cors_origins,
+            token_ttl_hours: std::env::var("QEFRO_TOKEN_TTL_HOURS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(12)
+                .clamp(1, 24 * 30),
             env,
         })
+    }
+
+    pub fn is_production(&self) -> bool {
+        self.env.eq_ignore_ascii_case("production")
+    }
+
+    fn cors_origin_list(&self) -> Vec<String> {
+        if !self.cors_origins.is_empty() {
+            return self.cors_origins.clone();
+        }
+        if self.is_production() {
+            return vec![origin_from_public_url(&self.public_url)];
+        }
+        Vec::new()
     }
 
     pub fn validate(&self) -> anyhow::Result<()> {
@@ -90,6 +143,20 @@ impl Config {
             }
             if self.database_url.is_empty() {
                 anyhow::bail!("DATABASE_URL is required");
+            }
+            if self.database_url.contains("postgres://qefro:qefro@")
+                || self.database_url.contains("postgresql://qefro:qefro@")
+            {
+                anyhow::bail!(
+                    "DATABASE_URL must not use the compose default password in production"
+                );
+            }
+            if self.cors_origins.iter().any(|o| o == "*") {
+                anyhow::bail!("QEFRO_CORS_ORIGINS must not be '*' in production");
+            }
+            let level = self.log_level.to_ascii_lowercase();
+            if level == "debug" || level == "trace" {
+                anyhow::bail!("QEFRO_LOG_LEVEL must not be debug or trace in production");
             }
         }
         if self.bind.parse::<std::net::SocketAddr>().is_err() {
@@ -190,31 +257,41 @@ impl QefroRuntime {
     pub fn permission_grants(&self) -> Vec<PermissionGrant> {
         let mut grants = qefro_permissions::identity_grants();
         grants.extend(qefro_permissions::task_grants());
+        grants.extend(qefro_permissions::accounting_grants());
+        grants.extend(qefro_permissions::commerce_grants());
         grants.extend(self.apps.iter().flat_map(|a| a.permissions.clone()));
         grants
     }
 
     pub fn workflows(&self) -> Vec<WorkflowDef> {
-        let mut wfs = vec![qefro_workflow::task_workflow()];
+        let mut wfs = vec![
+            qefro_workflow::task_workflow(),
+            qefro_workflow::journal_workflow(),
+            qefro_workflow::period_workflow(),
+            qefro_workflow::quote_workflow(),
+            qefro_workflow::sales_order_workflow(),
+            qefro_workflow::shipment_workflow(),
+            qefro_workflow::invoice_workflow(),
+            qefro_workflow::sales_payment_workflow(),
+            qefro_workflow::sales_return_workflow(),
+        ];
         wfs.extend(self.apps.iter().flat_map(|a| a.workflows.clone()));
         wfs
     }
 
     pub fn automations(&self) -> Vec<qefro_core::AutomationDef> {
         let mut autos = qefro_core::task_automations();
-        autos.extend(
-            self.apps
-                .iter()
-                .flat_map(|a| a.module.automations.clone()),
-        );
+        autos.extend(qefro_core::accounting_automations());
+        autos.extend(qefro_core::commerce_automations());
+        autos.extend(self.apps.iter().flat_map(|a| a.module.automations.clone()));
         autos
     }
 
     pub fn reports(&self) -> Vec<qefro_core::ReportDef> {
-        self.apps
-            .iter()
-            .flat_map(|a| a.module.reports.clone())
-            .collect()
+        let mut reports = qefro_core::accounting_reports();
+        reports.extend(qefro_core::commerce_reports());
+        reports.extend(self.apps.iter().flat_map(|a| a.module.reports.clone()));
+        reports
     }
 
     pub fn dashboards(&self) -> Vec<qefro_core::DashboardDef> {
@@ -224,7 +301,44 @@ impl QefroRuntime {
             .flat_map(|a| a.module.dashboards.clone())
             .collect();
         cards.push(qefro_core::task_dashboard());
+        cards.push(qefro_core::accounting_dashboard());
+        cards.push(qefro_core::commerce_dashboard());
         cards
+    }
+
+    pub fn pages(&self) -> Vec<qefro_core::PageDef> {
+        self.apps
+            .iter()
+            .flat_map(|a| a.module.pages.clone())
+            .collect()
+    }
+
+    pub fn print_formats(&self) -> Vec<qefro_core::PrintFormat> {
+        let mut out = Vec::new();
+        for entity in qefro_core::platform_entities() {
+            out.extend(entity.print_formats);
+        }
+        for app in &self.apps {
+            out.extend(app.module.print_formats.clone());
+            for entity in &app.module.entities {
+                out.extend(entity.print_formats.clone());
+            }
+        }
+        out
+    }
+
+    pub fn communications(&self) -> Vec<qefro_core::CommunicationDef> {
+        let mut out = qefro_core::commerce_communications();
+        for app in &self.apps {
+            out.extend(app.module.communications.clone());
+        }
+        out
+    }
+
+    pub fn page(&self, name: &str) -> Option<qefro_core::PageDef> {
+        self.pages()
+            .into_iter()
+            .find(|p| p.name.eq_ignore_ascii_case(name) || p.slug().eq_ignore_ascii_case(name))
     }
 
     pub fn tool_names(&self) -> Vec<String> {
@@ -246,6 +360,12 @@ impl QefroRuntime {
         for entity in self.entities() {
             push(entity);
         }
+        for def in qefro_db::accounting_operation_defs() {
+            names.push(def.tool_name.clone());
+        }
+        for def in qefro_db::commerce_operation_defs() {
+            names.push(def.tool_name.clone());
+        }
         for app in &self.apps {
             for (def, _) in &app.operations {
                 names.push(def.tool_name.clone());
@@ -260,6 +380,8 @@ impl QefroRuntime {
         for entity in qefro_core::platform_entities() {
             defs.extend(qefro_db::crud_operation_defs(&entity));
         }
+        defs.extend(qefro_db::accounting_operation_defs());
+        defs.extend(qefro_db::commerce_operation_defs());
         for entity in self.entities() {
             defs.extend(qefro_db::crud_operation_defs(entity));
         }
@@ -311,6 +433,7 @@ impl QefroRuntime {
             "GET/POST /api/v1/tasks".into(),
             "GET /api/v1/meta/ui".into(),
             "GET /api/v1/meta/dashboards".into(),
+            "GET /api/v1/meta/pages".into(),
             "GET /api/v1/meta/reports".into(),
             "POST /api/v1/reports/:name/run".into(),
             "GET /api/v1/tools".into(),
@@ -327,7 +450,7 @@ impl QefroRuntime {
             "GET /api/v1/search".into(),
             "GET /api/v1/settings/:slug".into(),
             "GET /api/v1/notifications".into(),
-            "GET /api/v1/realtime".into(),
+            "GET /pages/:name".into(),
         ];
         for app in &self.apps {
             for entity in &app.module.entities {
@@ -344,6 +467,7 @@ impl QefroRuntime {
                 if !entity.print_formats.is_empty() || entity.document.is_some() {
                     routes.push(format!("GET /api/v1/{}/:id/print", entity.slug));
                 }
+                routes.push(format!("GET /api/v1/{}/:id/communications", entity.slug));
             }
         }
         routes
@@ -360,10 +484,12 @@ impl QefroRuntime {
         let mut hooks = HookRegistry::new();
         let mut manifests = Vec::new();
         let mut dashboards = Vec::new();
+        let mut pages = Vec::new();
         let mut reports = Vec::new();
         let mut print_formats = Vec::new();
 
         for entity in qefro_core::platform_entities() {
+            print_formats.extend(entity.print_formats.clone());
             let name = entity.name.clone();
             registry.register(entity)?;
             permissions.ensure_admin(&name);
@@ -374,7 +500,21 @@ impl QefroRuntime {
         for grant in qefro_permissions::task_grants() {
             permissions.grant(grant);
         }
+        for grant in qefro_permissions::accounting_grants() {
+            permissions.grant(grant);
+        }
+        for grant in qefro_permissions::commerce_grants() {
+            permissions.grant(grant);
+        }
         workflows.register(qefro_workflow::task_workflow());
+        workflows.register(qefro_workflow::journal_workflow());
+        workflows.register(qefro_workflow::period_workflow());
+        workflows.register(qefro_workflow::quote_workflow());
+        workflows.register(qefro_workflow::sales_order_workflow());
+        workflows.register(qefro_workflow::shipment_workflow());
+        workflows.register(qefro_workflow::invoice_workflow());
+        workflows.register(qefro_workflow::sales_payment_workflow());
+        workflows.register(qefro_workflow::sales_return_workflow());
 
         for app in &self.apps {
             app.module.install_entities(&mut registry)?;
@@ -395,6 +535,7 @@ impl QefroRuntime {
             }
             manifests.push(qefro_core::AppManifest::from_module(&app.module));
             dashboards.extend(app.module.dashboards.clone());
+            pages.extend(app.module.pages.clone());
             reports.extend(app.module.reports.clone());
             print_formats.extend(app.module.print_formats.clone());
             for entity in &app.module.entities {
@@ -402,6 +543,10 @@ impl QefroRuntime {
             }
         }
         dashboards.push(qefro_core::task_dashboard());
+        dashboards.push(qefro_core::accounting_dashboard());
+        dashboards.push(qefro_core::commerce_dashboard());
+        reports.extend(qefro_core::accounting_reports());
+        reports.extend(qefro_core::commerce_reports());
 
         registry.wire_identity_inverses()?;
 
@@ -439,14 +584,27 @@ impl QefroRuntime {
         let hooks = Arc::new(hooks);
         let events = InProcessEventBus::new();
         let catalog = Arc::new(StudioCatalog::default());
-        let studio = Arc::new(MetadataChangeService::new(
-            pool.clone(),
-            registry.clone(),
-            workflows.clone(),
-            permissions.clone(),
-            catalog.clone(),
-            self.config.env.clone(),
-        ));
+        for report in &reports {
+            catalog.upsert_report(report.clone());
+        }
+        for dash in &dashboards {
+            catalog.upsert_dashboard(dash.clone());
+        }
+        for page in &pages {
+            catalog.upsert_page(page.clone());
+        }
+        let custom_fields = Arc::new(CustomFieldStore::new(pool.clone()));
+        let studio = Arc::new(
+            MetadataChangeService::new(
+                pool.clone(),
+                registry.clone(),
+                workflows.clone(),
+                permissions.clone(),
+                catalog.clone(),
+                self.config.env.clone(),
+            )
+            .with_custom_fields(custom_fields.clone()),
+        );
 
         let mut operations = OperationRegistry::new();
         let mut job_handlers = JobRegistry::new();
@@ -456,11 +614,22 @@ impl QefroRuntime {
         job_handlers.register("notify.email", Arc::new(EmailNotifyJob));
         let due_reminder = DueReminderJob::new();
         job_handlers.register(DUE_REMINDER_JOB, due_reminder.clone());
+        let schedule_reminder = ScheduleReminderJob::new();
+        job_handlers.register(SCHEDULE_REMINDER_JOB, schedule_reminder.clone());
+        let communication_deliver = CommunicationDeliverJob::new();
+        job_handlers.register(COMMUNICATION_DELIVER_JOB, communication_deliver.clone());
+        let operation_execute = OperationExecuteJob::new();
+        job_handlers.register(OPERATION_EXECUTE_JOB, operation_execute.clone());
+        let attachment_purge = AttachmentPurgeJob::new();
+        job_handlers.register(ATTACHMENT_PURGE_JOB, attachment_purge.clone());
+        let import_run = ImportRunJob::new();
+        job_handlers.register(IMPORT_RUN_JOB, import_run.clone());
         job_handlers.register(
             "webhook.deliver",
             Arc::new(WebhookDeliverJob {
                 client: reqwest::Client::builder()
                     .timeout(std::time::Duration::from_secs(10))
+                    .redirect(reqwest::redirect::Policy::none())
                     .build()
                     .unwrap_or_else(|_| reqwest::Client::new()),
                 log: webhook_log.clone(),
@@ -476,29 +645,44 @@ impl QefroRuntime {
         }
 
         let mut notification_defs = qefro_core::task_notifications();
+        notification_defs.extend(qefro_core::accounting_notifications());
+        notification_defs.extend(qefro_core::commerce_notifications());
         let mut webhook_defs = Vec::new();
         let mut automation_defs = qefro_core::task_automations();
+        automation_defs.extend(qefro_core::accounting_automations());
+        automation_defs.extend(qefro_core::commerce_automations());
+        let mut communication_defs = qefro_core::commerce_communications();
         for app in &self.apps {
             notification_defs.extend(app.module.notifications.clone());
             webhook_defs.extend(app.module.webhooks.clone());
             automation_defs.extend(app.module.automations.clone());
+            communication_defs.extend(app.module.communications.clone());
         }
+        let communication_hub = Arc::new(CommunicationHub::default_loggers());
+        let communication_store = CommunicationStore::new(pool.clone());
         let automation = Arc::new(AutomationEngine::new(
             pool.clone(),
             jobs.clone(),
             automation_defs,
             notification_defs.clone(),
             webhook_defs.clone(),
+            communication_defs.clone(),
         ));
+        for def in automation.defs() {
+            catalog.upsert_automation(def);
+        }
         job_handlers.register("automation.run", automation.clone());
         job_handlers.register("automation.schedule", automation.clone());
         qefro_db::register_document_operations(&mut operations, &registry);
+        qefro_db::register_scheduling_operations(&mut operations, &registry);
+        qefro_db::register_accounting_operations(&mut operations);
+        qefro_db::register_commerce_operations(&mut operations);
         let operations = Arc::new(operations);
         let job_handlers = Arc::new(job_handlers);
-        let auth = Arc::new(AuthService::new(
-            pool.clone(),
-            self.config.jwt_secret.clone(),
-        ));
+        let auth = Arc::new(
+            AuthService::new(pool.clone(), self.config.jwt_secret.clone())
+                .with_token_ttl_hours(self.config.token_ttl_hours),
+        );
 
         let entities = Arc::new(
             EntityService::new(
@@ -511,10 +695,21 @@ impl QefroRuntime {
             )
             .with_operations(operations.clone())
             .with_jobs(jobs.clone(), job_handlers.clone())
-            .with_identity(auth.clone()),
+            .with_identity(auth.clone())
+            .with_custom_fields(custom_fields.clone()),
         );
         automation.bind(entities.clone());
+        studio.bind_automation(automation.clone());
         due_reminder.bind(entities.clone());
+        schedule_reminder.bind(entities.clone());
+        communication_deliver.bind(
+            entities.clone(),
+            communication_store.clone(),
+            NotificationStore::new(pool.clone()),
+            communication_defs.clone(),
+            communication_hub.clone(),
+        );
+        operation_execute.bind(entities.clone());
         entities
             .events()
             .subscribe_async(
@@ -530,6 +725,18 @@ impl QefroRuntime {
         entities
             .events()
             .subscribe_async("*", automation.clone())
+            .await;
+        entities
+            .events()
+            .subscribe_async(
+                "*",
+                Arc::new(CommunicationDispatcher::new(
+                    jobs.clone(),
+                    communication_store.clone(),
+                    entities.clone(),
+                    communication_defs.clone(),
+                )),
+            )
             .await;
         let realtime = Arc::new(RealtimeHub::new());
         entities
@@ -548,49 +755,167 @@ impl QefroRuntime {
             .map(|m| m.name.clone())
             .filter(|n| !installed_set.is_disabled(n))
             .collect();
-        let default_navigation: Vec<String> = self
+        let mut default_navigation: Vec<String> = self
             .apps
             .iter()
             .flat_map(|a| a.module.default_nav_slugs())
             .collect();
-        let mut default_nav_items: Vec<qefro_core::WorkspaceNavItem> = self
-            .apps
-            .iter()
-            .flat_map(|a| {
-                a.module.navigation.iter().filter_map(|item| {
-                    let entity = a
-                        .module
-                        .entities
-                        .iter()
-                        .find(|e| e.name == item.entity || e.slug == item.entity)?;
-                    Some(qefro_core::WorkspaceNavItem {
-                        label: item.label.clone(),
-                        entity: entity.name.clone(),
-                        slug: entity.slug.clone(),
-                        query: item.query.clone(),
-                        view: item.view.clone(),
-                        module: Some(a.module.name.clone()),
-                        section: item.section.clone(),
+        default_navigation.push(qefro_core::TASK_SLUG.into());
+        default_navigation.push(qefro_core::ACCOUNT_SLUG.into());
+        default_navigation.push(qefro_core::JOURNAL_SLUG.into());
+        default_navigation.push(qefro_core::PERIOD_SLUG.into());
+        default_navigation.push(qefro_core::PRODUCT_SLUG.into());
+        default_navigation.push(qefro_core::QUOTE_SLUG.into());
+        default_navigation.push(qefro_core::SALES_ORDER_SLUG.into());
+        default_navigation.push(qefro_core::SHIPMENT_SLUG.into());
+        default_navigation.push(qefro_core::INVOICE_SLUG.into());
+        default_navigation.push(qefro_core::SALES_PAYMENT_SLUG.into());
+        default_navigation.push(qefro_core::SALES_RETURN_SLUG.into());
+        let mut default_nav_items: Vec<qefro_core::WorkspaceNavItem> =
+            self.apps
+                .iter()
+                .flat_map(|a| {
+                    a.module.navigation.iter().filter_map(|item| {
+                        if let Some(page_name) = &item.page {
+                            let page =
+                                a.module.pages.iter().find(|p| {
+                                    p.name == *page_name || p.slug() == page_name.as_str()
+                                })?;
+                            let mut nav = qefro_core::WorkspaceNavItem::new(
+                                item.label.clone(),
+                                page.context_entity.clone().unwrap_or_default(),
+                                page.slug().to_string(),
+                            )
+                            .module(a.module.name.clone())
+                            .page(page.slug().to_string());
+                            if let Some(section) = &item.section {
+                                nav = nav.section(section.clone());
+                            }
+                            return Some(nav);
+                        }
+                        let entity = a
+                            .module
+                            .entities
+                            .iter()
+                            .find(|e| e.name == item.entity || e.slug == item.entity)?;
+                        let mut nav = qefro_core::WorkspaceNavItem::new(
+                            item.label.clone(),
+                            entity.name.clone(),
+                            entity.slug.clone(),
+                        )
+                        .module(a.module.name.clone());
+                        if let Some(q) = &item.query {
+                            nav = nav.query(q.clone());
+                        }
+                        if let Some(view) = &item.view {
+                            nav = nav.view(view.clone());
+                        }
+                        if let Some(section) = &item.section {
+                            nav = nav.section(section.clone());
+                        }
+                        Some(nav)
                     })
                 })
-            })
-            .collect();
+                .collect();
         default_nav_items.push(
-            qefro_core::WorkspaceNavItem {
-                label: "Tasks".into(),
-                entity: qefro_core::TASK_ENTITY.into(),
-                slug: qefro_core::TASK_SLUG.into(),
-                query: None,
-                view: None,
-                module: None,
-                section: Some("Work".into()),
-            },
+            qefro_core::WorkspaceNavItem::new(
+                "Tasks",
+                qefro_core::TASK_ENTITY,
+                qefro_core::TASK_SLUG,
+            )
+            .section("Work"),
+        );
+        default_nav_items.push(
+            qefro_core::WorkspaceNavItem::new(
+                "Accounts",
+                qefro_core::ACCOUNT_ENTITY,
+                qefro_core::ACCOUNT_SLUG,
+            )
+            .section("Finance"),
+        );
+        default_nav_items.push(
+            qefro_core::WorkspaceNavItem::new(
+                "Journal Entries",
+                qefro_core::JOURNAL_ENTITY,
+                qefro_core::JOURNAL_SLUG,
+            )
+            .section("Finance"),
+        );
+        default_nav_items.push(
+            qefro_core::WorkspaceNavItem::new(
+                "Fiscal Periods",
+                qefro_core::PERIOD_ENTITY,
+                qefro_core::PERIOD_SLUG,
+            )
+            .section("Finance"),
+        );
+        default_nav_items.push(
+            qefro_core::WorkspaceNavItem::new(
+                "Products",
+                qefro_core::PRODUCT_ENTITY,
+                qefro_core::PRODUCT_SLUG,
+            )
+            .section("Sales"),
+        );
+        default_nav_items.push(
+            qefro_core::WorkspaceNavItem::new(
+                "Quotes",
+                qefro_core::QUOTE_ENTITY,
+                qefro_core::QUOTE_SLUG,
+            )
+            .section("Sales"),
+        );
+        default_nav_items.push(
+            qefro_core::WorkspaceNavItem::new(
+                "Sales Orders",
+                qefro_core::SALES_ORDER_ENTITY,
+                qefro_core::SALES_ORDER_SLUG,
+            )
+            .section("Sales"),
+        );
+        default_nav_items.push(
+            qefro_core::WorkspaceNavItem::new(
+                "Shipments",
+                qefro_core::SHIPMENT_ENTITY,
+                qefro_core::SHIPMENT_SLUG,
+            )
+            .section("Sales"),
+        );
+        default_nav_items.push(
+            qefro_core::WorkspaceNavItem::new(
+                "Invoices",
+                qefro_core::INVOICE_ENTITY,
+                qefro_core::INVOICE_SLUG,
+            )
+            .section("Sales"),
+        );
+        default_nav_items.push(
+            qefro_core::WorkspaceNavItem::new(
+                "Payments",
+                qefro_core::SALES_PAYMENT_ENTITY,
+                qefro_core::SALES_PAYMENT_SLUG,
+            )
+            .section("Sales"),
+        );
+        default_nav_items.push(
+            qefro_core::WorkspaceNavItem::new(
+                "Returns",
+                qefro_core::SALES_RETURN_ENTITY,
+                qefro_core::SALES_RETURN_SLUG,
+            )
+            .section("Sales"),
         );
         let mut default_hidden_entities: Vec<String> = vec![
             qefro_core::PERSON_SLUG.into(),
             qefro_core::ORGANIZATION_SLUG.into(),
             qefro_core::USER_SLUG.into(),
+            qefro_core::JOURNAL_LINE_SLUG.into(),
         ];
+        default_hidden_entities.extend(
+            qefro_core::commerce_child_slugs()
+                .into_iter()
+                .map(|s| s.to_string()),
+        );
         default_hidden_entities.extend(
             self.apps
                 .iter()
@@ -598,10 +923,17 @@ impl QefroRuntime {
         );
         let blob_store: Arc<dyn qefro_core::BlobStore> =
             Arc::new(LocalBlobStore::new(&self.config.storage_path));
+        attachment_purge.bind(blob_store.clone());
         let blobs = Arc::new(BlobMetaStore::new(pool.clone()));
         let saved_filters = Arc::new(SavedFilterStore::new(pool.clone()));
         let notifications = Arc::new(NotificationStore::new(pool.clone()));
         let attachments = Arc::new(AttachmentStore::new(pool));
+        import_run.bind(
+            entities.clone(),
+            blob_store.clone(),
+            blobs.clone(),
+            notifications.clone(),
+        );
 
         let state = AppState {
             entities,
@@ -610,6 +942,7 @@ impl QefroRuntime {
             tools,
             modules: manifests,
             dashboards,
+            pages,
             reports,
             print_formats,
             entitlements: qefro_core::Entitlements::new(),
@@ -623,7 +956,15 @@ impl QefroRuntime {
                 std::time::Duration::from_secs(60),
             )),
             login_limiter: Arc::new(qefro_core::MemoryRateLimiter::new(
-                20,
+                10,
+                std::time::Duration::from_secs(60),
+            )),
+            auth_limiter: Arc::new(qefro_core::MemoryRateLimiter::new(
+                10,
+                std::time::Duration::from_secs(60),
+            )),
+            expensive_limiter: Arc::new(qefro_core::MemoryRateLimiter::new(
+                30,
                 std::time::Duration::from_secs(60),
             )),
             installed_apps,
@@ -643,15 +984,17 @@ impl QefroRuntime {
             notification_defs,
             webhooks: webhook_defs,
             automation,
+            communications: Arc::new(communication_store),
+            communication_defs,
+            communication_hub,
+            allow_register: self.config.allow_register,
         };
 
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any);
+        let cors = cors_layer(&self.config);
 
         let router = routes::router(state.clone())
             .layer(cors)
+            .layer(axum::middleware::from_fn(security_headers))
             .layer(TraceLayer::new_for_http())
             .layer(axum::middleware::from_fn(crate::metrics::track))
             .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024));
@@ -748,4 +1091,71 @@ async fn shutdown_signal() {
     {
         let _ = ctrl_c.await;
     }
+}
+
+fn origin_from_public_url(url: &str) -> String {
+    match url.split_once("://") {
+        Some((scheme, rest)) => {
+            let host = rest.split('/').next().unwrap_or(rest);
+            format!("{scheme}://{host}")
+        }
+        None => url.trim_end_matches('/').to_string(),
+    }
+}
+
+fn cors_layer(config: &Config) -> CorsLayer {
+    let methods = [
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::PATCH,
+        Method::DELETE,
+        Method::OPTIONS,
+        Method::HEAD,
+    ];
+    let headers = [
+        header::AUTHORIZATION,
+        header::CONTENT_TYPE,
+        header::ACCEPT,
+        header::HeaderName::from_static("x-request-id"),
+    ];
+    let origins = config.cors_origin_list();
+    let any = !config.is_production() && (origins.is_empty() || origins.iter().any(|o| o == "*"));
+    if any {
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::any())
+            .allow_methods(methods)
+            .allow_headers(headers)
+    } else {
+        let parsed: Vec<HeaderValue> = origins.into_iter().filter_map(|o| o.parse().ok()).collect();
+        CorsLayer::new()
+            .allow_origin(parsed)
+            .allow_methods(methods)
+            .allow_headers(headers)
+    }
+}
+
+async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let headers = res.headers_mut();
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        header::HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'none'; script-src 'self' https://unpkg.com/swagger-ui-dist@5/ 'unsafe-inline'; style-src 'self' https://unpkg.com/swagger-ui-dist@5/ 'unsafe-inline'; img-src 'self' data: https://unpkg.com; font-src 'self' https://unpkg.com; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        ),
+    );
+    res
 }

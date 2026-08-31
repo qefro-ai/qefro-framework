@@ -1,8 +1,14 @@
-use crate::jobs::JobQueue;
+use crate::jobs::{JobHandler, JobQueue};
+use crate::operation_run::{
+    OperationRun, OperationRunStore, OPERATION_EXECUTE_JOB, STATUS_COMPLETED, STATUS_FAILED,
+    STATUS_QUEUED, STATUS_RUNNING,
+};
 use crate::repository::{record_id, EntityRepository};
 use async_trait::async_trait;
 use qefro_core::{
-    EntityRegistry, HookRegistry, MeteringEvent, OpContext, OperationDef, QefroError, QefroResult,
+    apply_entity_rules, ident::snake_case, reject_readonly_writes, strip_computed_fields,
+    validate_record, EntityRegistry, HookRegistry, MeteringEvent, OpContext, OperationDef,
+    QefroError, QefroResult, RelationKind, RowPolicy, RELATED_ID_FIELD, RELATED_TYPE_FIELD,
 };
 use qefro_events::DomainEvent;
 use qefro_permissions::{Action, PermissionRegistry};
@@ -11,9 +17,11 @@ use qefro_workflow::WorkflowRegistry;
 use serde_json::{json, Map, Value};
 use sqlx::{Postgres, Transaction};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use uuid::Uuid;
+
+const MAX_OPERATION_DEPTH: usize = 8;
 
 #[async_trait]
 pub trait OperationHandler: Send + Sync {
@@ -97,8 +105,19 @@ impl OperationRegistry {
     }
 }
 
-/// Handler context. Auth, tenant, and RBAC are already enforced.
-/// Mutate through the provided methods so work stays on the same transaction.
+/// Options for [`execute_operation`].
+#[derive(Debug, Clone, Default)]
+pub struct ExecuteOpts {
+    pub idempotency_key: Option<String>,
+    /// When true, run even if the def is `async` (used by the JobQueue worker).
+    pub force_sync: bool,
+    pub operation_id: Option<Uuid>,
+}
+
+/// Handler context. Auth, tenant, and RBAC are already enforced for the
+/// primary operation. Nested `create`/`update`/`delete`/`execute` re-check
+/// entity, action, workflow, and row-policy permissions on the same SQLx
+/// transaction — never a second connection and never an elevated user.
 pub struct OperationCtx<'a, 'conn: 'a> {
     pub auth: OpContext,
     pub def: OperationDef,
@@ -107,9 +126,19 @@ pub struct OperationCtx<'a, 'conn: 'a> {
     pub input: Value,
     pub pending_events: Vec<DomainEvent>,
     pub pending_jobs: Vec<(String, Value)>,
+    pub operation_id: Uuid,
+    result_message: Option<String>,
+    result_navigate: Option<Value>,
+    call_stack: Vec<String>,
     registry: &'a EntityRegistry,
+    permissions: &'a PermissionRegistry,
     workflows: &'a WorkflowRegistry,
+    hooks: &'a HookRegistry,
+    operations: &'a OperationRegistry,
     repo: &'a EntityRepository,
+    audit: &'a crate::audit::AuditLogger,
+    activity: &'a crate::activity::ActivityStore,
+    jobs: &'a JobQueue,
     tx: &'a mut Transaction<'conn, Postgres>,
 }
 
@@ -153,6 +182,7 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
                 payload,
             );
             event.user_id = Some(self.auth.user_id);
+            correlate_event(&mut event, self.operation_id, self.auth.request_id);
             self.pending_events.push(event);
         }
     }
@@ -161,44 +191,302 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
         self.pending_jobs.push((name.into(), payload));
     }
 
+    pub fn set_message(&mut self, message: impl Into<String>) {
+        self.result_message = Some(message.into());
+    }
+
+    pub fn set_navigate(&mut self, entity: &str, id: Uuid) {
+        let slug = self
+            .registry
+            .get(entity)
+            .map(|d| d.slug.clone())
+            .unwrap_or_else(|_| entity.to_string());
+        self.result_navigate = Some(json!({
+            "entity": entity,
+            "slug": slug,
+            "id": id,
+        }));
+    }
+
+    pub async fn set_progress(&mut self, progress: i32) -> QefroResult<()> {
+        OperationRunStore::set_progress_tx(self.tx, &self.auth, self.operation_id, progress).await
+    }
+
     pub fn apply_transition(&mut self, name: &str) -> QefroResult<String> {
-        let wf = self
-            .workflows
-            .for_entity(&self.entity.name)
-            .ok_or_else(|| {
-                QefroError::not_found(format!("no workflow for {}", self.entity.name))
-            })?;
-        let from = self
-            .record
-            .get(&wf.field)
-            .and_then(|v| v.as_str())
-            .unwrap_or(&wf.initial)
-            .to_string();
-        let to = self
-            .workflows
-            .apply(&self.entity.name, &from, name, &self.auth)?;
-        if let Some(t) = wf.find_transition(&from, name) {
-            t.guard_allows(&self.record)?;
-        }
-        self.set_field(&wf.field, json!(to));
-        Ok(to)
+        apply_transition_to(
+            self.workflows,
+            &self.auth,
+            &self.entity.name,
+            &mut self.record,
+            name,
+        )
     }
 
     pub async fn get(&mut self, entity: &str, id: Uuid) -> QefroResult<Value> {
         let def = self.registry.get(entity)?;
-        self.repo.get_tx(self.tx, &def, &self.auth, id, true).await
+        self.permissions
+            .check(&self.auth, &def.name, Action::Read)?;
+        let record = self
+            .repo
+            .get_tx(self.tx, &def, &self.auth, id, true)
+            .await?;
+        enforce_row_policy(&self.auth, &def, &record)?;
+        Ok(record)
     }
 
-    pub async fn update(&mut self, entity: &str, id: Uuid, patch: Value) -> QefroResult<Value> {
+    pub async fn update(&mut self, entity: &str, id: Uuid, mut patch: Value) -> QefroResult<Value> {
         let def = self.registry.get(entity)?;
-        self.repo
+        self.permissions
+            .check(&self.auth, &def.name, Action::Update)?;
+        reject_client_tenant(&patch)?;
+        strip_computed_fields(&def.fields, &mut patch);
+        let current = self
+            .repo
+            .get_tx(self.tx, &def, &self.auth, id, true)
+            .await?;
+        enforce_row_policy(&self.auth, &def, &current)?;
+        reject_readonly_writes(def.business_fields(), Some(&current), &patch)?;
+        if let Some(expected) = patch
+            .as_object_mut()
+            .and_then(|o| o.remove("_expected_updated_at"))
+        {
+            let current_ts = current
+                .get("updated_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let expected = expected.as_str().unwrap_or("");
+            if !expected.is_empty() && current_ts != expected {
+                return Err(QefroError::conflict(
+                    "Record changed by another user. Reload before saving.",
+                ));
+            }
+        }
+        if let Some(wf) = self.workflows.for_entity(&def.name) {
+            if patch
+                .as_object()
+                .map(|o| o.contains_key(&wf.field))
+                .unwrap_or(false)
+            {
+                return Err(QefroError::bad_request(format!(
+                    "field '{}' is workflow-managed; use a transition",
+                    wf.field
+                )));
+            }
+        }
+        validate_record(def.business_fields(), &patch, true)?;
+        let mut merged = current.clone();
+        if let (Some(dst), Some(src)) = (merged.as_object_mut(), patch.as_object()) {
+            for (k, v) in src {
+                dst.insert(k.clone(), v.clone());
+            }
+        }
+        crate::scheduling::prepare_record(&def, &mut merged, &self.auth.timezone);
+        apply_entity_rules(def.business_fields(), &def.validation, &merged, true)?;
+        self.check_cross_entity_refs(&def, &merged).await?;
+        crate::scheduling::enforce_in_tx(
+            self.tx,
+            self.repo,
+            self.registry,
+            &self.auth,
+            &def,
+            &merged,
+            Some(id),
+        )
+        .await?;
+        let updated = self
+            .repo
             .update_tx(self.tx, &def, &self.auth, id, patch)
-            .await
+            .await?;
+        self.record_side_effects(&def, Some(&current), &updated, "update")
+            .await?;
+        crate::scheduling::enqueue_reminder_tx(self.jobs, self.tx, &self.auth, &def, &updated)
+            .await?;
+        Ok(updated)
     }
 
-    pub async fn create(&mut self, entity: &str, data: Value) -> QefroResult<Value> {
+    pub async fn create(&mut self, entity: &str, mut data: Value) -> QefroResult<Value> {
         let def = self.registry.get(entity)?;
-        self.repo.insert_tx(self.tx, &def, &self.auth, data).await
+        self.permissions
+            .check(&self.auth, &def.name, Action::Create)?;
+        reject_client_tenant(&data)?;
+        let children = extract_child_payloads(&def, &mut data);
+        strip_computed_fields(&def.fields, &mut data);
+        apply_op_defaults(&def, &mut data, &self.auth);
+        apply_initial_workflow_status(self.workflows, &def.name, &mut data)?;
+        if let Some(naming) = &def.naming {
+            if naming.assign_on != "submit" {
+                let empty = data
+                    .get(&naming.field)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .is_empty();
+                if empty {
+                    let number = crate::numbering::allocate(
+                        self.tx,
+                        self.auth.tenant_id,
+                        &def.name,
+                        naming,
+                        chrono::Utc::now(),
+                    )
+                    .await?;
+                    if let Some(obj) = data.as_object_mut() {
+                        obj.insert(naming.field.clone(), json!(number));
+                    }
+                }
+            }
+        }
+        crate::scheduling::prepare_record(&def, &mut data, &self.auth.timezone);
+        validate_record(def.business_fields(), &data, false)?;
+        apply_entity_rules(def.business_fields(), &def.validation, &data, false)?;
+        self.check_cross_entity_refs(&def, &data).await?;
+        crate::scheduling::enforce_in_tx(
+            self.tx,
+            self.repo,
+            self.registry,
+            &self.auth,
+            &def,
+            &data,
+            None,
+        )
+        .await?;
+        let mut created = self.repo.insert_tx(self.tx, &def, &self.auth, data).await?;
+        let id = record_id(&created)?;
+        let stored_children = self.write_child_rows(&def, id, children).await?;
+        if let Some(obj) = created.as_object_mut() {
+            for (name, rows) in stored_children {
+                obj.insert(name, json!(rows));
+            }
+        }
+        self.record_side_effects(&def, None, &created, "create")
+            .await?;
+        crate::scheduling::enqueue_reminder_tx(self.jobs, self.tx, &self.auth, &def, &created)
+            .await?;
+        Ok(created)
+    }
+
+    async fn write_child_rows(
+        &mut self,
+        parent: &qefro_core::EntityDef,
+        parent_id: Uuid,
+        children: HashMap<String, Vec<Value>>,
+    ) -> QefroResult<HashMap<String, Vec<Value>>> {
+        let mut stored = HashMap::new();
+        for field in &parent.fields {
+            let Some(rel) = &field.relation else { continue };
+            if rel.kind != RelationKind::ChildTable {
+                continue;
+            }
+            let Some(rows) = children.get(&field.name) else {
+                stored.insert(field.name.clone(), Vec::new());
+                continue;
+            };
+            let child = self.registry.get(&rel.target_entity)?;
+            self.permissions
+                .check(&self.auth, &child.name, Action::Create)?;
+            let inverse = rel
+                .inverse_field
+                .clone()
+                .unwrap_or_else(|| "parent_id".into());
+            let mut out = Vec::new();
+            for mut row in rows.clone() {
+                reject_client_tenant(&row)?;
+                strip_computed_fields(&child.fields, &mut row);
+                if let Some(obj) = row.as_object_mut() {
+                    obj.insert(inverse.clone(), json!(parent_id.to_string()));
+                }
+                apply_op_defaults(&child, &mut row, &self.auth);
+                validate_record(child.business_fields(), &row, false)?;
+                apply_entity_rules(child.business_fields(), &child.validation, &row, false)?;
+                self.check_cross_entity_refs(&child, &row).await?;
+                let created = self
+                    .repo
+                    .insert_tx(self.tx, &child, &self.auth, row)
+                    .await?;
+                out.push(created);
+            }
+            stored.insert(field.name.clone(), out);
+        }
+        Ok(stored)
+    }
+
+    pub async fn create_many(&mut self, entity: &str, rows: Vec<Value>) -> QefroResult<Vec<Value>> {
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            out.push(self.create(entity, row).await?);
+        }
+        Ok(out)
+    }
+
+    pub async fn delete(&mut self, entity: &str, id: Uuid) -> QefroResult<Value> {
+        let def = self.registry.get(entity)?;
+        self.permissions
+            .check(&self.auth, &def.name, Action::Delete)?;
+        let current = self
+            .repo
+            .get_tx(self.tx, &def, &self.auth, id, true)
+            .await?;
+        enforce_row_policy(&self.auth, &def, &current)?;
+        let deleted = self.repo.delete_tx(self.tx, &def, &self.auth, id).await?;
+        self.record_side_effects(&def, Some(&current), &deleted, "delete")
+            .await?;
+        Ok(deleted)
+    }
+
+    /// Invoke another registered operation on the same transaction.
+    /// Cycles (`A → B → A`) are rejected.
+    pub async fn execute(
+        &mut self,
+        entity: &str,
+        id: Uuid,
+        name: &str,
+        input: Value,
+    ) -> QefroResult<Value> {
+        let key = format!("{entity}.{name}");
+        if self.call_stack.iter().any(|s| s == &key) {
+            return Err(QefroError::bad_request(format!(
+                "operation cycle detected involving {key}"
+            )));
+        }
+        if self.call_stack.len() >= MAX_OPERATION_DEPTH {
+            return Err(QefroError::bad_request(
+                "operation nesting exceeded the maximum depth",
+            ));
+        }
+        reject_client_tenant(&input)?;
+        let binding = self.operations.get(entity, name)?;
+        if binding.def.is_async() {
+            return Err(QefroError::bad_request(
+                "asynchronous operations cannot be nested inside a transaction",
+            ));
+        }
+        authorize_operation(self.permissions, &self.auth, &binding.def)?;
+        let nested_entity = self.registry.get(entity)?;
+        let mut stack = self.call_stack.clone();
+        stack.push(key);
+        let (record, events, jobs, _envelope) = execute_in_transaction(
+            self.tx,
+            self.repo,
+            self.registry,
+            self.permissions,
+            self.workflows,
+            self.hooks,
+            self.operations,
+            &binding,
+            &nested_entity,
+            &self.auth,
+            id,
+            input,
+            self.audit,
+            self.activity,
+            self.jobs,
+            self.operation_id,
+            stack,
+            false,
+        )
+        .await?;
+        self.pending_events.extend(events);
+        let _ = jobs;
+        Ok(record)
     }
 
     pub async fn list(
@@ -208,6 +496,8 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
         value: Value,
     ) -> QefroResult<Vec<Value>> {
         let def = self.registry.get(entity)?;
+        self.permissions
+            .check(&self.auth, &def.name, Action::List)?;
         let mut query = Query::default();
         query.page_size = 100;
         query.filters.push(Filter::Eq {
@@ -220,6 +510,135 @@ impl<'a, 'conn: 'a> OperationCtx<'a, 'conn> {
 
     pub fn entity_def(&self, name: &str) -> QefroResult<std::sync::Arc<qefro_core::EntityDef>> {
         self.registry.get(name)
+    }
+
+    async fn check_cross_entity_refs(
+        &mut self,
+        entity: &qefro_core::EntityDef,
+        data: &Value,
+    ) -> QefroResult<()> {
+        for field in entity.stored_fields() {
+            let Some(rel) = &field.relation else {
+                continue;
+            };
+            if rel.kind != qefro_core::RelationKind::ManyToOne {
+                continue;
+            }
+            let Some(raw) = data.get(&field.name) else {
+                continue;
+            };
+            if raw.is_null() {
+                continue;
+            }
+            let Some(id) = raw.as_str().and_then(|s| Uuid::parse_str(s).ok()) else {
+                return Err(QefroError::bad_request(format!(
+                    "{} must be a valid id",
+                    field.label
+                )));
+            };
+            let target = self.registry.get(&rel.target_entity)?;
+            self.permissions
+                .check(&self.auth, &target.name, Action::Read)?;
+            let record = self
+                .repo
+                .get_tx(self.tx, &target, &self.auth, id, false)
+                .await
+                .map_err(|e| match e {
+                    QefroError::NotFound { .. } => QefroError::not_found(format!(
+                        "{} must reference an existing {}",
+                        field.label, target.name
+                    )),
+                    other => other,
+                })?;
+            enforce_row_policy(&self.auth, &target, &record)?;
+        }
+        if let (Some(ty), Some(raw_id)) = (
+            data.get(RELATED_TYPE_FIELD).and_then(|v| v.as_str()),
+            data.get(RELATED_ID_FIELD),
+        ) {
+            if !ty.is_empty() {
+                if let Some(id) = raw_id.as_str().and_then(|s| Uuid::parse_str(s).ok()) {
+                    let target = self.registry.get(ty)?;
+                    self.permissions
+                        .check(&self.auth, &target.name, Action::Read)?;
+                    let record = self
+                        .repo
+                        .get_tx(self.tx, &target, &self.auth, id, false)
+                        .await?;
+                    enforce_row_policy(&self.auth, &target, &record)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn record_side_effects(
+        &mut self,
+        def: &qefro_core::EntityDef,
+        before: Option<&Value>,
+        after: &Value,
+        action: &str,
+    ) -> QefroResult<()> {
+        let id = record_id(after)?;
+        if def.audit {
+            self.audit
+                .record_tx(
+                    self.tx,
+                    &self.auth,
+                    &def.name,
+                    Some(id),
+                    action,
+                    before,
+                    Some(after),
+                )
+                .await?;
+        }
+        if def.activity {
+            let atype = match action {
+                "create" => crate::activity::TYPE_CREATED,
+                "delete" => crate::activity::TYPE_DELETED,
+                _ => crate::activity::TYPE_UPDATED,
+            };
+            let extra = json!({
+                "operation_id": self.operation_id,
+                "request_id": self.auth.request_id,
+                "operation": self.def.name,
+            });
+            let (message, metadata) = crate::activity::mutation_activity(
+                &def.label,
+                atype,
+                before,
+                Some(after),
+                Some(extra),
+            );
+            self.activity
+                .record_tx(
+                    self.tx, &self.auth, &def.name, id, atype, &message, metadata,
+                )
+                .await?;
+        }
+        let specific = match action {
+            "create" => "created",
+            "delete" => "deleted",
+            _ => "updated",
+        };
+        let framework = match action {
+            "create" => "entity.created",
+            "delete" => "entity.deleted",
+            _ => "entity.updated",
+        };
+        for mut event in mutation_events_for(
+            &def.name,
+            id,
+            &self.auth,
+            after.clone(),
+            specific,
+            framework,
+        ) {
+            correlate_event(&mut event, self.operation_id, self.auth.request_id);
+            self.pending_events.push(event);
+        }
+        Ok(())
     }
 }
 
@@ -315,25 +734,53 @@ pub async fn execute_operation(
     name: &str,
     input: Value,
 ) -> QefroResult<(Value, Vec<DomainEvent>)> {
+    execute_operation_with(
+        repo,
+        registry,
+        permissions,
+        workflows,
+        hooks,
+        operations,
+        jobs,
+        audit,
+        activity,
+        ctx,
+        entity_name,
+        id,
+        name,
+        input,
+        ExecuteOpts::default(),
+    )
+    .await
+}
+
+pub async fn execute_operation_with(
+    repo: &EntityRepository,
+    registry: &EntityRegistry,
+    permissions: &PermissionRegistry,
+    workflows: &WorkflowRegistry,
+    hooks: &HookRegistry,
+    operations: &OperationRegistry,
+    jobs: &JobQueue,
+    audit: &crate::audit::AuditLogger,
+    activity: &crate::activity::ActivityStore,
+    ctx: &OpContext,
+    entity_name: &str,
+    id: Uuid,
+    name: &str,
+    input: Value,
+    opts: ExecuteOpts,
+) -> QefroResult<(Value, Vec<DomainEvent>)> {
     let started = Instant::now();
     let binding = operations.get(entity_name, name)?;
     let entity = registry.get(entity_name)?;
-    if ctx.is_worker() {
-        if !binding.def.worker_safe {
-            return Err(QefroError::forbidden(format!(
-                "operation '{entity_name}.{}' is not worker-safe",
-                binding.def.name
-            )));
-        }
-    } else {
-        permissions.check(ctx, &entity.name, Action::Update)?;
-        if !binding.def.role_allowed(ctx) {
-            return Err(QefroError::forbidden(format!(
-                "role(s) {:?} cannot {} {}",
-                ctx.roles, binding.def.name, entity.name
-            )));
-        }
+    reject_client_tenant(&input)?;
+    if binding.def.idempotent && opts.idempotency_key.as_deref().unwrap_or("").is_empty() {
+        return Err(QefroError::bad_request(
+            "Idempotency-Key is required for this operation",
+        ));
     }
+    authorize_operation(permissions, ctx, &binding.def)?;
 
     let mut tx = repo
         .pool()
@@ -341,19 +788,193 @@ pub async fn execute_operation(
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
 
+    let async_enqueue = binding.def.is_async() && !opts.force_sync;
+    let mut operation_id = opts.operation_id.unwrap_or_else(Uuid::new_v4);
+    let mut reused_run = opts.force_sync && opts.operation_id.is_some();
+
+    if let Some(key) = opts.idempotency_key.as_deref() {
+        if let Some(existing) = OperationRunStore::find_idempotent(&mut tx, ctx, key).await? {
+            match existing.status.as_str() {
+                s if s == STATUS_COMPLETED => {
+                    let result = existing.result.clone().unwrap_or_else(|| json!({}));
+                    let _ = tx.commit().await;
+                    return Ok((result, Vec::new()));
+                }
+                s if s == STATUS_FAILED && !opts.force_sync => {
+                    let _ = tx.commit().await;
+                    return Err(QefroError::business(
+                        "operation_failed",
+                        existing
+                            .error
+                            .unwrap_or_else(|| "previous attempt failed".into()),
+                    ));
+                }
+                s if (s == STATUS_QUEUED || s == STATUS_RUNNING) && opts.force_sync => {
+                    operation_id = existing.id;
+                    reused_run = true;
+                }
+                _ if !opts.force_sync => {
+                    let mut queued = json!({});
+                    attach_operation_envelope(&mut queued, &existing, &binding.def, None, None);
+                    let _ = tx.commit().await;
+                    return Ok((queued, Vec::new()));
+                }
+                _ => {
+                    operation_id = existing.id;
+                    reused_run = true;
+                }
+            }
+        }
+    }
+
+    if reused_run {
+        OperationRunStore::mark_running_tx(&mut tx, ctx, operation_id).await?;
+    } else if let Err(err) = OperationRunStore::insert_tx(
+        &mut tx,
+        ctx,
+        operation_id,
+        entity_name,
+        id,
+        &binding.def.name,
+        if async_enqueue {
+            STATUS_QUEUED
+        } else {
+            STATUS_RUNNING
+        },
+        opts.idempotency_key.as_deref(),
+    )
+    .await
+    {
+        let _ = tx.rollback().await;
+        if let Some(key) = opts.idempotency_key.as_deref() {
+            let mut retry = repo
+                .pool()
+                .begin()
+                .await
+                .map_err(|e| QefroError::database(e.to_string()))?;
+            if let Some(existing) = OperationRunStore::find_idempotent(&mut retry, ctx, key).await?
+            {
+                let result = existing.result.clone().unwrap_or_else(|| json!({}));
+                let _ = retry.commit().await;
+                return Ok((result, Vec::new()));
+            }
+            let _ = retry.rollback().await;
+        }
+        return Err(err);
+    }
+
+    if async_enqueue {
+        let payload = json!({
+            "entity": entity_name,
+            "entity_id": id,
+            "operation": binding.def.name,
+            "input": input,
+            "operation_id": operation_id,
+            "request_id": ctx.request_id,
+            "user_id": ctx.user_id,
+            "roles": ctx.roles,
+            "actor_name": ctx.actor_name,
+            "idempotency_key": opts.idempotency_key,
+        });
+        if let Err(err) = jobs
+            .enqueue_tx(&mut tx, ctx, OPERATION_EXECUTE_JOB, payload)
+            .await
+        {
+            let _ = tx.rollback().await;
+            return Err(err);
+        }
+        tx.commit()
+            .await
+            .map_err(|e| QefroError::database(e.to_string()))?;
+        let mut queued = json!({});
+        attach_operation_envelope(
+            &mut queued,
+            &OperationRun {
+                id: operation_id,
+                tenant_id: ctx.tenant_id,
+                user_id: Some(ctx.user_id),
+                entity: entity_name.into(),
+                entity_id: id,
+                operation: binding.def.name.clone(),
+                status: STATUS_QUEUED.into(),
+                request_id: Some(ctx.request_id),
+                idempotency_key: opts.idempotency_key.clone(),
+                progress: 0,
+                result: None,
+                error: None,
+                started_at: None,
+                completed_at: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            },
+            &binding.def,
+            None,
+            None,
+        );
+        return Ok((queued, Vec::new()));
+    }
+
+    let call_stack = vec![format!("{entity_name}.{}", binding.def.name)];
     let outcome = execute_in_transaction(
-        &mut tx, repo, registry, workflows, hooks, &binding, &entity, ctx, id, input, audit,
-        activity, jobs,
+        &mut tx,
+        repo,
+        registry,
+        permissions,
+        workflows,
+        hooks,
+        operations,
+        &binding,
+        &entity,
+        ctx,
+        id,
+        input,
+        audit,
+        activity,
+        jobs,
+        operation_id,
+        call_stack,
+        true,
     )
     .await;
 
     match outcome {
-        Ok((record, events)) => {
+        Ok((mut record, events, _jobs, envelope)) => {
+            attach_operation_envelope(
+                &mut record,
+                &OperationRun {
+                    id: operation_id,
+                    tenant_id: ctx.tenant_id,
+                    user_id: Some(ctx.user_id),
+                    entity: entity_name.into(),
+                    entity_id: id,
+                    operation: binding.def.name.clone(),
+                    status: STATUS_COMPLETED.into(),
+                    request_id: Some(ctx.request_id),
+                    idempotency_key: opts.idempotency_key.clone(),
+                    progress: 100,
+                    result: None,
+                    error: None,
+                    started_at: Some(chrono::Utc::now()),
+                    completed_at: Some(chrono::Utc::now()),
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                },
+                &binding.def,
+                envelope.message.clone(),
+                envelope.navigate.clone(),
+            );
+            if let Err(err) =
+                OperationRunStore::complete_tx(&mut tx, ctx, operation_id, &record).await
+            {
+                let _ = tx.rollback().await;
+                return Err(err);
+            }
             tx.commit()
                 .await
                 .map_err(|e| QefroError::database(e.to_string()))?;
             tracing::info!(
                 request_id = %ctx.request_id,
+                operation_id = %operation_id,
                 operation = %format!("{entity_name}.{}", binding.def.name),
                 tenant_id = %ctx.tenant_id,
                 user_id = %ctx.user_id,
@@ -403,12 +1024,19 @@ pub async fn execute_operation(
     }
 }
 
+struct HandlerEnvelope {
+    message: Option<String>,
+    navigate: Option<Value>,
+}
+
 async fn execute_in_transaction(
     tx: &mut Transaction<'_, Postgres>,
     repo: &EntityRepository,
     registry: &EntityRegistry,
+    permissions: &PermissionRegistry,
     workflows: &WorkflowRegistry,
     hooks: &HookRegistry,
+    operations: &OperationRegistry,
     binding: &OperationBinding,
     entity: &Arc<qefro_core::EntityDef>,
     ctx: &OpContext,
@@ -417,8 +1045,18 @@ async fn execute_in_transaction(
     audit: &crate::audit::AuditLogger,
     activity: &crate::activity::ActivityStore,
     jobs: &JobQueue,
-) -> QefroResult<(Value, Vec<DomainEvent>)> {
-    let current = repo.get_tx(tx, entity, ctx, id, true).await?;
+    operation_id: Uuid,
+    call_stack: Vec<String>,
+    enqueue_outbox: bool,
+) -> QefroResult<(
+    Value,
+    Vec<DomainEvent>,
+    Vec<(String, Value)>,
+    HandlerEnvelope,
+)> {
+    let mut current = repo.get_tx(tx, entity, ctx, id, true).await?;
+    enforce_row_policy(ctx, entity, &current)?;
+    attach_child_tables_tx(repo, tx, registry, entity, ctx, &mut current).await?;
 
     if let Some(tname) = &binding.def.workflow_transition {
         let wf = workflows
@@ -435,7 +1073,7 @@ async fn execute_in_transaction(
         .before_operation(ctx, &entity.name, &binding.def.name, &current, &input)
         .await?;
 
-    let (mut record, mut events, job_list) = {
+    let (mut record, mut events, job_list, envelope) = {
         let mut op_ctx = OperationCtx {
             auth: ctx.clone(),
             def: binding.def.clone(),
@@ -444,13 +1082,31 @@ async fn execute_in_transaction(
             input,
             pending_events: Vec::new(),
             pending_jobs: Vec::new(),
+            operation_id,
+            result_message: None,
+            result_navigate: None,
+            call_stack,
             registry,
+            permissions,
             workflows,
+            hooks,
+            operations,
             repo,
+            audit,
+            activity,
+            jobs,
             tx,
         };
         binding.handler.handle(&mut op_ctx).await?;
-        (op_ctx.record, op_ctx.pending_events, op_ctx.pending_jobs)
+        (
+            op_ctx.record,
+            op_ctx.pending_events,
+            op_ctx.pending_jobs,
+            HandlerEnvelope {
+                message: op_ctx.result_message,
+                navigate: op_ctx.result_navigate,
+            },
+        )
     };
 
     if let Some(tname) = &binding.def.workflow_transition {
@@ -530,10 +1186,22 @@ async fn execute_in_transaction(
             let to = record.get(field).and_then(|v| v.as_str()).unwrap_or("");
             (
                 crate::activity::TYPE_WORKFLOW,
-                Some(json!({ "from": from, "to": to, "transition": tname })),
+                Some(json!({
+                    "from": from,
+                    "to": to,
+                    "transition": tname,
+                    "operation_id": operation_id,
+                    "request_id": ctx.request_id,
+                })),
             )
         } else {
-            (crate::activity::TYPE_UPDATED, None)
+            (
+                crate::activity::TYPE_UPDATED,
+                Some(json!({
+                    "operation_id": operation_id,
+                    "request_id": ctx.request_id,
+                })),
+            )
         };
         let (message, metadata) = crate::activity::mutation_activity(
             &entity.label,
@@ -559,6 +1227,7 @@ async fn execute_in_transaction(
                 }),
             );
             evt.user_id = Some(ctx.user_id);
+            correlate_event(&mut evt, operation_id, ctx.request_id);
             if !events.iter().any(|e| e.name == "workflow.transitioned") {
                 events.push(evt);
             }
@@ -567,7 +1236,7 @@ async fn execute_in_transaction(
 
     if let Some(event_name) = &binding.def.event {
         if !events.iter().any(|e| &e.name == event_name) {
-            events.push(with_user(
+            let mut evt = with_user(
                 DomainEvent::new(
                     event_name.clone(),
                     entity.name.clone(),
@@ -576,10 +1245,17 @@ async fn execute_in_transaction(
                     json!({ "status": record.get("status") }),
                 ),
                 ctx.user_id,
-            ));
+            );
+            correlate_event(&mut evt, operation_id, ctx.request_id);
+            events.push(evt);
         }
     }
 
+    for event in &mut events {
+        correlate_event(event, operation_id, ctx.request_id);
+    }
+
+    let pending_jobs = job_list.clone();
     for (job_name, payload) in &job_list {
         jobs.enqueue_tx(tx, ctx, job_name, payload.clone()).await?;
     }
@@ -592,6 +1268,8 @@ async fn execute_in_transaction(
                 json!({
                     "entity": entity.name,
                     "entity_id": id,
+                    "operation_id": operation_id,
+                    "request_id": ctx.request_id,
                 }),
             )
             .await?;
@@ -602,7 +1280,405 @@ async fn execute_in_transaction(
         .after_operation(ctx, &entity.name, &binding.def.name, &record)
         .await?;
 
-    crate::outbox::Outbox::enqueue_many_tx(tx, &events).await?;
+    if enqueue_outbox {
+        crate::outbox::Outbox::enqueue_many_tx(tx, &events).await?;
+    }
 
-    Ok((record, events))
+    Ok((record, events, pending_jobs, envelope))
+}
+
+fn authorize_operation(
+    permissions: &PermissionRegistry,
+    ctx: &OpContext,
+    def: &OperationDef,
+) -> QefroResult<()> {
+    if ctx.is_worker() {
+        if !def.worker_safe {
+            return Err(QefroError::forbidden(format!(
+                "operation '{}.{}' is not worker-safe",
+                def.entity, def.name
+            )));
+        }
+        return Ok(());
+    }
+    permissions.check(ctx, &def.entity, Action::Update)?;
+    if !def.role_allowed(ctx) {
+        return Err(QefroError::forbidden(format!(
+            "role(s) {:?} cannot {} {}",
+            ctx.roles, def.name, def.entity
+        )));
+    }
+    Ok(())
+}
+
+async fn attach_child_tables_tx(
+    repo: &EntityRepository,
+    tx: &mut Transaction<'_, Postgres>,
+    registry: &EntityRegistry,
+    entity: &qefro_core::EntityDef,
+    ctx: &OpContext,
+    record: &mut Value,
+) -> QefroResult<()> {
+    use qefro_core::RelationKind;
+    let Some(id) = record
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+    else {
+        return Ok(());
+    };
+    for field in &entity.fields {
+        let Some(rel) = &field.relation else { continue };
+        if rel.kind != RelationKind::ChildTable {
+            continue;
+        }
+        let Ok(target) = registry.get(&rel.target_entity) else {
+            continue;
+        };
+        let inverse = rel
+            .inverse_field
+            .clone()
+            .unwrap_or_else(|| "parent_id".into());
+        let mut query = qefro_search::Query::default();
+        query.page_size = 200;
+        query.filters.push(qefro_search::Filter::Eq {
+            field: inverse,
+            value: json!(id),
+        });
+        if let Ok(page) = repo.list_tx(tx, &target, ctx, &query).await {
+            if let Some(obj) = record.as_object_mut() {
+                obj.insert(field.name.clone(), json!(page.items));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_transition_to(
+    workflows: &WorkflowRegistry,
+    auth: &OpContext,
+    entity: &str,
+    record: &mut Value,
+    name: &str,
+) -> QefroResult<String> {
+    let wf = workflows
+        .for_entity(entity)
+        .ok_or_else(|| QefroError::not_found(format!("no workflow for {entity}")))?;
+    let from = record
+        .get(&wf.field)
+        .and_then(|v| v.as_str())
+        .unwrap_or(&wf.initial)
+        .to_string();
+    let to = workflows.apply(entity, &from, name, auth)?;
+    if let Some(t) = wf.find_transition(&from, name) {
+        t.guard_allows(record)?;
+    }
+    if let Some(obj) = record.as_object_mut() {
+        obj.insert(wf.field.clone(), json!(to.clone()));
+    }
+    Ok(to)
+}
+
+fn reject_client_tenant(data: &Value) -> QefroResult<()> {
+    if data.get("tenant_id").is_some() {
+        return Err(QefroError::bad_request(
+            "tenant_id cannot be set by the client",
+        ));
+    }
+    Ok(())
+}
+
+fn enforce_row_policy(
+    ctx: &OpContext,
+    entity: &qefro_core::EntityDef,
+    record: &Value,
+) -> QefroResult<()> {
+    if ctx.is_admin() {
+        return Ok(());
+    }
+    match entity.row_policy {
+        Some(RowPolicy::AssignedTo) => {
+            let assigned = record
+                .get("assigned_to")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if assigned != ctx.user_id.to_string() {
+                return Err(QefroError::not_found(format!("{} not found", entity.name)));
+            }
+        }
+        Some(RowPolicy::CreatedBy) => {
+            let created = record
+                .get("created_by")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if created != ctx.user_id.to_string() {
+                return Err(QefroError::not_found(format!("{} not found", entity.name)));
+            }
+        }
+        Some(RowPolicy::AssignedToOrCreatedBy) => {
+            let me = ctx.user_id.to_string();
+            let assigned = record
+                .get("assigned_to")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let created = record
+                .get("created_by")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if assigned != me && created != me {
+                return Err(QefroError::not_found(format!("{} not found", entity.name)));
+            }
+        }
+        None => {}
+    }
+    Ok(())
+}
+
+fn extract_child_payloads(
+    entity: &qefro_core::EntityDef,
+    data: &mut Value,
+) -> HashMap<String, Vec<Value>> {
+    let mut out = HashMap::new();
+    let Some(obj) = data.as_object_mut() else {
+        return out;
+    };
+    for field in &entity.fields {
+        if !field.is_child_table() {
+            continue;
+        }
+        if let Some(Value::Array(rows)) = obj.remove(&field.name) {
+            out.insert(field.name.clone(), rows);
+        }
+    }
+    out
+}
+
+fn apply_initial_workflow_status(
+    workflows: &WorkflowRegistry,
+    entity: &str,
+    data: &mut Value,
+) -> QefroResult<()> {
+    let Some(wf) = workflows.for_entity(entity) else {
+        return Ok(());
+    };
+    if let Some(status) = data.get(&wf.field).and_then(|v| v.as_str()) {
+        if !status.is_empty() && status != wf.initial {
+            return Err(QefroError::bad_request(format!(
+                "field '{}' is workflow-managed; use a transition",
+                wf.field
+            )));
+        }
+    }
+    if let Some(obj) = data.as_object_mut() {
+        obj.insert(wf.field.clone(), json!(wf.initial));
+    }
+    Ok(())
+}
+
+fn apply_op_defaults(entity: &qefro_core::EntityDef, data: &mut Value, ctx: &OpContext) {
+    let Some(obj) = data.as_object_mut() else {
+        return;
+    };
+    for field in entity.stored_fields() {
+        let missing = match obj.get(&field.name) {
+            None => true,
+            Some(Value::Null) => true,
+            Some(Value::String(s)) if s.is_empty() => true,
+            _ => false,
+        };
+        if !missing {
+            continue;
+        }
+        if let Some(source) = &field.default_from {
+            let value = match source.as_str() {
+                "current_user" => json!(ctx.user_id.to_string()),
+                "current_date" => json!(chrono::Utc::now().date_naive().to_string()),
+                "current_datetime" => json!(chrono::Utc::now().to_rfc3339()),
+                "tenant_timezone" => json!(ctx.timezone.clone()),
+                "tenant_currency" => json!(ctx.currency.clone()),
+                _ => continue,
+            };
+            obj.insert(field.name.clone(), value);
+        } else if let Some(default) = &field.default {
+            obj.insert(field.name.clone(), default.clone());
+        }
+    }
+}
+
+fn correlate_event(event: &mut DomainEvent, operation_id: Uuid, request_id: Uuid) {
+    match event.payload {
+        Value::Object(ref mut obj) => {
+            obj.entry("operation_id")
+                .or_insert_with(|| json!(operation_id));
+            obj.entry("request_id").or_insert_with(|| json!(request_id));
+        }
+        _ => {
+            event.payload = json!({
+                "value": event.payload,
+                "operation_id": operation_id,
+                "request_id": request_id,
+            });
+        }
+    }
+}
+
+fn mutation_events_for(
+    entity: &str,
+    id: Uuid,
+    ctx: &OpContext,
+    mut payload: Value,
+    specific: &str,
+    framework: &str,
+) -> Vec<DomainEvent> {
+    qefro_core::strip_secrets(None, &mut payload);
+    let specific_name = if specific.contains('.') {
+        specific.to_string()
+    } else {
+        format!("{}.{}", snake_case(entity), specific)
+    };
+    vec![
+        with_user(
+            DomainEvent::new(
+                specific_name,
+                entity.to_string(),
+                id,
+                ctx.tenant_id,
+                payload.clone(),
+            ),
+            ctx.user_id,
+        ),
+        with_user(
+            DomainEvent::new(
+                framework.to_string(),
+                entity.to_string(),
+                id,
+                ctx.tenant_id,
+                payload,
+            ),
+            ctx.user_id,
+        ),
+    ]
+}
+
+fn attach_operation_envelope(
+    record: &mut Value,
+    run: &OperationRun,
+    def: &OperationDef,
+    message: Option<String>,
+    navigate: Option<Value>,
+) {
+    let obj = match record.as_object_mut() {
+        Some(o) => o,
+        None => {
+            *record = json!({});
+            record.as_object_mut().unwrap()
+        }
+    };
+    obj.insert(
+        "_operation".into(),
+        json!({
+            "id": run.id,
+            "operation": def.name,
+            "name": def.name,
+            "status": run.status,
+            "progress": run.progress,
+            "message": message,
+            "navigate": navigate,
+            "request_id": run.request_id,
+        }),
+    );
+}
+
+/// JobQueue handler for `OperationDef.execution = async`. Reconstructs the
+/// original caller so permissions are not elevated to Worker.
+pub struct OperationExecuteJob {
+    entities: OnceLock<Arc<crate::service::EntityService>>,
+}
+
+impl OperationExecuteJob {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            entities: OnceLock::new(),
+        })
+    }
+
+    pub fn bind(&self, entities: Arc<crate::service::EntityService>) {
+        let _ = self.entities.set(entities);
+    }
+}
+
+#[async_trait]
+impl JobHandler for OperationExecuteJob {
+    fn worker_safe(&self) -> bool {
+        true
+    }
+
+    async fn run(&self, job_ctx: &OpContext, payload: &Value) -> QefroResult<()> {
+        let Some(entities) = self.entities.get() else {
+            return Err(QefroError::internal("operation execute job is not bound"));
+        };
+        let entity = payload
+            .get("entity")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| QefroError::bad_request("entity is required"))?;
+        let id = payload
+            .get("entity_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .ok_or_else(|| QefroError::bad_request("entity_id is required"))?;
+        let operation = payload
+            .get("operation")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| QefroError::bad_request("operation is required"))?;
+        let input = payload.get("input").cloned().unwrap_or_else(|| json!({}));
+        let operation_id = payload
+            .get("operation_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| Uuid::parse_str(s).ok());
+        let user_id = payload
+            .get("user_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .unwrap_or(job_ctx.user_id);
+        let roles = payload
+            .get("roles")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|r| !r.is_empty())
+            .unwrap_or_else(|| job_ctx.roles.clone());
+        let mut ctx = OpContext::new(job_ctx.tenant_id, user_id, roles);
+        ctx.request_id = payload
+            .get("request_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .unwrap_or(job_ctx.request_id);
+        ctx.actor_name = payload
+            .get("actor_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or(job_ctx.actor_name.clone());
+        ctx.enabled_apps = job_ctx.enabled_apps.clone();
+        entities
+            .execute_with(
+                &ctx,
+                entity,
+                id,
+                operation,
+                input,
+                ExecuteOpts {
+                    idempotency_key: payload
+                        .get("idempotency_key")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                    force_sync: true,
+                    operation_id,
+                },
+            )
+            .await?;
+        Ok(())
+    }
 }

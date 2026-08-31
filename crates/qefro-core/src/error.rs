@@ -37,6 +37,8 @@ pub enum QefroError {
     },
     RateLimited {
         message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_after: Option<u64>,
     },
     Locked {
         message: String,
@@ -61,6 +63,12 @@ pub struct FieldError {
     pub field: String,
     pub code: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
 }
 
 impl FieldError {
@@ -73,7 +81,25 @@ impl FieldError {
             field: field.into(),
             code: code.into(),
             message: message.into(),
+            entity: None,
+            record: None,
+            rule: None,
         }
+    }
+
+    pub fn with_entity(mut self, entity: impl Into<String>) -> Self {
+        self.entity = Some(entity.into());
+        self
+    }
+
+    pub fn with_record(mut self, record: impl Into<String>) -> Self {
+        self.record = Some(record.into());
+        self
+    }
+
+    pub fn with_rule(mut self, rule: impl Into<String>) -> Self {
+        self.rule = Some(rule.into());
+        self
     }
 }
 
@@ -143,6 +169,14 @@ impl QefroError {
     pub fn rate_limited(message: impl Into<String>) -> Self {
         Self::RateLimited {
             message: message.into(),
+            retry_after: None,
+        }
+    }
+
+    pub fn rate_limited_retry(message: impl Into<String>, retry_after_secs: u64) -> Self {
+        Self::RateLimited {
+            message: message.into(),
+            retry_after: Some(retry_after_secs.max(1)),
         }
     }
 
@@ -197,6 +231,8 @@ impl QefroError {
             Self::Workflow { .. } => "invalid_transition",
             Self::Business { code, .. } if code == "automation_failed" => "automation_failed",
             Self::Business { code, .. } if code == "job_failed" => "job_failed",
+            Self::Business { code, .. } if code == "scheduling_conflict" => "scheduling_conflict",
+            Self::Business { code, .. } if code == "scheduling_capacity" => "scheduling_capacity",
             Self::Business { .. } => "business_rule_failed",
             Self::RateLimited { .. } => "rate_limited",
             Self::Locked { .. } => "locked",
@@ -241,7 +277,7 @@ impl fmt::Display for QefroError {
             | Self::BadRequest { message }
             | Self::Workflow { message }
             | Self::Business { message, .. }
-            | Self::RateLimited { message }
+            | Self::RateLimited { message, .. }
             | Self::AppNotEnabled { message }
             | Self::MigrationRequired { message }
             | Self::PayloadTooLarge { message }

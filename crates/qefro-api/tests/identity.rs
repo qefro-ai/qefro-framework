@@ -247,7 +247,7 @@ async fn user_create_auth_enable_roles_and_tenant_isolation() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{blocked}");
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{blocked}");
 
     let (status, stale) = json(clone_router(&router), get("/api/v1/auth/me", Some(&staff))).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "{stale}");

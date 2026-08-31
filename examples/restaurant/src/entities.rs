@@ -5,7 +5,7 @@ use qefro_core::ui::{
 use qefro_core::{
     CalendarViewSpec, ChildTableDef, DocumentConfig, EntityActionDef, EntityDef, EntityViews,
     FieldDef, KanbanCardSpec, KanbanViewSpec, LinkDef, ListViewSpec, NamingConfig, PrintFormat,
-    PublicFormDef, UiConfig,
+    PrintSection, PublicFormDef, SchedulingConfig, UiConfig, WorkingHours,
 };
 use serde_json::json;
 
@@ -50,11 +50,47 @@ pub fn customer() -> EntityDef {
                 .section("Contact"),
         )
         .field(
+            FieldDef::enum_values(
+                "communication_channel",
+                vec!["in_app", "email", "sms", "whatsapp", "none"],
+            )
+            .nullable()
+            .label("Preferred channel")
+            .section("Contact"),
+        )
+        .field(
+            FieldDef::boolean("marketing_opt_out")
+                .nullable()
+                .label("Marketing opt-out")
+                .section("Contact"),
+        )
+        .field(
             FieldDef::text("notes")
                 .nullable()
                 .list(false)
                 .permission_level(1)
                 .section("Contact"),
+        )
+        .custom_field(
+            FieldDef::enum_values("loyalty_tier", vec!["Bronze", "Silver", "Gold"])
+                .nullable()
+                .default_value(json!("Bronze"))
+                .filterable()
+                .label("Loyalty Tier")
+                .section("Custom"),
+        )
+        .custom_field(
+            FieldDef::string("preferred_table")
+                .nullable()
+                .label("Preferred Table")
+                .section("Custom"),
+        )
+        .custom_field(
+            FieldDef::text("dietary_notes")
+                .nullable()
+                .list(false)
+                .label("Dietary Notes")
+                .section("Custom"),
         )
         .views(EntityViews {
             list: Some(ListViewSpec {
@@ -79,6 +115,11 @@ pub fn customer() -> EntityDef {
                         width: None,
                         widget: Some("relation".into()),
                     },
+                    ListColumnSpec {
+                        field: "loyalty_tier".into(),
+                        width: None,
+                        widget: None,
+                    },
                 ],
                 default_sort: Some(SortSpec {
                     field: "name".into(),
@@ -89,19 +130,29 @@ pub fn customer() -> EntityDef {
             form: Some(FormViewSpec::sections(vec![
                 ViewSectionSpec::new("Customer Information").columns(&[
                     ViewColumnSpec::fields(&["name", "email", "phone"]),
-                    ViewColumnSpec::fields(&["party_type", "person_id"]),
+                    ViewColumnSpec::fields(&["party_type", "person_id", "communication_channel", "marketing_opt_out"]),
                 ]),
                 ViewSectionSpec::new("Organization Details")
                     .fields(&["organization_id"])
                     .visible_when("party_type", json!("Organization")),
                 ViewSectionSpec::new("Notes").fields(&["notes"]),
+                ViewSectionSpec::new("Custom").fields(&[
+                    "loyalty_tier",
+                    "preferred_table",
+                    "dietary_notes",
+                ]),
             ])),
             detail: Some(DetailViewSpec::sections(vec![
-                ViewSectionSpec::new("Customer").fields(&["name", "email", "phone"]),
+                ViewSectionSpec::new("Customer").fields(&["name", "email", "phone", "communication_channel", "marketing_opt_out"]),
                 ViewSectionSpec::new("Business").fields(&["party_type", "person_id"]),
                 ViewSectionSpec::new("Organization Details")
                     .fields(&["organization_id"])
                     .visible_when("party_type", json!("Organization")),
+                ViewSectionSpec::new("Custom").fields(&[
+                    "loyalty_tier",
+                    "preferred_table",
+                    "dietary_notes",
+                ]),
             ])),
             ..Default::default()
         })
@@ -111,6 +162,7 @@ pub fn customer() -> EntityDef {
             "customer_id",
         ))
         .field(FieldDef::one_to_many("orders", "Order", "customer_id"))
+        .with_commerce()
         .link(
             LinkDef::new("Orders", "Order", "customer_id")
                 .columns(&["doc_no", "status", "grand_total"])
@@ -123,6 +175,7 @@ pub fn customer() -> EntityDef {
         )
         .with_tasks()
         .with_archive()
+        .attachments()
         .build()
 }
 
@@ -352,12 +405,21 @@ pub fn reservation() -> EntityDef {
                 .section("Booking Details"),
         )
         .field(
+            FieldDef::time("end_time")
+                .nullable()
+                .label("End")
+                .help("Must be after the start time when set.")
+                .ui(UiConfig::time().minute_step(15))
+                .section("Booking Details"),
+        )
+        .field(
             FieldDef::integer("party_size")
                 .required()
                 .min(1.0)
                 .max(50.0)
                 .label("Guests")
-                .section("Booking Details"),
+                .section("Booking Details")
+                .readonly_when("status", json!("Completed")),
         )
         .field(
             FieldDef::string("guest_name")
@@ -412,6 +474,7 @@ pub fn reservation() -> EntityDef {
             calendar: Some(CalendarViewSpec {
                 start: Some("reservation_date".into()),
                 time: Some("reservation_time".into()),
+                end: Some("end_time".into()),
                 title: Some("guest_name".into()),
                 subtitle: Some("status".into()),
                 ..Default::default()
@@ -427,6 +490,7 @@ pub fn reservation() -> EntityDef {
                     ViewColumnSpec::fields(&[
                         "reservation_date",
                         "reservation_time",
+                        "end_time",
                         "party_size",
                         "status",
                     ]),
@@ -442,6 +506,7 @@ pub fn reservation() -> EntityDef {
                     "table_id",
                     "reservation_date",
                     "reservation_time",
+                    "end_time",
                     "party_size",
                     "status",
                 ]),
@@ -449,6 +514,26 @@ pub fn reservation() -> EntityDef {
             ])),
             ..Default::default()
         })
+        .validation_rule(qefro_core::ValidationRule::compare(
+            "end_time",
+            "greater_than",
+            "reservation_time",
+        ))
+        .scheduling(
+            SchedulingConfig::new("reservation_date")
+                .time_field("reservation_time")
+                .end_time_field("end_time")
+                .resource("table_id")
+                .capacity("party_size", "seats")
+                .conflict()
+                .calendar()
+                .duration_minutes(90)
+                .slot_interval_minutes(30)
+                .buffer(0, 15)
+                .ignore_states(&["Cancelled", "Completed"])
+                .working_hours(WorkingHours::everyday("11:00", "22:00"))
+                .reminder_minutes(24 * 60),
+        )
         .build()
 }
 
@@ -594,9 +679,15 @@ pub fn order() -> EntityDef {
         )
         .print_format(
             PrintFormat::new("Order Standard", "Order")
-                .title("Order")
+                .title("Receipt")
                 .item_table("items")
-                .total_fields(&["subtotal", "tax", "discount", "grand_total"]),
+                .total_fields(&["subtotal", "tax", "discount", "grand_total"])
+                .filename_field("doc_no")
+                .section(PrintSection::kind("header"))
+                .section(PrintSection::kind("customer").fields(&["customer.name"]))
+                .section(PrintSection::kind("items").loop_over("items"))
+                .section(PrintSection::kind("totals"))
+                .section(PrintSection::kind("footer")),
         )
         .field(
             FieldDef::enum_values("order_type", vec!["Dine-in", "Takeaway"])
@@ -613,7 +704,8 @@ pub fn order() -> EntityDef {
                 .nullable()
                 .label("Customer")
                 .search_related()
-                .section("Details"),
+                .section("Details")
+                .readonly_when("status", json!("Completed")),
         )
         .field(
             FieldDef::many_to_one("table_id", "DiningTable")
@@ -694,7 +786,8 @@ pub fn order() -> EntityDef {
             FieldDef::currency("discount")
                 .nullable()
                 .min(0.0)
-                .default_value(json!(0)),
+                .default_value(json!(0))
+                .readonly_when("status", json!("Completed")),
         )
         .field(FieldDef::currency("grand_total").computed("subtotal + tax - discount"))
         .field(FieldDef::currency("total").computed("grand_total"))

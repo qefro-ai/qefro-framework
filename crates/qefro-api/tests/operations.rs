@@ -21,6 +21,11 @@ struct ExplodeBooking;
 struct SeatBooking;
 struct CompleteBooking;
 struct CancelBooking;
+struct StampNote;
+struct TouchRoom;
+struct CycleA;
+struct CycleB;
+struct CrossTenant;
 
 #[async_trait]
 impl OperationHandler for ConfirmBooking {
@@ -52,6 +57,12 @@ impl OperationHandler for ConfirmBooking {
 impl OperationHandler for ExplodeBooking {
     async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> qefro_core::QefroResult<Value> {
         let room_id = ctx.uuid_field("room_id")?;
+        let booking_id = ctx.record_id()?;
+        ctx.create(
+            "OpNote",
+            json!({ "booking_id": booking_id, "body": "should roll back" }),
+        )
+        .await?;
         ctx.update("OpRoom", room_id, json!({ "status": "reserved" }))
             .await?;
         ctx.apply_transition("confirm")?;
@@ -108,6 +119,70 @@ impl OperationHandler for CancelBooking {
     }
 }
 
+#[async_trait]
+impl OperationHandler for StampNote {
+    async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> qefro_core::QefroResult<Value> {
+        ctx.create(
+            "OpNote",
+            json!({
+                "booking_id": ctx.record_id()?,
+                "body": ctx.input.get("body").cloned().unwrap_or(json!("stamped")),
+            }),
+        )
+        .await?;
+        Ok(ctx.record.clone())
+    }
+}
+
+#[async_trait]
+impl OperationHandler for TouchRoom {
+    async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> qefro_core::QefroResult<Value> {
+        let room_id = ctx.uuid_field("room_id")?;
+        let expected = ctx.input.get("_expected_updated_at").cloned();
+        let mut patch = json!({ "code": ctx.input.get("code").cloned().unwrap_or(json!("touched")) });
+        if let Some(ts) = expected {
+            patch
+                .as_object_mut()
+                .unwrap()
+                .insert("_expected_updated_at".into(), ts);
+        }
+        ctx.update("OpRoom", room_id, patch).await?;
+        Ok(ctx.record.clone())
+    }
+}
+
+#[async_trait]
+impl OperationHandler for CycleA {
+    async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> qefro_core::QefroResult<Value> {
+        let id = ctx.record_id()?;
+        ctx.execute("OpBooking", id, "cycle_b", json!({})).await?;
+        Ok(ctx.record.clone())
+    }
+}
+
+#[async_trait]
+impl OperationHandler for CycleB {
+    async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> qefro_core::QefroResult<Value> {
+        let id = ctx.record_id()?;
+        ctx.execute("OpBooking", id, "cycle_a", json!({})).await?;
+        Ok(ctx.record.clone())
+    }
+}
+
+#[async_trait]
+impl OperationHandler for CrossTenant {
+    async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> qefro_core::QefroResult<Value> {
+        let room_id = ctx
+            .input
+            .get("room_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .ok_or_else(|| OperationCtx::fail("missing_room", "room_id required"))?;
+        ctx.get("OpRoom", room_id).await?;
+        Ok(ctx.record.clone())
+    }
+}
+
 fn ops_app() -> InstalledApp {
     let module = AppModule::new("ops_test")
         .entity(
@@ -138,6 +213,14 @@ fn ops_app() -> InstalledApp {
                 )
                 .build(),
         )
+        .entity(
+            EntityDef::new("OpNote")
+                .table_name("op_notes")
+                .slug_name("op-notes")
+                .field(FieldDef::many_to_one("booking_id", "OpBooking").required())
+                .field(FieldDef::string("body").required())
+                .build(),
+        )
         .build();
     InstalledApp::new(module)
         .workflow(
@@ -161,11 +244,17 @@ fn ops_app() -> InstalledApp {
         )
         .permission(PermissionGrant::crud(ROLE_MANAGER, "OpRoom"))
         .permission(PermissionGrant::crud(ROLE_MANAGER, "OpBooking"))
+        .permission(PermissionGrant::crud(ROLE_MANAGER, "OpNote"))
         .permission(PermissionGrant::crud(ROLE_STAFF, "OpRoom"))
         .permission(PermissionGrant::new(
             ROLE_STAFF,
             "OpBooking",
             vec![Action::Read, Action::List, Action::Update],
+        ))
+        .permission(PermissionGrant::new(
+            ROLE_STAFF,
+            "OpNote",
+            vec![Action::Read, Action::List],
         ))
         .operation(
             OperationDef::new("confirm", "OpBooking")
@@ -205,6 +294,40 @@ fn ops_app() -> InstalledApp {
                 .event("booking.cancelled"),
             CancelBooking,
         )
+        .operation(
+            OperationDef::new("stamp_note", "OpBooking")
+                .label("Stamp Note")
+                .roles(&["Manager", "Staff"])
+                .input_schema(json!({
+                    "type": "object",
+                    "properties": { "body": { "type": "string", "title": "Note" } }
+                })),
+            StampNote,
+        )
+        .operation(
+            OperationDef::new("touch_room", "OpBooking")
+                .label("Touch Room")
+                .roles(&["Manager", "Staff"]),
+            TouchRoom,
+        )
+        .operation(
+            OperationDef::new("cycle_a", "OpBooking")
+                .label("Cycle A")
+                .roles(&["Manager"]),
+            CycleA,
+        )
+        .operation(
+            OperationDef::new("cycle_b", "OpBooking")
+                .label("Cycle B")
+                .roles(&["Manager"]),
+            CycleB,
+        )
+        .operation(
+            OperationDef::new("cross_tenant", "OpBooking")
+                .label("Cross Tenant")
+                .roles(&["Manager"]),
+            CrossTenant,
+        )
 }
 
 async fn runtime() -> axum::Router {
@@ -233,12 +356,24 @@ async fn json(router: axum::Router, req: Request<Body>) -> (StatusCode, Value) {
 }
 
 fn post(path: &str, token: Option<&str>, body: Value) -> Request<Body> {
+    post_with(path, token, body, None)
+}
+
+fn post_with(
+    path: &str,
+    token: Option<&str>,
+    body: Value,
+    idempotency: Option<&str>,
+) -> Request<Body> {
     let mut b = Request::builder()
         .method("POST")
         .uri(path)
         .header("content-type", "application/json");
     if let Some(t) = token {
         b = b.header("authorization", format!("Bearer {t}"));
+    }
+    if let Some(key) = idempotency {
+        b = b.header("Idempotency-Key", key);
     }
     b.body(Body::from(body.to_string())).unwrap()
 }
@@ -455,6 +590,20 @@ async fn operations_pipeline_transactions_events_and_agent() {
     )
     .await;
     assert_eq!(room_after_fail["status"], "available", "{room_after_fail}");
+    let (status, notes_after_fail) = json(
+        clone_router(&router),
+        get(
+            &format!("/api/v1/op-notes?booking_id={booking_id}"),
+            Some(token_a),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{notes_after_fail}");
+    assert_eq!(
+        notes_after_fail["items"].as_array().map(|a| a.len()).unwrap_or(0),
+        0,
+        "created note must roll back: {notes_after_fail}"
+    );
 
     let (status, events_after_fail) =
         json(clone_router(&router), get("/api/v1/events", Some(token_a))).await;
@@ -477,6 +626,9 @@ async fn operations_pipeline_transactions_events_and_agent() {
     .await;
     assert_eq!(status, StatusCode::OK, "{confirmed}");
     assert_eq!(confirmed["status"], "Confirmed");
+    assert_eq!(confirmed["_operation"]["status"], "completed");
+    assert_eq!(confirmed["_operation"]["operation"], "confirm");
+    let op_id = confirmed["_operation"]["id"].as_str().map(|s| s.to_string());
     assert!(confirmed["_actions"]
         .as_array()
         .unwrap()
@@ -510,6 +662,15 @@ async fn operations_pipeline_transactions_events_and_agent() {
             .any(|e| e["name"] == "booking.confirmed" && e["entity_id"] == booking_id),
         "{events}"
     );
+    if let Some(op_id) = op_id {
+        assert!(
+            events["items"].as_array().unwrap().iter().any(|e| {
+                e["name"] == "booking.confirmed"
+                    && e["payload"]["operation_id"].as_str() == Some(op_id.as_str())
+            }),
+            "events should correlate operation_id: {events}"
+        );
+    }
 
     let (status, tools) = json(clone_router(&router), get("/api/v1/tools", Some(token_a))).await;
     assert_eq!(status, StatusCode::OK, "{tools}");
@@ -1016,4 +1177,197 @@ async fn lifecycle_workflow_rbac_isolation_audit_and_concurrency() {
         started.elapsed().as_millis()
     );
     assert!(p99 < 5_000, "p99 {p99}ms is an obvious bottleneck");
+}
+
+#[tokio::test]
+async fn nested_permissions_tenant_concurrency_idempotency_and_cycles() {
+    let router = runtime().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let admin = register_admin(&router, suffix, "txa").await;
+    let other = register_admin(&router, suffix, "txb").await;
+
+    let (status, staff_user) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/users",
+            Some(&admin),
+            json!({
+                "name": "Staff",
+                "email": format!("tx-staff-{suffix}@example.com"),
+                "password": "password123",
+                "roles": ["Staff"]
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{staff_user}");
+    let (status, staff_login) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/auth/login",
+            None,
+            json!({
+                "email": format!("tx-staff-{suffix}@example.com"),
+                "password": "password123"
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{staff_login}");
+    let staff = staff_login["access_token"].as_str().unwrap();
+
+    let room_a = json(
+        clone_router(&router),
+        post(
+            "/api/v1/op-rooms",
+            Some(&admin),
+            json!({ "code": format!("TA-{suffix}") }),
+        ),
+    )
+    .await
+    .1;
+    let room_b = json(
+        clone_router(&router),
+        post(
+            "/api/v1/op-rooms",
+            Some(&other),
+            json!({ "code": format!("TB-{suffix}") }),
+        ),
+    )
+    .await
+    .1;
+    let booking = json(
+        clone_router(&router),
+        post(
+            "/api/v1/op-bookings",
+            Some(&admin),
+            json!({ "room_id": room_a["id"] }),
+        ),
+    )
+    .await
+    .1;
+    let booking_id = booking["id"].as_str().unwrap();
+
+    let (status, denied) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{booking_id}/actions/stamp_note"),
+            Some(staff),
+            json!({ "body": "nope" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+
+    let (status, stamped) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{booking_id}/actions/stamp_note"),
+            Some(&admin),
+            json!({ "body": "hello" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{stamped}");
+    let notes = json(
+        clone_router(&router),
+        get("/api/v1/op-notes", Some(&admin)),
+    )
+    .await
+    .1;
+    assert!(
+        notes["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["body"] == "hello" && n["booking_id"] == booking_id),
+        "{notes}"
+    );
+
+    let (status, leaked) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{booking_id}/actions/cross_tenant"),
+            Some(&admin),
+            json!({ "room_id": room_b["id"] }),
+        ),
+    )
+    .await;
+    assert!(
+        status == StatusCode::NOT_FOUND || status == StatusCode::FORBIDDEN,
+        "{leaked}"
+    );
+
+    let (status, stale) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{booking_id}/actions/touch_room"),
+            Some(&admin),
+            json!({ "code": "stale", "_expected_updated_at": "2000-01-01T00:00:00Z" }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{stale}");
+
+    let current_ts = room_a["updated_at"].as_str().unwrap();
+    let (status, touched) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{booking_id}/actions/touch_room"),
+            Some(&admin),
+            json!({ "code": format!("ok-{suffix}"), "_expected_updated_at": current_ts }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{touched}");
+
+    let booking2 = json(
+        clone_router(&router),
+        post(
+            "/api/v1/op-bookings",
+            Some(&admin),
+            json!({ "room_id": room_a["id"] }),
+        ),
+    )
+    .await
+    .1;
+    let booking2_id = booking2["id"].as_str().unwrap();
+    let key = format!("confirm-{suffix}");
+    let (status, first) = json(
+        clone_router(&router),
+        post_with(
+            &format!("/api/v1/op-bookings/{booking2_id}/actions/confirm"),
+            Some(&admin),
+            json!({}),
+            Some(&key),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let first_op = first["_operation"]["id"].as_str().unwrap().to_string();
+    let (status, second) = json(
+        clone_router(&router),
+        post_with(
+            &format!("/api/v1/op-bookings/{booking2_id}/actions/confirm"),
+            Some(&admin),
+            json!({}),
+            Some(&key),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(second["_operation"]["id"].as_str().unwrap(), first_op);
+
+    let (status, cycled) = json(
+        clone_router(&router),
+        post(
+            &format!("/api/v1/op-bookings/{booking_id}/actions/cycle_a"),
+            Some(&admin),
+            json!({}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{cycled}");
+    let msg = cycled["message"].as_str().unwrap_or("").to_lowercase();
+    assert!(msg.contains("cycle"), "{cycled}");
 }

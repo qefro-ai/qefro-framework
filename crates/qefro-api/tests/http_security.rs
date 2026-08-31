@@ -461,3 +461,15 @@ async fn ui_metadata_includes_visibility_and_workflow() {
     assert_eq!(create["operation"], "create");
     assert_eq!(create["entity"], "Note");
 }
+
+#[tokio::test]
+async fn security_headers_are_present_on_public_routes() {
+    let (router, _) = runtime().await;
+    let response = router.oneshot(get("/health", None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let headers = response.headers();
+    assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
+    assert_eq!(headers.get("x-frame-options").unwrap(), "DENY");
+    assert_eq!(headers.get("referrer-policy").unwrap(), "no-referrer");
+    assert!(headers.get("content-security-policy").is_some());
+}

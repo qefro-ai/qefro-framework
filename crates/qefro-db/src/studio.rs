@@ -5,6 +5,7 @@
 //! business tables.
 
 use crate::audit::AuditLogger;
+use crate::custom_fields::CustomFieldStore;
 use crate::schema::apply_schema;
 use chrono::{DateTime, Utc};
 use qefro_core::studio::{apply_field_ui_patch, is_production, validate_formula_on_entity};
@@ -12,14 +13,14 @@ use qefro_core::ui::DashboardDef;
 use qefro_core::{
     classify_entity_change, detect_cycles, entity_referrers, find_app_root, snake_case,
     ChangeAnalysis, EntityDef, EntityRegistry, EntityViews, FieldDef, FieldUiPatch, OpContext,
-    PrintFormat, QefroError, QefroResult, ReportDef, SchemaImpact, StudioCatalog,
+    PageDef, PrintFormat, QefroError, QefroResult, ReportDef, SchemaImpact, StudioCatalog,
 };
 use qefro_permissions::{PermissionGrant, PermissionRegistry};
 use qefro_workflow::WorkflowDef;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -82,6 +83,8 @@ pub struct MetadataChangeService {
     catalog: Arc<StudioCatalog>,
     audit: AuditLogger,
     env: String,
+    automation: OnceLock<Arc<crate::automation::AutomationEngine>>,
+    custom_fields: Arc<CustomFieldStore>,
 }
 
 impl MetadataChangeService {
@@ -95,13 +98,28 @@ impl MetadataChangeService {
     ) -> Self {
         Self {
             audit: AuditLogger::new(pool.clone()),
+            custom_fields: Arc::new(CustomFieldStore::new(pool.clone())),
             pool,
             registry,
             workflows,
             permissions,
             catalog,
             env,
+            automation: OnceLock::new(),
         }
+    }
+
+    pub fn bind_automation(&self, engine: Arc<crate::automation::AutomationEngine>) {
+        let _ = self.automation.set(engine);
+    }
+
+    pub fn with_custom_fields(mut self, store: Arc<CustomFieldStore>) -> Self {
+        self.custom_fields = store;
+        self
+    }
+
+    pub fn custom_fields(&self) -> Arc<CustomFieldStore> {
+        self.custom_fields.clone()
     }
 
     pub fn env(&self) -> &str {
@@ -237,6 +255,12 @@ impl MetadataChangeService {
                 Ok(analysis)
             }
             "entity.views" => analyze_views_overlay(target, payload),
+            "entity.scheduling" => {
+                let mut analysis = qefro_core::ChangeAnalysis::safe();
+                analysis.diff.push(format!("~ {target} scheduling"));
+                Ok(analysis)
+            }
+            "entity.custom_field" => analyze_custom_field(target, payload),
             "workflow" => {
                 let wf: WorkflowDef = serde_json::from_value(payload.clone())
                     .map_err(|e| QefroError::bad_request(format!("invalid workflow: {e}")))?;
@@ -250,7 +274,7 @@ impl MetadataChangeService {
                 analysis.diff.push(format!("~ permissions {target}"));
                 Ok(analysis)
             }
-            "report" | "dashboard" | "print_format" => {
+            "report" | "dashboard" | "page" | "print_format" | "communication" | "automation" => {
                 let mut analysis = ChangeAnalysis::safe();
                 analysis.diff.push(format!("~ {kind} {target}"));
                 Ok(analysis)
@@ -283,6 +307,31 @@ impl MetadataChangeService {
                 let mut entity = (*self.registry.get(target)?).clone();
                 let after = apply_views_payload(&mut entity, payload)?;
                 validate_entity(self.registry.as_ref(), &after)?;
+            }
+            "entity.scheduling" => {
+                let mut entity = (*self.registry.get(target)?).clone();
+                let after = apply_scheduling_payload(&mut entity, payload)?;
+                validate_entity(self.registry.as_ref(), &after)?;
+            }
+            "entity.custom_field" => {
+                reject_custom_field_sql(payload)?;
+                let mut field = crate::custom_fields::field_from_payload(payload)?;
+                field.custom = true;
+                let entity = (*self.registry.get(target)?).clone();
+                if payload.get("status").and_then(|v| v.as_str()) != Some("disabled")
+                    && payload.get("action").and_then(|v| v.as_str()) != Some("disable")
+                {
+                    qefro_core::validate_custom_field(&entity, &field)?;
+                    if entity
+                        .get_field(&field.name)
+                        .is_some_and(|existing| !existing.custom)
+                    {
+                        return Err(QefroError::bad_request(format!(
+                            "custom field '{}' collides with existing field on {target}",
+                            field.name
+                        )));
+                    }
+                }
             }
             "workflow" => {
                 let wf: WorkflowDef = serde_json::from_value(payload.clone())
@@ -335,10 +384,56 @@ impl MetadataChangeService {
                     }
                 }
             }
+            "page" => {
+                qefro_core::reject_unsafe_page_payload(payload)?;
+                let mut page: PageDef = serde_json::from_value(payload.clone())
+                    .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                page.normalize();
+                let reports = self.catalog.merge_reports(&[]);
+                let dashboards = self.catalog.merge_dashboards(&[]);
+                let slugs: Vec<String> = self
+                    .registry
+                    .list()
+                    .into_iter()
+                    .map(|e| e.slug.clone())
+                    .collect();
+                let errors = qefro_core::validate_page(
+                    &page,
+                    self.registry.as_ref(),
+                    &reports,
+                    &dashboards,
+                    &slugs,
+                );
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
+                }
+            }
             "print_format" => {
+                qefro_core::reject_unsafe_print_payload(payload)?;
                 let pf: PrintFormat = serde_json::from_value(payload.clone())
                     .map_err(|e| QefroError::bad_request(e.to_string()))?;
-                self.registry.get(&pf.entity)?;
+                let errors = qefro_core::validate_print_format(&pf, self.registry.as_ref());
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
+                }
+            }
+            "communication" => {
+                qefro_core::reject_unsafe_communication_payload(payload)?;
+                let def: qefro_core::CommunicationDef = serde_json::from_value(payload.clone())
+                    .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                let errors = qefro_core::validate_communication(&def, self.registry.as_ref());
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
+                }
+            }
+            "automation" => {
+                qefro_core::reject_unsafe_automation_payload(payload)?;
+                let def: qefro_core::AutomationDef = serde_json::from_value(payload.clone())
+                    .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                let errors = qefro_core::validate_automation(&def, Some(self.registry.as_ref()));
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
+                }
             }
             _ => {}
         }
@@ -378,7 +473,7 @@ impl MetadataChangeService {
         }
 
         let before = self.snapshot(&kind, &target);
-        self.apply(&kind, &target, &payload).await?;
+        self.apply(ctx, &kind, &target, &payload).await?;
         if analysis.migration_required {
             apply_schema(&self.pool, self.registry.as_ref()).await?;
         }
@@ -447,7 +542,7 @@ impl MetadataChangeService {
                 "⚠ Migration required. Studio will not roll back schema-changing metadata automatically.",
             ));
         }
-        self.apply(kind, target, &row.payload).await?;
+        self.apply(ctx, kind, target, &row.payload).await?;
         let _ = self
             .audit
             .record(
@@ -469,7 +564,9 @@ impl MetadataChangeService {
             | "entity.field"
             | "entity.field.upsert"
             | "entity.field.ui"
-            | "entity.views" => self
+            | "entity.views"
+            | "entity.scheduling"
+            | "entity.custom_field" => self
                 .registry
                 .try_get(target)
                 .and_then(|e| serde_json::to_value(&*e).ok()),
@@ -494,15 +591,40 @@ impl MetadataChangeService {
                 .catalog
                 .dashboard(target)
                 .and_then(|d| serde_json::to_value(d).ok()),
+            "page" => self
+                .catalog
+                .page(target)
+                .and_then(|p| serde_json::to_value(p).ok()),
             "print_format" => self
                 .catalog
                 .print_format(target)
                 .and_then(|p| serde_json::to_value(p).ok()),
+            "communication" => self
+                .catalog
+                .communication(target)
+                .and_then(|c| serde_json::to_value(c).ok()),
+            "automation" => self
+                .catalog
+                .automation(target)
+                .or_else(|| {
+                    self.automation.get().and_then(|eng| {
+                        eng.defs()
+                            .into_iter()
+                            .find(|d| d.name == target || d.id_key() == target)
+                    })
+                })
+                .and_then(|a| serde_json::to_value(a).ok()),
             _ => None,
         }
     }
 
-    async fn apply(&self, kind: &str, target: &str, payload: &Value) -> QefroResult<()> {
+    async fn apply(
+        &self,
+        ctx: &OpContext,
+        kind: &str,
+        target: &str,
+        payload: &Value,
+    ) -> QefroResult<()> {
         match kind {
             "entity" | "entity.replace" => {
                 let def: EntityDef = serde_json::from_value(payload.clone())
@@ -527,6 +649,20 @@ impl MetadataChangeService {
                 let module = after.module.clone();
                 self.registry.overlay_put(after.clone())?;
                 maybe_write_yaml(module.as_deref(), &after)?;
+            }
+            "entity.scheduling" => {
+                let mut entity = (*self.registry.get(target)?).clone();
+                let after = apply_scheduling_payload(&mut entity, payload)?;
+                validate_entity(self.registry.as_ref(), &after)?;
+                let module = after.module.clone();
+                self.registry.overlay_put(after.clone())?;
+                maybe_write_yaml(module.as_deref(), &after)?;
+            }
+            "entity.custom_field" => {
+                reject_custom_field_sql(payload)?;
+                self.custom_fields
+                    .upsert(ctx, self.registry.as_ref(), target, payload)
+                    .await?;
             }
             "workflow" => {
                 let wf: WorkflowDef = serde_json::from_value(payload.clone())
@@ -558,10 +694,53 @@ impl MetadataChangeService {
                     .map_err(|e| QefroError::bad_request(e.to_string()))?;
                 self.catalog.upsert_dashboard(dash);
             }
+            "page" => {
+                qefro_core::reject_unsafe_page_payload(payload)?;
+                let mut page: PageDef = serde_json::from_value(payload.clone())
+                    .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                page.normalize();
+                self.catalog.upsert_page(page);
+            }
             "print_format" => {
+                qefro_core::reject_unsafe_print_payload(payload)?;
                 let pf: PrintFormat = serde_json::from_value(payload.clone())
                     .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                let errors = qefro_core::validate_print_format(&pf, self.registry.as_ref());
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
+                }
                 self.catalog.upsert_print_format(pf);
+            }
+            "communication" => {
+                qefro_core::reject_unsafe_communication_payload(payload)?;
+                let def: qefro_core::CommunicationDef = serde_json::from_value(payload.clone())
+                    .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                let errors = qefro_core::validate_communication(&def, self.registry.as_ref());
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
+                }
+                self.catalog.upsert_communication(def);
+            }
+            "automation" => {
+                qefro_core::reject_unsafe_automation_payload(payload)?;
+                let mut def: qefro_core::AutomationDef = serde_json::from_value(payload.clone())
+                    .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                if def.name.trim().is_empty() {
+                    def.name = target.to_string();
+                }
+                let errors = qefro_core::validate_automation(&def, Some(self.registry.as_ref()));
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
+                }
+                if let Some(existing) = self.catalog.automation(&def.name) {
+                    if def.version <= existing.version {
+                        def.version = existing.version.saturating_add(1);
+                    }
+                }
+                self.catalog.upsert_automation(def.clone());
+                if let Some(engine) = self.automation.get() {
+                    engine.overlay_put(def);
+                }
             }
             other => {
                 return Err(QefroError::bad_request(format!(
@@ -711,6 +890,70 @@ fn analyze_views_overlay(target: &str, payload: &Value) -> QefroResult<ChangeAna
     Ok(analysis)
 }
 
+fn analyze_custom_field(target: &str, payload: &Value) -> QefroResult<ChangeAnalysis> {
+    reject_custom_field_sql(payload)?;
+    let mut analysis = ChangeAnalysis::safe();
+    let name = payload.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+    let status = payload
+        .get("status")
+        .and_then(|v| v.as_str())
+        .or_else(|| payload.get("action").and_then(|v| v.as_str()))
+        .unwrap_or("active");
+    match status {
+        "disabled" | "disable" => {
+            analysis
+                .diff
+                .push(format!("~ {target}.{name} custom field disabled"));
+        }
+        "deprecated" | "deprecate" => {
+            analysis
+                .diff
+                .push(format!("~ {target}.{name} custom field deprecated"));
+        }
+        _ => {
+            analysis
+                .diff
+                .push(format!("+ custom field {target}.{name}"));
+        }
+    }
+    Ok(analysis)
+}
+
+fn reject_custom_field_sql(payload: &Value) -> QefroResult<()> {
+    const FORBIDDEN: &[&str] = &[
+        "sql",
+        "ddl",
+        "query",
+        "migration",
+        "script",
+        "password",
+        "connection",
+        "database",
+        "dsn",
+        "execute",
+    ];
+    if let Some(obj) = payload.as_object() {
+        for key in obj.keys() {
+            if FORBIDDEN.iter().any(|k| k.eq_ignore_ascii_case(key)) {
+                return Err(QefroError::bad_request(
+                    "custom field configuration cannot include SQL, DDL, or credentials",
+                ));
+            }
+        }
+    }
+    let blob = payload.to_string().to_ascii_lowercase();
+    if blob.contains("alter table")
+        || blob.contains("drop table")
+        || blob.contains("create index")
+        || blob.contains("truncate ")
+    {
+        return Err(QefroError::bad_request(
+            "custom field configuration cannot include SQL or DDL",
+        ));
+    }
+    Ok(())
+}
+
 fn reject_non_presentation_view_keys(payload: &Value) -> QefroResult<()> {
     let obj = payload
         .as_object()
@@ -757,6 +1000,22 @@ fn apply_views_payload(entity: &mut EntityDef, payload: &Value) -> QefroResult<E
     Ok(entity.clone())
 }
 
+fn apply_scheduling_payload(entity: &mut EntityDef, payload: &Value) -> QefroResult<EntityDef> {
+    if payload.get("enabled").and_then(|v| v.as_bool()) == Some(false) {
+        entity.scheduling = None;
+        return Ok(entity.clone());
+    }
+    let mut payload = payload.clone();
+    if let Some(obj) = payload.as_object_mut() {
+        obj.remove("enabled");
+        obj.retain(|_, v| !v.is_null());
+    }
+    let config: qefro_core::SchedulingConfig = serde_json::from_value(payload)
+        .map_err(|e| QefroError::bad_request(format!("invalid scheduling: {e}")))?;
+    entity.scheduling = Some(config);
+    Ok(entity.clone())
+}
+
 fn upsert_field(entity: &mut EntityDef, field: FieldDef) {
     if let Some(existing) = entity.fields.iter_mut().find(|f| f.name == field.name) {
         *existing = field;
@@ -770,6 +1029,9 @@ fn validate_entity(registry: &EntityRegistry, after: &EntityDef) -> QefroResult<
     after.validate_idents()?;
     detect_cycles(&after.fields)?;
     after.validate_ui_layout()?;
+    for err in qefro_core::validate_scheduling(after, Some(registry)) {
+        return Err(QefroError::bad_request(err));
+    }
     for field in &after.fields {
         if let Some(rel) = &field.relation {
             if rel.target_entity != after.name && registry.try_get(&rel.target_entity).is_none() {
