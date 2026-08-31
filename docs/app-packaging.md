@@ -16,7 +16,7 @@ Allowlisted paths only:
 
 - `app.toml`, `README.md`, `runtime.toml`
 - `entities/`, `workflows/`, `permissions/`
-- `reports/`, `dashboards/`, `print_formats/`
+- `reports/`, `dashboards/`, `pages/`, `print_formats/`
 - `seeds/`, `hooks/`, `migrations/`, `assets/`, `tools/`
 
 Assets must be relative. `../` and absolute paths are rejected at pack and extract time. Extraction never writes outside `.qefro/store/<name>/`. Duplicate zip entries, oversized files (8 MiB each, 32 MiB total), and checksum mismatches fail the install.

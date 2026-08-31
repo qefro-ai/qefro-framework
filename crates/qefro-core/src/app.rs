@@ -2,6 +2,7 @@ use crate::document::{PrintFormat, ReportDef};
 use crate::entity::EntityDef;
 use crate::error::QefroResult;
 use crate::hook::{EntityHook, HookRegistry};
+use crate::page::PageDef;
 use crate::platform::{NotificationDef, WebhookDef};
 use crate::registry::EntityRegistry;
 use crate::ui::DashboardDef;
@@ -27,6 +28,7 @@ pub struct AppModule {
     pub entities: Vec<EntityDef>,
     pub hooks: HookRegistry,
     pub dashboards: Vec<DashboardDef>,
+    pub pages: Vec<PageDef>,
     pub reports: Vec<ReportDef>,
     pub print_formats: Vec<PrintFormat>,
     pub notifications: Vec<NotificationDef>,
@@ -49,6 +51,9 @@ pub struct NavItem {
     /// Workspace section heading. Renderer groups items that share a section.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
+    /// Composed page name. When set, navigation goes to `/pages/{slug}` instead of the entity list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
 }
 
 impl NavItem {
@@ -59,6 +64,18 @@ impl NavItem {
             query: None,
             view: None,
             section: None,
+            page: None,
+        }
+    }
+
+    pub fn page_link(label: impl Into<String>, page: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            entity: String::new(),
+            query: None,
+            view: None,
+            section: None,
+            page: Some(page.into()),
         }
     }
 
@@ -74,6 +91,11 @@ impl NavItem {
 
     pub fn section(mut self, section: impl Into<String>) -> Self {
         self.section = Some(section.into());
+        self
+    }
+
+    pub fn page(mut self, page: impl Into<String>) -> Self {
+        self.page = Some(page.into());
         self
     }
 }
@@ -158,6 +180,7 @@ impl AppModule {
                 entities: Vec::new(),
                 hooks: HookRegistry::new(),
                 dashboards: Vec::new(),
+                pages: Vec::new(),
                 reports: Vec::new(),
                 print_formats: Vec::new(),
                 notifications: Vec::new(),
@@ -182,6 +205,9 @@ impl AppModule {
         let mut seen = std::collections::HashSet::new();
         let mut slugs = Vec::new();
         for item in &self.navigation {
+            if item.page.is_some() {
+                continue;
+            }
             if let Some(slug) = self
                 .entities
                 .iter()
@@ -320,6 +346,15 @@ impl AppModuleBuilder {
 
     pub fn dashboard(mut self, dashboard: DashboardDef) -> Self {
         self.module.dashboards.push(dashboard);
+        self
+    }
+
+    pub fn page(mut self, mut page: crate::page::PageDef) -> Self {
+        if page.module.is_none() {
+            page.module = Some(self.module.name.clone());
+        }
+        page.normalize();
+        self.module.pages.push(page);
         self
     }
 

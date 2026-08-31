@@ -1339,10 +1339,75 @@ html[data-sidebar="collapsed"] .nav-group-label,
 html[data-sidebar="collapsed"] .nav-label { display: none; }
 html[data-sidebar="collapsed"] .nav a { text-align: center; padding: 0; justify-content: center; }
 
+.page-layout {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+  align-items: start;
+}
+.page-layout-stack { grid-template-columns: 1fr; }
+.page-layout-two_column { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.page-layout-three_column { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.page-layout-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.page-layout-split,
+.page-split {
+  display: grid;
+  grid-template-columns: minmax(260px, 2fr) minmax(0, 3fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+.page-section { min-width: 0; }
+.page-section .section-title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+.page-layout-grid .section-xl { grid-column: span 4; }
+.page-layout-grid .section-lg { grid-column: span 2; }
+.page-layout-grid .section-md { grid-column: span 2; }
+.page-layout-grid .section-sm { grid-column: span 1; }
+.page-layout-two_column .section-xl,
+.page-layout-three_column .section-xl { grid-column: 1 / -1; }
+.embedded-view.is-compact .panel { box-shadow: none; }
+.embedded-detail-head {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  align-items: center;
+  margin-bottom: var(--space-3);
+}
+button.linkish {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+tr.is-selected { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
 @media (max-width: 1100px) {
+  .page-layout-three_column,
+  .page-layout-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .page-layout-grid .section-xl { grid-column: span 2; }
   .dash-grid, .skeleton-dash { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .card-wide { grid-column: span 2; }
   .card-lg { grid-column: span 2; }
+}
+
+@media (max-width: 840px) {
+  .page-layout-two_column,
+  .page-layout-three_column,
+  .page-layout-grid,
+  .page-layout-split,
+  .page-split { grid-template-columns: 1fr; }
+  .page-layout-grid .section-xl,
+  .page-layout-grid .section-lg,
+  .page-layout-grid .section-md,
+  .page-layout-grid .section-sm { grid-column: span 1; }
 }
 
 @media (max-width: 840px) {

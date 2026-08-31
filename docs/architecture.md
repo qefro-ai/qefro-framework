@@ -91,7 +91,7 @@ Clients cannot set `tenant_id` on create, update, action, or agent invoke. `X-Te
 
 User and agent calls use user RBAC. Workers use `OpContext::worker` and may run only handlers/operations marked `worker_safe`.
 
-**Qefro 1.3 search, reports, dashboards, and saved views:** Global search, entity search weights, saved views, metadata reports, generic charts, dashboards, and workspaces sit on the same `EntityService`. See [Search](search.md), [Reports](reports.md), [Dashboards](dashboards.md), and [Workspaces](workspaces.md).
+**Qefro 1.3 search, reports, dashboards, pages, and saved views:** Global search, entity search weights, saved views, metadata reports, generic charts, dashboards, composed pages, and workspaces sit on the same `EntityService`. Pages compose existing generic components; they are not a second UI runtime. See [Search](search.md), [Reports](reports.md), [Dashboards](dashboards.md), [Pages](pages.md), and [Workspaces](workspaces.md).
 
 **Qefro 1.2 business object runtime:** Identity (Person / Organization / User / business), workflow UI, activity, audit, attachments, and in-app notifications sit on `EntityService`. See [Business object runtime](business-object-runtime.md) and [Identity](identity.md). The framework Task primitive composes the same path — see [Tasks](tasks.md). Entity attachments (documents and files) are the same runtime — see [Files](files.md). Double-entry accounting is another composition of that path — see [Accounting](accounting.md). Generic commerce (Quote → Sales Order → Fulfillment → Invoice → Payment → Return) is the same composition — see [Commerce](commerce.md).
 

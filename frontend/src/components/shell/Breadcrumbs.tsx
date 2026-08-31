@@ -23,6 +23,15 @@ export function Breadcrumbs({
   const crumbs: Array<{ to: string; label: string; keep?: boolean }> = [{ to: "/", label: "Home" }];
   if (parts[0] === "settings") crumbs.push({ to: "/settings", label: "Settings" });
   else if (parts[0] === "reports") crumbs.push({ to: "/reports", label: "Reports" });
+  else if (parts[0] === "pages") {
+    const slug = parts[1] || "";
+    const label = slug
+      .split("-")
+      .filter(Boolean)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(" ") || "Workspace";
+    crumbs.push({ to: `/pages/${slug}`, label });
+  }
   else if (parts[0] === "studio") crumbs.push({ to: "/studio", label: "Studio" });
   else {
     const meta = entities.find((e) => e.slug === parts[0]);

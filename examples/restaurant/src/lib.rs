@@ -1,6 +1,7 @@
 mod dashboard;
 mod entities;
 mod operations;
+mod pages;
 mod permissions;
 mod workflows;
 
@@ -33,6 +34,7 @@ pub fn module() -> AppModule {
         .label("Restaurant")
         .description("Tables, reservations, menus, dine-in and takeaway orders, and payments")
         .branding(branding())
+        .nav(NavItem::page_link("Operations", "restaurant-operations").section("Operations"))
         .nav(NavItem::new("Orders", "Order").section("Operations"))
         .nav(NavItem::new("Reservations", "Reservation").section("Operations"))
         .nav(
@@ -44,6 +46,7 @@ pub fn module() -> AppModule {
         .nav(NavItem::new("Tables", "DiningTable").section("Operations"))
         .nav(NavItem::new("Menu", "MenuItem").section("Catalog"))
         .nav(NavItem::new("Customers", "Customer").section("Catalog"))
+        .nav(NavItem::page_link("Customer Workspace", "customer-workspace").section("Catalog"))
         .entity(entities::customer())
         .entity(entities::restaurant())
         .entity(entities::restaurant_settings())
@@ -58,6 +61,8 @@ pub fn module() -> AppModule {
         .entity(entities::ui_showcase())
         .entity(entities::showcase_line())
         .dashboard(dashboard::ops())
+        .page(pages::restaurant_operations())
+        .page(pages::customer_workspace())
         .report(
             ReportDef::new("sales-by-day", "Order")
                 .label("Sales By Day")
@@ -149,7 +154,9 @@ pub fn module() -> AppModule {
                 Condition::field_equals("entity", "Order"),
                 Condition::field_equals("to_state", "Confirmed"),
             ]))
-            .action(AutomationAction::create_activity("Kitchen: order confirmed")),
+            .action(AutomationAction::create_activity(
+                "Kitchen: order confirmed",
+            )),
         )
         .build()
 }

@@ -27,6 +27,7 @@ pub mod migration;
 pub mod money;
 pub mod operation;
 pub mod package;
+pub mod page;
 pub mod platform;
 pub mod rate_limit;
 pub mod registry;
@@ -109,6 +110,10 @@ pub use money::{
 };
 pub use operation::{operation, OperationDef};
 pub use package::{extract_package, inspect_package, write_package, PackageMeta};
+pub use page::{
+    normalize_layout, reject_unsafe_page_payload, validate_page, PageActionRef, PageDef,
+    PageSection, PageTab, PAGE_LAYOUTS, PAGE_SECTION_KINDS, PAGE_TEMPLATES, PAGE_VIEWS,
+};
 pub use platform::{
     webhook_secret, webhook_signature, ConfirmationDef, EntityActionDef, LinkDef, LinkFilter,
     NotificationDef, PublicFormDef, WebhookDef,
@@ -156,8 +161,8 @@ pub mod prelude {
     pub use crate::{
         AppModule, AppModuleBuilder, AutomationDef, ChildTableDef, DocumentConfig, EntityActionDef,
         EntityDef, EntityRegistry, FieldDef, FieldType, LinkDef, NamingConfig, NotificationDef,
-        OnDelete, OpContext, PrintFormat, PublicFormDef, QefroError, QefroResult, RecordLifecycle,
-        RelationDef, RelationKind, ReportDef, RowPolicy, UiConfig, ValidationRule, ValidationRules,
-        WebhookDef,
+        OnDelete, OpContext, PageDef, PrintFormat, PublicFormDef, QefroError, QefroResult,
+        RecordLifecycle, RelationDef, RelationKind, ReportDef, RowPolicy, UiConfig, ValidationRule,
+        ValidationRules, WebhookDef,
     };
 }

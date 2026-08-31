@@ -17,6 +17,7 @@ const overview = {
   workflows: 8,
   reports: 19,
   dashboards: 7,
+  pages: 2,
   apps: [
     { name: "restaurant", label: "Restaurant", version: "1.2.0" },
     { name: "crm", label: "CRM", version: "1.1.0" },

@@ -39,6 +39,7 @@ Create user body: `{ name, email, password, roles }`. Same path as `POST /users`
 - `GET /meta/modules`
 - `GET /meta/dashboards`
 - `GET /dashboards/{name}`
+- `GET /meta/pages`, `GET /meta/pages/{name}` — composition metadata only; data still comes from entity REST, reports, and dashboards. See [Pages](pages.md).
 - `GET /meta/reports`
 
 ## Studio

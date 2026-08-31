@@ -1,6 +1,7 @@
 mod dashboard;
 mod entities;
 mod operations;
+mod pages;
 mod permissions;
 mod workflows;
 
@@ -16,6 +17,7 @@ pub fn module() -> AppModule {
         .version("1.0.0")
         .label("CRM")
         .description("Leads, contacts, opportunities, and activities")
+        .nav(NavItem::page_link("Sales Workspace", "sales-workspace"))
         .nav(NavItem::new("Customers", "CrmCustomer"))
         .nav(NavItem::new("Opportunities", "Opportunity"))
         .nav(NavItem::new("Leads", "Lead"))
@@ -26,6 +28,8 @@ pub fn module() -> AppModule {
         .entity(entities::opportunity_item())
         .entity(entities::activity())
         .dashboard(dashboard::ops())
+        .page(pages::sales_workspace())
+        .page(pages::customer_workspace())
         .report(
             ReportDef::new("pipeline-by-status", "Opportunity")
                 .label("Pipeline By Status")

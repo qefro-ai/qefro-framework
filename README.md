@@ -4,7 +4,7 @@ Rust-native, metadata-driven framework for building secure, multi-tenant busines
 
 Define entities, workflows, permissions, and **business operations**. The runtime generates PostgreSQL schema, REST APIs, validation, audit logs, a generic UI, agent tools, events, and a Postgres job queue. Authorization always runs on the server. Agents never get a database connection.
 
-**V1.3** adds search, reports, dashboards, saved views, declarative validation, computed strings, and `AutomationDef` on the same EntityService path. See [Getting started](docs/getting-started.md), [Business object runtime](docs/business-object-runtime.md), [Business rules](docs/business-rules.md), [Accounting](docs/accounting.md), [Commerce](docs/commerce.md), [Automation](docs/automation.md), [Validation](docs/validation.md), [Identity](docs/identity.md), and [V1 compatibility](docs/v1-compatibility.md).
+**V1.3** adds search, reports, dashboards, saved views, **composed pages**, declarative validation, computed strings, and `AutomationDef` on the same EntityService path. See [Getting started](docs/getting-started.md), [Pages](docs/pages.md), [Business object runtime](docs/business-object-runtime.md), [Business rules](docs/business-rules.md), [Accounting](docs/accounting.md), [Commerce](docs/commerce.md), [Automation](docs/automation.md), [Validation](docs/validation.md), [Identity](docs/identity.md), and [V1 compatibility](docs/v1-compatibility.md).
 
 ## Install
 
@@ -58,7 +58,7 @@ Open the generic UI:
 cd frontend && npm install && npm run dev
 ```
 
-The UI reads `/api/v1/meta/ui`. Branding, navigation, terminology, widgets, form layouts, filters, and dashboards come from the authenticated tenant. There is no per-entity React page and no per-tenant frontend build. Define the entity once; Qefro generates schema, REST, validation, and the business UI.
+The UI reads `/api/v1/meta/ui`. Branding, navigation, terminology, widgets, form layouts, filters, dashboards, and composed pages come from the authenticated tenant. There is no per-entity React page and no per-tenant frontend build. Define the entity once; Qefro generates schema, REST, validation, and the business UI. Compose operational workspaces from those screens with `PageDef` — see [Pages](docs/pages.md).
 
 Authorized developers open **Qefro Studio** (`/studio`) to inspect and publish metadata through the same registries. See [Qefro Studio](docs/studio.md).
 
@@ -245,6 +245,8 @@ Or `make check`. Integration tests require `DATABASE_URL` (they fail closed if i
 - [Forms](docs/forms.md)
 - [Layouts](docs/layouts.md)
 - [Dashboards](docs/dashboards.md)
+- [Pages](docs/pages.md)
+- [Workspaces](docs/workspaces.md)
 - [Child tables](docs/child-tables.md)
 - [Formulas](docs/formulas.md)
 - [Documents](docs/documents.md)

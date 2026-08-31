@@ -58,6 +58,7 @@ fn write_app_skeleton(root: &Path, name: &str) -> Result<()> {
         "permissions",
         "reports",
         "dashboards",
+        "pages",
         "print_formats",
         "seeds",
         "hooks",
@@ -257,6 +258,7 @@ pub async fn cmd_app_info(name: &str) -> Result<()> {
         println!("Workflows: {}", bundle.workflows.len());
         println!("Reports: {}", bundle.reports.len());
         println!("Dashboards: {}", bundle.dashboards.len());
+        println!("Pages: {}", bundle.pages.len());
         println!("Print formats: {}", bundle.print_formats.len());
         println!("Permissions: {}", bundle.permissions.len());
         let deps = if m.dependencies.is_empty() {

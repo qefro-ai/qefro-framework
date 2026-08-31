@@ -36,7 +36,7 @@ Staff and Customer have no Studio access.
 | YAML (`entities/*.yaml`) | Inspect, overlay, and write the changed entity file after validation. Comments in that file may be rewritten. Unrelated files are left alone. |
 | Rust (`examples/…`, catalog) | Inspect. Overlay safe presentation and additive fields at runtime. **Does not rewrite** `OperationHandler` or other Rust. |
 
-Live reload uses an overlay on the existing registries. `GET /api/v1/meta/ui` and `EntityService` both see the overlay. There is no second frontend renderer: form preview reuses `FormLayout` / the widget registry, and the Views tab reuses the production view registry (`ListView`, `KanbanView`, `CalendarView`).
+Live reload uses an overlay on the existing registries. `GET /api/v1/meta/ui` and `EntityService` both see the overlay. There is no second frontend renderer: form preview reuses `FormLayout` / the widget registry, and the Views tab reuses the production view registry (`ListView`, `KanbanView`, `CalendarView`). Page Studio composes those same components from existing entities, views, reports, and dashboard widgets — custom JavaScript, HTML, and SQL are rejected. See [Pages](pages.md).
 
 Studio inspects V0.9 primitives on the same entity page: singleton flag, field permission levels, allow-on-submit, actions, links, public forms, plus dedicated Notifications / Webhooks / Public Forms / Automations lists. Secrets are never shown. Field permission_level and allow_on_submit publish through the existing `entity.field.ui` change path.
 
@@ -55,7 +55,7 @@ All routes require a Bearer token and Studio capabilities. Prefix: `/api/v1/stud
 - `GET /overview`, `/apps`, `/apps/:app`, `/entities`, `/entities/:entity`
 - `GET /workflows/:entity`, `/permissions/:entity`, `/operations/:entity`
 - `GET /notifications`, `/webhooks`, `/public-forms`
-- `GET /reports`, `/dashboards`, `/print-formats`
+- `GET /reports`, `/dashboards`, `/pages`, `/print-formats`
 - `GET /search?q=`
 - `POST /drafts`, `/validate`, `/publish`
 - `GET /versions`, `POST /rollback`

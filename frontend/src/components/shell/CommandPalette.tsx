@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type UiEntity } from "../../api";
+import type { WorkspaceNavItem } from "../../metadata/types";
+import { workspaceItemHref } from "../../metadata/navigation";
 
 type Hit = { entity: string; slug: string; id: string; label: string; snippet: string };
 type SearchGroup = { entity: string; label: string; hits: Hit[] };
@@ -54,7 +56,7 @@ export default function CommandPalette({
   onOpenChange,
 }: {
   entities: UiEntity[];
-  workspaceNav?: Array<{ label: string; slug: string; query?: string | null; view?: string | null }>;
+  workspaceNav?: WorkspaceNavItem[];
   studio?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -137,8 +139,7 @@ export default function CommandPalette({
     if (studio) list.push({ id: "studio", group: "Go to", label: "Studio", run: go("/studio") });
     if (workspaceNav && workspaceNav.length > 0) {
       for (const item of workspaceNav) {
-        const search = [item.query, item.view ? `view=${item.view}` : ""].filter(Boolean).join("&");
-        const to = search ? `/${item.slug}?${search}` : `/${item.slug}`;
+        const to = workspaceItemHref(item);
         list.push({
           id: `go-${item.label}-${to}`,
           group: "Go to",

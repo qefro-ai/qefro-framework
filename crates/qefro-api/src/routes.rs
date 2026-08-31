@@ -36,6 +36,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/meta/workflows", get(meta_workflows))
         .route("/api/v1/meta/modules", get(meta_modules))
         .route("/api/v1/meta/dashboards", get(meta_dashboards))
+        .route("/api/v1/meta/pages", get(meta_pages))
+        .route("/api/v1/meta/pages/{name}", get(meta_page))
         .route("/api/v1/meta/reports", get(meta_reports))
         .route("/api/v1/meta/workspace", get(meta_workspace))
         .nest("/api/v1/studio", crate::studio::router())
@@ -544,6 +546,7 @@ fn reject_reserved(slug: &str) -> Result<(), ApiError> {
         "realtime",
         "public",
         "workspace",
+        "pages",
         "bulk",
         "export",
     ];
@@ -797,6 +800,158 @@ async fn meta_dashboards(State(state): State<AppState>, Auth(ctx): Auth) -> Json
     Json(json!({ "dashboards": dashboards }))
 }
 
+async fn meta_pages(State(state): State<AppState>, Auth(ctx): Auth) -> Json<Value> {
+    let pages: Vec<_> = state
+        .pages_live()
+        .into_iter()
+        .filter(|p| page_allowed(&state, &ctx, p))
+        .map(|p| visible_page(&state, &ctx, p))
+        .collect();
+    Json(json!({ "pages": pages }))
+}
+
+async fn meta_page(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let page = state
+        .pages_live()
+        .into_iter()
+        .find(|p| p.name == name || p.slug() == name)
+        .ok_or_else(|| QefroError::not_found(format!("page '{name}' not found")))?;
+    if !page_allowed(&state, &ctx, &page) {
+        return Err(QefroError::not_found(format!("page '{name}' not found")).into());
+    }
+    Ok(Json(visible_page(&state, &ctx, page)))
+}
+
+fn nav_item_visible(
+    state: &AppState,
+    ctx: &qefro_core::OpContext,
+    item: &qefro_core::WorkspaceNavItem,
+) -> bool {
+    if !ctx.allows_app(item.module.as_deref()) {
+        return false;
+    }
+    if let Some(page_slug) = &item.page {
+        return state
+            .pages_live()
+            .into_iter()
+            .find(|p| p.slug() == page_slug || p.name == *page_slug)
+            .is_some_and(|p| page_allowed(state, ctx, &p));
+    }
+    if item.entity.is_empty() {
+        return false;
+    }
+    state
+        .entities
+        .permissions()
+        .allows(&ctx.roles, &item.entity, Action::List)
+}
+
+fn page_allowed(state: &AppState, ctx: &qefro_core::OpContext, page: &qefro_core::PageDef) -> bool {
+    if !ctx.allows_app(page.module.as_deref()) {
+        return false;
+    }
+    if !page.roles.is_empty() && !ctx.is_admin() && !page.roles.iter().any(|r| ctx.has_role(r)) {
+        return false;
+    }
+    let _ = state;
+    true
+}
+
+fn section_allowed(
+    state: &AppState,
+    ctx: &qefro_core::OpContext,
+    section: &qefro_core::PageSection,
+) -> bool {
+    if !section.roles.is_empty()
+        && !ctx.is_admin()
+        && !section.roles.iter().any(|r| ctx.has_role(r))
+    {
+        return false;
+    }
+    let permissions = state.entities.permissions();
+    if let Some(entity) = section.entity_name() {
+        if !permissions.allows(&ctx.roles, entity, Action::List) {
+            return false;
+        }
+    }
+    if let Some(report_name) = &section.report {
+        if let Some(report) = state
+            .reports_live()
+            .into_iter()
+            .find(|r| r.name == *report_name)
+        {
+            if !ctx.allows_app(report.module.as_deref())
+                || !permissions.allows(&ctx.roles, &report.entity, Action::List)
+            {
+                return false;
+            }
+        }
+    }
+    if let Some(card) = &section.card {
+        if !card.entity.is_empty()
+            && !card.entity.starts_with('_')
+            && !permissions.allows(&ctx.roles, &card.entity, Action::List)
+        {
+            return false;
+        }
+        if !card.roles.is_empty() && !ctx.is_admin() && !card.roles.iter().any(|r| ctx.has_role(r))
+        {
+            return false;
+        }
+    } else if let Some(dash_name) = &section.dashboard {
+        let want = section
+            .widget
+            .as_deref()
+            .or(Some(section.title.as_str()))
+            .unwrap_or("");
+        if let Some(dashboard) = state
+            .dashboards_live()
+            .into_iter()
+            .find(|d| d.name == *dash_name)
+        {
+            if let Some(card) = dashboard
+                .cards
+                .iter()
+                .find(|c| c.title == want || c.title == section.title)
+            {
+                if !card.entity.is_empty()
+                    && !card.entity.starts_with('_')
+                    && !permissions.allows(&ctx.roles, &card.entity, Action::List)
+                {
+                    return false;
+                }
+                if !card.roles.is_empty()
+                    && !ctx.is_admin()
+                    && !card.roles.iter().any(|r| ctx.has_role(r))
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+fn visible_page(
+    state: &AppState,
+    ctx: &qefro_core::OpContext,
+    mut page: qefro_core::PageDef,
+) -> Value {
+    page.sections
+        .retain(|section| section_allowed(state, ctx, section));
+    page.actions.retain(|action| {
+        state
+            .entities
+            .permissions()
+            .allows(&ctx.roles, &action.entity, Action::List)
+    });
+    json!(page)
+}
+
 async fn meta_workspace(
     State(state): State<AppState>,
     Auth(ctx): Auth,
@@ -814,10 +969,7 @@ fn workspace_payload(
     let navigation: Vec<_> = state
         .default_nav_items
         .iter()
-        .filter(|item| {
-            ctx.allows_app(item.module.as_deref())
-                && permissions.allows(&ctx.roles, &item.entity, Action::List)
-        })
+        .filter(|item| nav_item_visible(state, ctx, item))
         .cloned()
         .collect();
     let dashboards: Vec<_> = state
@@ -834,6 +986,21 @@ fn workspace_payload(
             |r| json!({ "name": r.name, "label": r.label, "entity": r.entity, "module": r.module }),
         )
         .collect();
+    let pages: Vec<_> = state
+        .pages_live()
+        .into_iter()
+        .filter(|p| page_allowed(state, ctx, p))
+        .map(|p| {
+            json!({
+                "name": p.name,
+                "label": p.label,
+                "slug": p.slug(),
+                "module": p.module,
+                "layout": p.layout,
+                "route": p.route(),
+            })
+        })
+        .collect();
     let default_dashboard = if config
         .ui_config
         .default_dashboard
@@ -849,6 +1016,8 @@ fn workspace_payload(
     let mut seen_create = std::collections::HashSet::new();
     for item in &navigation {
         if seen_create.insert(item.entity.clone())
+            && !item.entity.is_empty()
+            && item.page.is_none()
             && permissions.allows(&ctx.roles, &item.entity, Action::Create)
         {
             let noun = item.label.trim_end_matches('s');
@@ -872,7 +1041,9 @@ fn workspace_payload(
                 search.push(format!("view={view}"));
             }
         }
-        let to = if search.is_empty() {
+        let to = if let Some(page) = &item.page {
+            format!("/pages/{page}")
+        } else if search.is_empty() {
             format!("/{}", item.slug)
         } else {
             format!("/{}?{}", item.slug, search.join("&"))
@@ -881,7 +1052,7 @@ fn workspace_payload(
             "label": item.label,
             "to": to,
             "entity": item.entity,
-            "kind": "list",
+            "kind": if item.page.is_some() { "page" } else { "list" },
         }));
     }
     if let Some(name) = &default_dashboard {
@@ -905,6 +1076,7 @@ fn workspace_payload(
         "shortcuts": shortcuts,
         "default_dashboard": default_dashboard,
         "dashboards": dashboards,
+        "pages": pages,
         "reports": reports,
     })
 }

@@ -2,7 +2,8 @@ use qefro_agent::ToolRegistry;
 use qefro_auth::AuthService;
 use qefro_core::{
     AppManifest, BlobStore, DashboardDef, Entitlements, MemoryRateLimiter, NotificationDef,
-    OpContext, PrintFormat, ReportDef, StudioCatalog, TenantBranding, TenantConfig, WebhookDef,
+    OpContext, PageDef, PrintFormat, ReportDef, StudioCatalog, TenantBranding, TenantConfig,
+    WebhookDef,
 };
 use qefro_db::{
     AttachmentStore, AutomationEngine, BlobMetaStore, EntityService, MetadataChangeService,
@@ -21,6 +22,7 @@ pub struct AppState {
     pub tools: Arc<ToolRegistry>,
     pub modules: Vec<AppManifest>,
     pub dashboards: Vec<DashboardDef>,
+    pub pages: Vec<PageDef>,
     pub reports: Vec<qefro_core::ReportDef>,
     pub print_formats: Vec<qefro_core::PrintFormat>,
     pub entitlements: Entitlements,
@@ -54,6 +56,10 @@ impl AppState {
 
     pub fn dashboards_live(&self) -> Vec<DashboardDef> {
         self.catalog.merge_dashboards(&self.dashboards)
+    }
+
+    pub fn pages_live(&self) -> Vec<PageDef> {
+        self.catalog.merge_pages(&self.pages)
     }
 
     /// Application dashboards win over platform ones (e.g. Task) when the tenant

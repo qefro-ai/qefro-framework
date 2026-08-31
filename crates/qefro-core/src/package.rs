@@ -26,6 +26,7 @@ const PACK_DIRS: &[&str] = &[
     "permissions",
     "reports",
     "dashboards",
+    "pages",
     "print_formats",
     "seeds",
     "hooks",

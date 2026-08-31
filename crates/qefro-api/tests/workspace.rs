@@ -2,7 +2,9 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use qefro_api::{Config, InstalledApp, QefroRuntime};
-use qefro_core::{DashboardCard, DashboardDef, EntityDef, FieldDef, ReportDef};
+use qefro_core::{
+    DashboardCard, DashboardDef, EntityDef, FieldDef, PageDef, PageSection, ReportDef,
+};
 use qefro_permissions::{Action, PermissionGrant, ROLE_MANAGER, ROLE_STAFF};
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -19,6 +21,10 @@ fn workspace_app() -> InstalledApp {
         qefro_core::AppModule::new("workspace_demo")
             .version("1.0.0")
             .label("Workspace Demo")
+            .nav(
+                qefro_core::NavItem::page_link("Deal Workspace", "deal-workspace")
+                    .section("Pipeline"),
+            )
             .nav(qefro_core::NavItem::new("Deals", "WsDeal").section("Pipeline"))
             .nav(qefro_core::NavItem::new("Secrets", "WsSecret").section("Admin"))
             .entity(
@@ -62,6 +68,13 @@ fn workspace_app() -> InstalledApp {
                     .group_by(&["status"])
                     .sum("amount")
                     .count("id"),
+            )
+            .page(
+                PageDef::new("deal-workspace", "Deal Workspace")
+                    .module("workspace_demo")
+                    .layout("split")
+                    .section(PageSection::entity_view("Deals", "WsDeal", "list").pane("master"))
+                    .section(PageSection::entity_view("Secrets", "WsSecret", "list")),
             )
             .build(),
     )
@@ -459,16 +472,26 @@ async fn workspace_navigation_and_shortcuts_respect_list_permission() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{admin_ws}");
-    let admin_nav = admin_ws["navigation"].as_array().cloned().unwrap_or_default();
+    let admin_nav = admin_ws["navigation"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(
-        admin_nav.iter().any(|i| i["label"] == "Deals" && i["section"] == "Pipeline"),
+        admin_nav
+            .iter()
+            .any(|i| i["label"] == "Deals" && i["section"] == "Pipeline"),
         "{admin_ws}"
     );
     assert!(
-        admin_nav.iter().any(|i| i["label"] == "Secrets" && i["section"] == "Admin"),
+        admin_nav
+            .iter()
+            .any(|i| i["label"] == "Secrets" && i["section"] == "Admin"),
         "{admin_ws}"
     );
-    let admin_shortcuts = admin_ws["shortcuts"].as_array().cloned().unwrap_or_default();
+    let admin_shortcuts = admin_ws["shortcuts"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(
         admin_shortcuts
             .iter()
@@ -488,13 +511,22 @@ async fn workspace_navigation_and_shortcuts_respect_list_permission() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{staff_ws}");
-    let staff_nav = staff_ws["navigation"].as_array().cloned().unwrap_or_default();
-    assert!(staff_nav.iter().any(|i| i["label"] == "Deals"), "{staff_ws}");
+    let staff_nav = staff_ws["navigation"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        staff_nav.iter().any(|i| i["label"] == "Deals"),
+        "{staff_ws}"
+    );
     assert!(
         !staff_nav.iter().any(|i| i["label"] == "Secrets"),
         "{staff_ws}"
     );
-    let staff_shortcuts = staff_ws["shortcuts"].as_array().cloned().unwrap_or_default();
+    let staff_shortcuts = staff_ws["shortcuts"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(
         staff_shortcuts
             .iter()
@@ -502,9 +534,7 @@ async fn workspace_navigation_and_shortcuts_respect_list_permission() {
         "{staff_ws}"
     );
     assert!(
-        !staff_shortcuts
-            .iter()
-            .any(|s| s["entity"] == "WsSecret"),
+        !staff_shortcuts.iter().any(|s| s["entity"] == "WsSecret"),
         "{staff_ws}"
     );
 
@@ -514,4 +544,133 @@ async fn workspace_navigation_and_shortcuts_respect_list_permission() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
+}
+
+#[tokio::test]
+async fn composed_pages_filter_sections_and_do_not_expose_records() {
+    let _ = db_url();
+    let router = runtime().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let admin = register(&router, suffix).await;
+    let staff = staff_token(&router, &admin, suffix, &format!("w-{suffix}")).await;
+
+    json(
+        clone_router(&router),
+        post(
+            "/api/v1/ws-deals",
+            Some(&admin),
+            json!({ "name": "Acme", "status": "Lead", "amount": 10 }),
+        ),
+    )
+    .await;
+
+    let (status, missing) = json(
+        clone_router(&router),
+        get("/api/v1/meta/pages/no-such-page", Some(&admin)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{missing}");
+
+    let (status, admin_page) = json(
+        clone_router(&router),
+        get("/api/v1/meta/pages/deal-workspace", Some(&admin)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{admin_page}");
+    assert_eq!(admin_page["name"], "deal-workspace");
+    assert_eq!(admin_page["layout"], "split");
+    let admin_sections = admin_page["sections"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        admin_sections.iter().any(|s| s["entity"] == "WsDeal"),
+        "{admin_page}"
+    );
+    assert!(
+        admin_sections.iter().any(|s| s["entity"] == "WsSecret"),
+        "{admin_page}"
+    );
+    let blob = admin_page.to_string();
+    assert!(!blob.contains("Acme"), "{admin_page}");
+    assert!(!blob.contains("\"items\""), "{admin_page}");
+
+    let (status, staff_page) = json(
+        clone_router(&router),
+        get("/api/v1/meta/pages/deal-workspace", Some(&staff)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{staff_page}");
+    let staff_sections = staff_page["sections"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        staff_sections.iter().any(|s| s["entity"] == "WsDeal"),
+        "{staff_page}"
+    );
+    assert!(
+        !staff_sections.iter().any(|s| s["entity"] == "WsSecret"),
+        "{staff_page}"
+    );
+
+    let (status, workspace) = json(
+        clone_router(&router),
+        get("/api/v1/meta/workspace", Some(&admin)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{workspace}");
+    assert!(
+        workspace["pages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "deal-workspace"),
+        "{workspace}"
+    );
+    assert!(
+        workspace["navigation"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["page"] == "deal-workspace" && i["label"] == "Deal Workspace"),
+        "{workspace}"
+    );
+
+    let (status, rejected) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/studio/validate",
+            Some(&admin),
+            json!({
+                "kind": "page",
+                "target": "deal-workspace",
+                "payload": {
+                    "name": "deal-workspace",
+                    "label": "Hack",
+                    "layout": "stack",
+                    "sections": [{
+                        "title": "XSS",
+                        "kind": "entity_view",
+                        "entity": "WsDeal",
+                        "view": "list",
+                        "query": "<script>alert(1)</script>"
+                    }]
+                }
+            }),
+        ),
+    )
+    .await;
+    assert!(
+        status.is_client_error() || rejected["ok"] == false,
+        "{status} {rejected}"
+    );
+    let msg = rejected.to_string().to_lowercase();
+    assert!(
+        msg.contains("javascript")
+            || msg.contains("html")
+            || msg.contains("reject")
+            || status == StatusCode::BAD_REQUEST,
+        "{rejected}"
+    );
 }

@@ -74,7 +74,7 @@ Generic UI
 
 Agents continue `EntityOps → EntityService`. There is no second query engine.
 
-See [Search](search.md), [Saved views](views.md), [Reports](reports.md), [Dashboards](dashboards.md), [Workspaces](workspaces.md).
+See [Search](search.md), [Saved views](views.md), [Reports](reports.md), [Dashboards](dashboards.md), [Pages](pages.md), [Workspaces](workspaces.md).
 
 Capabilities are discovered from metadata (`EntityDef` → `capabilities` on `GET /meta/ui`) and record payloads (`_workflow`, `_actions`, `_related`). The generic UI never branches on `if entity === "Customer"`.
 
