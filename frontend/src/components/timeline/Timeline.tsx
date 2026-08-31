@@ -11,6 +11,7 @@ export type TimelineItem = {
   created_at?: unknown;
   summary?: string;
   message?: string;
+  filename?: string;
 };
 
 function kind(item: TimelineItem): string {
@@ -78,6 +79,7 @@ export function Timeline({
                   </div>
                   <div>
                     <div className="timeline-title">{label}</div>
+                    {item.filename ? <div className="muted">📎 {item.filename}</div> : null}
                     {actor ? <div className="muted">{actor}</div> : null}
                     {time ? <div className="muted">{relativeTime(when, locale)}</div> : null}
                   </div>

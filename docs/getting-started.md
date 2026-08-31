@@ -62,6 +62,7 @@ cd frontend && npm install && npm run dev
 | Permissions | [permissions.md](permissions.md) |
 | Identity | [identity.md](identity.md) |
 | Tasks | [tasks.md](tasks.md) |
+| Files | [files.md](files.md) |
 | Business object runtime | [business-object-runtime.md](business-object-runtime.md) |
 | UI | [ui.md](ui.md), [ui-2.md](ui-2.md), [views.md](views.md) |
 | Studio | [studio.md](studio.md) |

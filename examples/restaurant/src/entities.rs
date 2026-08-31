@@ -123,6 +123,7 @@ pub fn customer() -> EntityDef {
         )
         .with_tasks()
         .with_archive()
+        .attachments()
         .build()
 }
 

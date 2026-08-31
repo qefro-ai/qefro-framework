@@ -12,7 +12,7 @@ use qefro_core::{
     apply_entity_rules, canonicalize_datetime, existence_rules, is_person_link_field,
     person_backref_field, sanitize_html, strip_secrets, validate_party, validate_record,
     EntityRegistry, FieldError, FieldType, HookRegistry, OpContext, OperationDef, QefroError,
-    QefroResult, RELATED_ID_FIELD, RELATED_TYPE_FIELD, PERSON_ENTITY, PERSON_LINK_FIELD,
+    QefroResult, PERSON_ENTITY, PERSON_LINK_FIELD, RELATED_ID_FIELD, RELATED_TYPE_FIELD,
     STATUS_CANCELLED, STATUS_COMPLETED, USER_ENTITY,
 };
 use qefro_events::{DomainEvent, InProcessEventBus};
@@ -234,6 +234,8 @@ impl EntityService {
         }
         self.expand_many_to_one_batch(ctx, &entity, &mut page.items)
             .await?;
+        self.attach_attachment_counts(ctx, &entity, &mut page.items)
+            .await;
         for item in &mut page.items {
             self.attach_workflow(ctx, &entity, item);
         }
@@ -1981,8 +1983,9 @@ impl EntityService {
             .map(|f| {
                 let value = match f.value.as_str() {
                     "today" => chrono::Utc::now().date_naive().to_string(),
-                    "tomorrow" => (chrono::Utc::now().date_naive() + chrono::Days::new(1))
-                        .to_string(),
+                    "tomorrow" => {
+                        (chrono::Utc::now().date_naive() + chrono::Days::new(1)).to_string()
+                    }
                     "now" => chrono::Utc::now().to_rfc3339(),
                     "current_user" | "me" => ctx.user_id.to_string(),
                     _ => f.value.clone(),
@@ -2467,9 +2470,7 @@ impl EntityService {
             .and_then(|v| v.as_bool())
             .is_some_and(|enabled| !enabled)
         {
-            return Err(QefroError::bad_request(
-                "cannot assign to a disabled user",
-            ));
+            return Err(QefroError::bad_request("cannot assign to a disabled user"));
         }
         Ok(())
     }
@@ -2490,7 +2491,10 @@ impl EntityService {
         {
             return Ok(());
         }
-        let Some(due) = record.get("due_at").and_then(|v| v.as_str()).filter(|s| !s.is_empty())
+        let Some(due) = record
+            .get("due_at")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
         else {
             return Ok(());
         };

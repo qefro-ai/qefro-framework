@@ -106,6 +106,44 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+function xhrUpload(
+  url: string,
+  file: File,
+  onProgress?: (n: number) => void,
+  signal?: AbortSignal,
+) {
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    const headers = tokenHeader();
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText || "{}");
+        if (xhr.status >= 400) reject(new ApiError(data.message || xhr.statusText, xhr.status));
+        else resolve(data);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    xhr.onerror = () => reject(new ApiError("Upload failed", 0));
+    xhr.onabort = () => reject(new ApiError("Upload cancelled", 0));
+    if (signal) {
+      if (signal.aborted) {
+        xhr.abort();
+        return;
+      }
+      signal.addEventListener("abort", () => xhr.abort(), { once: true });
+    }
+    const body = new FormData();
+    body.append("file", file);
+    xhr.send(body);
+  });
+}
+
 export class QefroClient {
   login = (email: string, password: string) =>
     request<{ access_token: string; roles: string[] }>("/api/v1/auth/login", {
@@ -272,10 +310,10 @@ export class QefroClient {
   activity = (slug: string, id: string) =>
     request<{ items: Array<Record<string, unknown>> }>(`/api/v1/${slug}/${id}/activity`);
   getActivity = (slug: string, id: string) => this.activity(slug, id);
-  addComment = (slug: string, id: string, message: string) =>
+  addComment = (slug: string, id: string, message: string, attachmentId?: string) =>
     request<Record<string, unknown>>(`/api/v1/${slug}/${id}/comments`, {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, attachment_id: attachmentId }),
     });
   upload = (file: File, kind: "file" | "image" = "file", onProgress?: (n: number) => void) =>
     new Promise<{ key: string; url: string; filename: string; content_type: string; size: number }>(
@@ -431,10 +469,56 @@ export class QefroClient {
   getNotifications = () => this.notifications();
   readNotification = (id: string) =>
     request<void>(`/api/v1/notifications/${id}/read`, { method: "POST" });
-  attachments = (slug: string, id: string) =>
-    request<{ items: Array<Record<string, unknown>> }>(`/api/v1/${slug}/${id}/attachments`);
+  attachments = (slug: string, id: string, page = 1, pageSize = 50) =>
+    request<{ items: Array<Record<string, unknown>>; total?: number; page?: number; page_size?: number }>(
+      `/api/v1/${slug}/${id}/attachments?page=${page}&page_size=${pageSize}`,
+    );
   getAttachments = (slug: string, id: string) => this.attachments(slug, id);
   deleteAttachment = (id: string) => request<void>(`/api/v1/attachments/${id}`, { method: "DELETE" });
+  updateAttachment = (id: string, body: { filename?: string; description?: string }) =>
+    request<Record<string, unknown>>(`/api/v1/attachments/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  downloadAttachment = (id: string, inline = false) =>
+    fetch(`/api/v1/attachments/${id}${inline ? "?disposition=inline" : ""}`, { headers: tokenHeader() }).then(
+      async (res) => {
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new ApiError((data as { message?: string }).message || res.statusText, res.status);
+        }
+        return res.blob();
+      },
+    );
+  replaceAttachment = (
+    id: string,
+    file: File,
+    onProgress?: (n: number) => void,
+    signal?: AbortSignal,
+  ) =>
+    xhrUpload(`/api/v1/attachments/${id}/replace`, file, onProgress, signal);
+  uploadAttachment = (
+    slug: string,
+    id: string,
+    file: File,
+    onProgress?: (n: number) => void,
+    signal?: AbortSignal,
+  ) => xhrUpload(`/api/v1/${slug}/${id}/attachments`, file, onProgress, signal);
+  files = {
+    list: (slug: string, id: string, page?: number, pageSize?: number) => this.attachments(slug, id, page, pageSize),
+    upload: (
+      slug: string,
+      id: string,
+      file: File,
+      onProgress?: (n: number) => void,
+      signal?: AbortSignal,
+    ) => this.uploadAttachment(slug, id, file, onProgress, signal),
+    download: (id: string, inline?: boolean) => this.downloadAttachment(id, inline),
+    delete: (id: string) => this.deleteAttachment(id),
+    update: (id: string, body: { filename?: string; description?: string }) => this.updateAttachment(id, body),
+    replace: (id: string, file: File, onProgress?: (n: number) => void, signal?: AbortSignal) =>
+      this.replaceAttachment(id, file, onProgress, signal),
+  };
   publicForm = (tenant: string, slug: string) =>
     request<{
       title: string;
@@ -471,29 +555,6 @@ export class QefroClient {
     request<Record<string, unknown>>(`/api/v1/${slug}/import`, {
       method: "POST",
       body: JSON.stringify({ csv, mapping: mapping ?? [], batch_size: 100 }),
-    });
-  uploadAttachment = (slug: string, id: string, file: File, onProgress?: (n: number) => void) =>
-    new Promise<Record<string, unknown>>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", `/api/v1/${slug}/${id}/attachments`);
-      const headers = tokenHeader();
-      for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
-      };
-      xhr.onload = () => {
-        try {
-          const data = JSON.parse(xhr.responseText || "{}");
-          if (xhr.status >= 400) reject(new ApiError(data.message || xhr.statusText, xhr.status));
-          else resolve(data);
-        } catch (err) {
-          reject(err);
-        }
-      };
-      xhr.onerror = () => reject(new ApiError("upload failed", 0));
-      const body = new FormData();
-      body.append("file", file);
-      xhr.send(body);
     });
   webhookDeliveries = (name: string) =>
     request<{ deliveries: Array<Record<string, unknown>> }>(`/api/v1/webhooks/${name}/deliveries`);

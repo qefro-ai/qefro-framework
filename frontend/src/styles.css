@@ -1067,13 +1067,24 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 .audit-table { font-size: var(--text-xs); }
 .audit-table th, .audit-table td { height: 32px; padding: 0 var(--space-3); }
 .audit-table .mono { font-family: var(--font-mono); font-size: 11px; }
-.dropzone { border: 1px dashed var(--line); border-radius: var(--radius); padding: var(--space-4); text-align: center; margin: var(--space-2) 0; }
+.dropzone { border: 1px dashed var(--line); border-radius: var(--md-shape-md); padding: var(--space-4); text-align: center; margin: var(--space-2) 0; background: var(--md-surface-container-low, var(--panel)); }
 .dropzone.is-drag { border-color: var(--accent); background: var(--accent-soft); }
 .attachment-list { list-style: none; margin: 0; padding: 0; }
 .attachment-list li { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--line); min-height: 44px; }
-.thumb { width: 32px; height: 32px; object-fit: cover; border-radius: var(--radius-sm); }
-.file-glyph { font-size: var(--icon-md); width: 32px; text-align: center; }
-
+.thumb { width: 32px; height: 32px; object-fit: cover; border-radius: var(--radius-sm); flex: none; }
+.file-glyph { font-size: var(--icon-md); width: 32px; text-align: center; flex: none; }
+.attachment-actions { display: flex; align-items: center; gap: var(--space-1); margin-left: auto; }
+.attachment-upload { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; border-bottom: 1px solid var(--line); }
+.attachment-upload progress { width: 100%; height: 6px; }
+.file-preview { max-width: min(720px, calc(100vw - 2rem)); }
+.preview-image { max-width: 100%; max-height: 60vh; object-fit: contain; }
+.preview-frame { width: 100%; min-height: 60vh; border: 0; background: var(--panel); }
+.preview-text { max-height: 50vh; overflow: auto; white-space: pre-wrap; font-family: var(--font-mono); font-size: var(--text-sm); }
+.file-count { margin-left: var(--space-2); font-size: var(--text-xs); white-space: nowrap; }
+.comment-attach { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); }
+.comment-attach input[type="file"] { width: auto; }
+.capability-list { display: flex; flex-wrap: wrap; gap: var(--space-3); list-style: none; margin: 0 0 var(--space-3); padding: 0; }
+.capability-list label { display: flex; gap: var(--space-2); align-items: center; }
 .quick-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-3) 0 var(--space-2); }
 .quick-filters, .chip-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .quick-filters button,

@@ -9,10 +9,11 @@ use qefro_core::{
     AppModule, EntityRegistry, HookRegistry, LocalBlobStore, OperationDef, StudioCatalog,
 };
 use qefro_db::{
-    apply_schema, connect, AttachmentStore, AutomationEngine, BlobMetaStore, DueReminderJob,
-    EmailNotifyJob, EntityService, JobHandler, JobQueue, JobRegistry, LogNotificationJob,
-    MetadataChangeService, NotificationStore, OperationHandler, OperationRegistry,
-    PlatformDispatcher, SavedFilterStore, WebhookLog, DUE_REMINDER_JOB,
+    apply_schema, connect, AttachmentPurgeJob, AttachmentStore, AutomationEngine, BlobMetaStore,
+    DueReminderJob, EmailNotifyJob, EntityService, JobHandler, JobQueue, JobRegistry,
+    LogNotificationJob, MetadataChangeService, NotificationStore, OperationHandler,
+    OperationRegistry, PlatformDispatcher, SavedFilterStore, WebhookLog, ATTACHMENT_PURGE_JOB,
+    DUE_REMINDER_JOB,
 };
 use qefro_events::InProcessEventBus;
 use qefro_permissions::{PermissionGrant, PermissionRegistry};
@@ -202,11 +203,7 @@ impl QefroRuntime {
 
     pub fn automations(&self) -> Vec<qefro_core::AutomationDef> {
         let mut autos = qefro_core::task_automations();
-        autos.extend(
-            self.apps
-                .iter()
-                .flat_map(|a| a.module.automations.clone()),
-        );
+        autos.extend(self.apps.iter().flat_map(|a| a.module.automations.clone()));
         autos
     }
 
@@ -456,6 +453,8 @@ impl QefroRuntime {
         job_handlers.register("notify.email", Arc::new(EmailNotifyJob));
         let due_reminder = DueReminderJob::new();
         job_handlers.register(DUE_REMINDER_JOB, due_reminder.clone());
+        let attachment_purge = AttachmentPurgeJob::new();
+        job_handlers.register(ATTACHMENT_PURGE_JOB, attachment_purge.clone());
         job_handlers.register(
             "webhook.deliver",
             Arc::new(WebhookDeliverJob {
@@ -575,17 +574,15 @@ impl QefroRuntime {
                 })
             })
             .collect();
-        default_nav_items.push(
-            qefro_core::WorkspaceNavItem {
-                label: "Tasks".into(),
-                entity: qefro_core::TASK_ENTITY.into(),
-                slug: qefro_core::TASK_SLUG.into(),
-                query: None,
-                view: None,
-                module: None,
-                section: Some("Work".into()),
-            },
-        );
+        default_nav_items.push(qefro_core::WorkspaceNavItem {
+            label: "Tasks".into(),
+            entity: qefro_core::TASK_ENTITY.into(),
+            slug: qefro_core::TASK_SLUG.into(),
+            query: None,
+            view: None,
+            module: None,
+            section: Some("Work".into()),
+        });
         let mut default_hidden_entities: Vec<String> = vec![
             qefro_core::PERSON_SLUG.into(),
             qefro_core::ORGANIZATION_SLUG.into(),
@@ -598,6 +595,7 @@ impl QefroRuntime {
         );
         let blob_store: Arc<dyn qefro_core::BlobStore> =
             Arc::new(LocalBlobStore::new(&self.config.storage_path));
+        attachment_purge.bind(blob_store.clone());
         let blobs = Arc::new(BlobMetaStore::new(pool.clone()));
         let saved_filters = Arc::new(SavedFilterStore::new(pool.clone()));
         let notifications = Arc::new(NotificationStore::new(pool.clone()));

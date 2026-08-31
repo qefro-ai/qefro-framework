@@ -269,6 +269,7 @@ Or `make check`. Integration tests require `DATABASE_URL` (they fail closed if i
 - [Allow on submit](docs/allow-on-submit.md)
 - [Actions and links](docs/actions-links.md)
 - [Attachments](docs/attachments.md)
+- [Files](docs/files.md)
 - [Notifications](docs/notifications.md)
 - [Webhooks](docs/webhooks.md)
 - [CSV import](docs/imports.md)

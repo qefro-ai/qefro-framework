@@ -225,7 +225,8 @@ CREATE TABLE IF NOT EXISTS qefro_attachments (
     size BIGINT NOT NULL,
     storage_key TEXT NOT NULL,
     uploaded_by UUID,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    description TEXT
 );
 CREATE INDEX IF NOT EXISTS qefro_attachments_record_idx
     ON qefro_attachments (tenant_id, entity, record_id);
@@ -233,6 +234,9 @@ CREATE INDEX IF NOT EXISTS qefro_attachments_created_idx
     ON qefro_attachments (tenant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS qefro_attachments_uploader_idx
     ON qefro_attachments (tenant_id, uploaded_by);
+ALTER TABLE qefro_attachments ADD COLUMN IF NOT EXISTS description TEXT;
+CREATE INDEX IF NOT EXISTS qefro_attachments_filename_idx
+    ON qefro_attachments (tenant_id, filename);
 
 CREATE TABLE IF NOT EXISTS qefro_notifications (
     id UUID PRIMARY KEY,

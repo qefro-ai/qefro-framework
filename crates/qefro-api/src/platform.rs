@@ -17,6 +17,7 @@ use qefro_db::{signed_headers, ImportMapping};
 use qefro_permissions::Action;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::time::Duration;
 use tokio_stream::wrappers::BroadcastStream;
@@ -36,8 +37,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/webhooks/{name}/test", post(test_webhook))
         .route(
             "/api/v1/attachments/{id}",
-            get(get_attachment).delete(delete_attachment),
+            get(get_attachment)
+                .patch(patch_attachment)
+                .delete(delete_attachment),
         )
+        .route("/api/v1/attachments/{id}/replace", post(replace_attachment))
         .route("/api/v1/realtime", get(realtime))
         .route(
             "/api/v1/{slug}/{id}/attachments",
@@ -202,26 +206,24 @@ async fn list_attachments(
     State(state): State<AppState>,
     Auth(ctx): Auth,
     Path((slug, id)): Path<(String, Uuid)>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>, ApiError> {
     let entity = state.entities.entity_by_slug(&slug)?;
-    let items = state
+    let page = params.get("page").and_then(|s| s.parse().ok()).unwrap_or(1);
+    let page_size = params
+        .get("page_size")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+    let listed = state
         .entities
-        .list_attachments(&ctx, &entity.name, id, &state.attachments)
+        .list_attachments_page(&ctx, &entity.name, id, &state.attachments, page, page_size)
         .await?;
-    Ok(Json(json!({ "items": items })))
+    Ok(Json(listed.to_client_json()))
 }
 
-async fn upload_attachment(
-    State(state): State<AppState>,
-    Auth(ctx): Auth,
-    Path((slug, id)): Path<(String, Uuid)>,
-    mut multipart: Multipart,
-) -> Result<Json<Value>, ApiError> {
-    let key = format!("upload:{}:{}", ctx.tenant_id, ctx.user_id);
-    if !state.rate_limiter.allow(&key) {
-        return Err(QefroError::rate_limited("upload rate limit exceeded").into());
-    }
-    let entity = state.entities.entity_by_slug(&slug)?;
+async fn read_multipart_file(
+    multipart: &mut Multipart,
+) -> Result<(String, String, Vec<u8>), ApiError> {
     let mut filename = String::from("file");
     let mut mime = String::from("application/octet-stream");
     let mut bytes = Vec::new();
@@ -241,6 +243,21 @@ async fn upload_attachment(
             .map_err(|e| QefroError::bad_request(e.to_string()))?
             .to_vec();
     }
+    Ok((filename, mime, bytes))
+}
+
+async fn upload_attachment(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path((slug, id)): Path<(String, Uuid)>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, ApiError> {
+    let key = format!("upload:{}:{}", ctx.tenant_id, ctx.user_id);
+    if !state.rate_limiter.allow(&key) {
+        return Err(QefroError::rate_limited("upload rate limit exceeded").into());
+    }
+    let entity = state.entities.entity_by_slug(&slug)?;
+    let (filename, mime, bytes) = read_multipart_file(&mut multipart).await?;
     let row = state
         .entities
         .create_attachment(
@@ -254,28 +271,98 @@ async fn upload_attachment(
             &state.attachments,
         )
         .await?;
-    Ok(Json(serde_json::to_value(row).unwrap_or(json!({}))))
+    Ok(Json(row.to_client_json()))
+}
+
+#[derive(Deserialize)]
+struct AttachmentQuery {
+    #[serde(default)]
+    disposition: Option<String>,
+    #[serde(default)]
+    inline: Option<bool>,
 }
 
 async fn get_attachment(
     State(state): State<AppState>,
     Auth(ctx): Auth,
     Path(id): Path<Uuid>,
+    Query(query): Query<AttachmentQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let (meta, bytes) = state
         .entities
         .get_attachment(&ctx, id, &state.attachments, state.blob_store.as_ref())
         .await?;
+    let inline = query.inline.unwrap_or(false)
+        || query
+            .disposition
+            .as_deref()
+            .is_some_and(|d| d.eq_ignore_ascii_case("inline"));
+    let filename = meta.filename.replace(['"', '\\', '\r', '\n'], "");
+    let disposition = if inline {
+        format!("inline; filename=\"{filename}\"")
+    } else {
+        format!("attachment; filename=\"{filename}\"")
+    };
     Ok((
         [
             (header::CONTENT_TYPE, meta.mime_type),
-            (
-                header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{}\"", meta.filename),
-            ),
+            (header::CONTENT_DISPOSITION, disposition),
         ],
         bytes,
     ))
+}
+
+#[derive(Deserialize)]
+struct PatchAttachmentBody {
+    #[serde(default)]
+    filename: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+async fn patch_attachment(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PatchAttachmentBody>,
+) -> Result<Json<Value>, ApiError> {
+    let row = state
+        .entities
+        .update_attachment_meta(
+            &ctx,
+            id,
+            body.filename.as_deref(),
+            body.description.as_deref(),
+            &state.attachments,
+        )
+        .await?;
+    Ok(Json(row.to_client_json()))
+}
+
+async fn replace_attachment(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(id): Path<Uuid>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, ApiError> {
+    let key = format!("upload:{}:{}", ctx.tenant_id, ctx.user_id);
+    if !state.rate_limiter.allow(&key) {
+        return Err(QefroError::rate_limited("upload rate limit exceeded").into());
+    }
+    let (filename, mime, bytes) = read_multipart_file(&mut multipart).await?;
+    let row = state
+        .entities
+        .replace_attachment(
+            &ctx,
+            id,
+            &filename,
+            &mime,
+            &bytes,
+            &state.attachments,
+            state.blob_store.as_ref(),
+        )
+        .await?;
+    Ok(Json(row.to_client_json()))
 }
 
 async fn delete_attachment(

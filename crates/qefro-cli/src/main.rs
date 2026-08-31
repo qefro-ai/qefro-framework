@@ -544,6 +544,14 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
     println!("display_field:  {}", entity.display_field);
     println!("lifecycle:      archive={}", entity.archives());
     println!(
+        "capabilities:   attachments={} activity={} comments={} audit={} workflow={}",
+        entity.attachments,
+        entity.activity,
+        entity.comments,
+        entity.audit,
+        entity.workflow.is_some()
+    );
+    println!(
         "row_policy:     {}",
         entity
             .row_policy

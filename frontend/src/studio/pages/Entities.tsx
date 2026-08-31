@@ -89,6 +89,14 @@ export default function Entities({ caps }: { caps: string[] }) {
         {def?.singleton ? <span className="badge">Singleton</span> : null}
         {def?.attachments ? <span className="badge">Attachments</span> : null}
       </h2>
+      {def ? (
+        <ul className="capability-list" aria-label="Capabilities">
+          <li><label><input type="checkbox" checked={Boolean(def.attachments)} readOnly /> Attachments</label></li>
+          <li><label><input type="checkbox" checked={Boolean(def.activity)} readOnly /> Activity</label></li>
+          <li><label><input type="checkbox" checked={Boolean(def.audit)} readOnly /> Audit</label></li>
+          <li><label><input type="checkbox" checked={Boolean(def.workflow)} readOnly /> Workflow</label></li>
+        </ul>
+      ) : null}
       {detail?.source_managed ? <p className="muted">Custom Rust operations remain source-managed.</p> : null}
       {detail?.referrers && detail.referrers.length > 0 ? (
         <p className="error">

@@ -22,7 +22,7 @@ Mutation → transaction → COMMIT → Event → Notification dispatcher → ch
 
 Nothing is sent before COMMIT. Channel failures are logged; they do not roll back the business transaction.
 
-Framework events include `entity.created`, `entity.updated`, `entity.deleted`, `workflow.transitioned`, `comment.created`, `attachment.created`, and `user.disabled`, plus app-specific names. Events do not bypass `EntityService` authorization.
+Framework events include `entity.created`, `entity.updated`, `entity.deleted`, `workflow.transitioned`, `comment.created`, `file.uploaded`, `attachment.created`, and `user.disabled`, plus app-specific names. Events do not bypass `EntityService` authorization.
 
 ## Channels
 

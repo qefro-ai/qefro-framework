@@ -172,7 +172,7 @@ describe("business object runtime UI", () => {
     expect(screen.getByText("Ahmed Khan")).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/Write a comment/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("tab", { name: "Attachments" }));
-    expect(screen.getByText("No files attached.")).toBeInTheDocument();
+    expect(screen.getByText("No files attached yet.")).toBeInTheDocument();
   });
 
   it("hides workflow chrome when the entity has no workflow capability", async () => {
