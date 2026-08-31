@@ -278,6 +278,30 @@ CREATE TABLE IF NOT EXISTS qefro_notifications (
 CREATE INDEX IF NOT EXISTS qefro_notifications_user_idx
     ON qefro_notifications (tenant_id, user_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS qefro_communications (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    entity TEXT NOT NULL,
+    entity_id UUID NOT NULL,
+    template TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    purpose TEXT NOT NULL DEFAULT 'transactional',
+    status TEXT NOT NULL DEFAULT 'queued',
+    recipient TEXT,
+    recipient_user_id UUID,
+    event_id UUID,
+    attempts INT NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    sent_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS qefro_communications_idemp
+    ON qefro_communications (tenant_id, template, entity_id, event_id, channel);
+CREATE INDEX IF NOT EXISTS qefro_communications_record_idx
+    ON qefro_communications (tenant_id, entity, entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS qefro_communications_status_idx
+    ON qefro_communications (tenant_id, status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS qefro_webhook_deliveries (
     id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,

@@ -42,6 +42,9 @@ pub fn router() -> Router<AppState> {
         .route("/print-formats", get(list_print_formats))
         .route("/print-formats/{format}", get(get_print_format))
         .route("/print-formats/{format}/preview", get(preview_print_format))
+        .route("/communications", get(list_communications_studio))
+        .route("/communications/{name}", get(get_communication))
+        .route("/communications/{name}/preview", get(preview_communication))
         .route("/tenant", get(tenant_studio))
         .route("/notifications", get(list_notifications))
         .route("/webhooks", get(list_webhooks))
@@ -119,6 +122,7 @@ async fn overview(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json
         "dashboards": state.dashboards_live().len(),
         "pages": state.pages_live().len(),
         "print_formats": state.print_formats_live().len(),
+        "communications": state.communications_live().len(),
         "automations": state.automation.defs().len(),
         "apps": apps,
         "warnings": warnings,
@@ -211,6 +215,12 @@ async fn get_app(
         .into_iter()
         .filter(|p| p.module.as_deref() == Some(app.as_str()))
         .map(|p| p.name)
+        .collect::<Vec<_>>());
+    body["communications"] = json!(state
+        .communications_live()
+        .into_iter()
+        .filter(|c| c.module.as_deref() == Some(app.as_str()))
+        .map(|c| c.name)
         .collect::<Vec<_>>());
     body["navigation"] = json!(module.navigation);
     body["reverse_dependencies"] = json!(reverse);
@@ -593,6 +603,80 @@ async fn preview_print_format(
     ))
 }
 
+async fn list_communications_studio(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    Ok(Json(
+        json!({ "communications": state.communications_live() }),
+    ))
+}
+
+async fn get_communication(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let def = state
+        .communications_live()
+        .into_iter()
+        .find(|c| c.name == name)
+        .ok_or_else(|| QefroError::not_found(format!("communication '{name}' not found")))?;
+    Ok(Json(json!({
+        "communication": def,
+        "json": serde_json::to_string_pretty(&def).unwrap_or_default(),
+        "yaml": to_yaml(&def)?,
+    })))
+}
+
+async fn preview_communication(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path(name): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    require(&ctx, &state.env, CAP_VIEW)?;
+    let def = state
+        .communications_live()
+        .into_iter()
+        .find(|c| c.name == name)
+        .ok_or_else(|| QefroError::not_found(format!("communication '{name}' not found")))?;
+    let entity = state.entities.registry().get(&def.entity)?;
+    let sample = sample_record(&entity);
+    let mut extras = std::collections::HashMap::new();
+    if let Some(path) = &def.recipient_path {
+        extras.insert(
+            path.clone(),
+            json!({
+                "name": "Ahmed",
+                "email": "ahmed@example.com",
+                "phone": "+10000000000"
+            }),
+        );
+    }
+    let ctx_value = qefro_core::wrap_record(&def.entity, sample.clone(), extras);
+    let opts = qefro_core::FormatOpts {
+        currency: ctx.currency.clone(),
+        locale: ctx.locale.clone(),
+        date_format: "YYYY-MM-DD".into(),
+    };
+    let subject = if let Some(s) = &def.subject {
+        qefro_core::render_template(s, &ctx_value, &opts).unwrap_or_default()
+    } else {
+        def.name.replace('_', " ")
+    };
+    let body = qefro_core::render_template(&def.body, &ctx_value, &opts).unwrap_or_default();
+    Ok(Json(json!({
+        "preview": true,
+        "sent": false,
+        "subject": subject,
+        "body": body,
+        "channel": def.channels.first().cloned().unwrap_or_else(|| "in_app".into()),
+        "sample": sample,
+    })))
+}
+
 fn sample_record(entity: &qefro_core::EntityDef) -> Value {
     let mut map = serde_json::Map::new();
     map.insert("doc_no".into(), json!("INV-2026-00001"));
@@ -792,6 +876,19 @@ async fn search(
     for pf in state.print_formats_live() {
         if pf.name.to_lowercase().contains(&q) {
             results.push(json!({ "kind": "print_format", "name": pf.name, "entity": pf.entity }));
+        }
+    }
+    for def in state.communications_live() {
+        if def.name.to_lowercase().contains(&q)
+            || def.entity.to_lowercase().contains(&q)
+            || def.event.to_lowercase().contains(&q)
+        {
+            results.push(json!({
+                "kind": "communication",
+                "name": def.name,
+                "entity": def.entity,
+                "label": def.event,
+            }));
         }
     }
     for def in state.automation.defs() {

@@ -10,10 +10,11 @@ use qefro_core::{
 };
 use qefro_db::{
     apply_schema, connect, AttachmentPurgeJob, AttachmentStore, AutomationEngine, BlobMetaStore,
+    CommunicationDeliverJob, CommunicationDispatcher, CommunicationHub, CommunicationStore,
     DueReminderJob, EmailNotifyJob, EntityService, JobHandler, JobQueue, JobRegistry,
     LogNotificationJob, MetadataChangeService, NotificationStore, OperationExecuteJob,
     OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore, WebhookLog,
-    ATTACHMENT_PURGE_JOB, DUE_REMINDER_JOB, OPERATION_EXECUTE_JOB,
+    ATTACHMENT_PURGE_JOB, COMMUNICATION_DELIVER_JOB, DUE_REMINDER_JOB, OPERATION_EXECUTE_JOB,
 };
 use qefro_events::InProcessEventBus;
 use qefro_permissions::{PermissionGrant, PermissionRegistry};
@@ -261,6 +262,14 @@ impl QefroRuntime {
         out
     }
 
+    pub fn communications(&self) -> Vec<qefro_core::CommunicationDef> {
+        let mut out = qefro_core::commerce_communications();
+        for app in &self.apps {
+            out.extend(app.module.communications.clone());
+        }
+        out
+    }
+
     pub fn page(&self, name: &str) -> Option<qefro_core::PageDef> {
         self.pages()
             .into_iter()
@@ -393,6 +402,7 @@ impl QefroRuntime {
                 if !entity.print_formats.is_empty() || entity.document.is_some() {
                     routes.push(format!("GET /api/v1/{}/:id/print", entity.slug));
                 }
+                routes.push(format!("GET /api/v1/{}/:id/communications", entity.slug));
             }
         }
         routes
@@ -535,6 +545,8 @@ impl QefroRuntime {
         job_handlers.register("notify.email", Arc::new(EmailNotifyJob));
         let due_reminder = DueReminderJob::new();
         job_handlers.register(DUE_REMINDER_JOB, due_reminder.clone());
+        let communication_deliver = CommunicationDeliverJob::new();
+        job_handlers.register(COMMUNICATION_DELIVER_JOB, communication_deliver.clone());
         let operation_execute = OperationExecuteJob::new();
         job_handlers.register(OPERATION_EXECUTE_JOB, operation_execute.clone());
         let attachment_purge = AttachmentPurgeJob::new();
@@ -565,17 +577,22 @@ impl QefroRuntime {
         let mut automation_defs = qefro_core::task_automations();
         automation_defs.extend(qefro_core::accounting_automations());
         automation_defs.extend(qefro_core::commerce_automations());
+        let mut communication_defs = qefro_core::commerce_communications();
         for app in &self.apps {
             notification_defs.extend(app.module.notifications.clone());
             webhook_defs.extend(app.module.webhooks.clone());
             automation_defs.extend(app.module.automations.clone());
+            communication_defs.extend(app.module.communications.clone());
         }
+        let communication_hub = Arc::new(CommunicationHub::default_loggers());
+        let communication_store = CommunicationStore::new(pool.clone());
         let automation = Arc::new(AutomationEngine::new(
             pool.clone(),
             jobs.clone(),
             automation_defs,
             notification_defs.clone(),
             webhook_defs.clone(),
+            communication_defs.clone(),
         ));
         job_handlers.register("automation.run", automation.clone());
         job_handlers.register("automation.schedule", automation.clone());
@@ -604,6 +621,13 @@ impl QefroRuntime {
         );
         automation.bind(entities.clone());
         due_reminder.bind(entities.clone());
+        communication_deliver.bind(
+            entities.clone(),
+            communication_store.clone(),
+            NotificationStore::new(pool.clone()),
+            communication_defs.clone(),
+            communication_hub.clone(),
+        );
         operation_execute.bind(entities.clone());
         entities
             .events()
@@ -620,6 +644,18 @@ impl QefroRuntime {
         entities
             .events()
             .subscribe_async("*", automation.clone())
+            .await;
+        entities
+            .events()
+            .subscribe_async(
+                "*",
+                Arc::new(CommunicationDispatcher::new(
+                    jobs.clone(),
+                    communication_store.clone(),
+                    entities.clone(),
+                    communication_defs.clone(),
+                )),
+            )
             .await;
         let realtime = Arc::new(RealtimeHub::new());
         entities
@@ -853,6 +889,9 @@ impl QefroRuntime {
             notification_defs,
             webhooks: webhook_defs,
             automation,
+            communications: Arc::new(communication_store),
+            communication_defs,
+            communication_hub,
         };
 
         let cors = CorsLayer::new()

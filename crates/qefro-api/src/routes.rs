@@ -97,6 +97,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/{slug}/{id}/print", get(print_document))
         .route("/api/v1/{slug}/{id}/print.pdf", get(print_document_pdf))
         .route("/api/v1/{slug}/{id}/preview", get(print_document))
+        .route(
+            "/api/v1/{slug}/{id}/communications",
+            get(list_record_communications),
+        )
+        .route("/api/v1/communications", get(list_communications))
         .route("/api/v1/{slug}/{id}/workflow", get(get_workflow_state))
         .route("/api/v1/{slug}/{id}/transition", post(transition_entity))
         .route("/api/v1/{slug}/{id}/activity", get(list_activity))
@@ -327,8 +332,30 @@ async fn meta_ui(State(state): State<AppState>, Auth(ctx): Auth) -> Result<Json<
                 export: permissions.allows(&ctx.roles, &e.name, Action::Export),
             });
             let ops = state.entities.operations().for_entity(&e.name);
+            let comms: Vec<_> = state
+                .communications_live()
+                .into_iter()
+                .filter(|c| c.entity == e.name)
+                .collect();
             if let Some(cap) = meta.capabilities.as_mut() {
                 cap.actions = cap.actions || !ops.is_empty();
+                cap.communication = !comms.is_empty();
+            }
+            meta.communications = comms
+                .iter()
+                .map(|c| qefro_core::CommunicationSummary {
+                    name: c.name.clone(),
+                    event: c.event.clone(),
+                    channels: c.channels.clone(),
+                    purpose: c.purpose.clone(),
+                })
+                .collect();
+            if !comms.is_empty() && !meta.actions.iter().any(|a| a.name == "send_communication") {
+                meta.actions.push(
+                    qefro_core::EntityActionDef::new("send_communication")
+                        .label("Send message")
+                        .operation("send_communication"),
+                );
             }
             for binding in ops {
                 if meta
@@ -701,6 +728,66 @@ async fn list_activity(
     Ok(Json(json!({ "items": items })))
 }
 
+async fn list_record_communications(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Path((slug, id)): Path<(String, Uuid)>,
+) -> Result<Json<Value>, ApiError> {
+    reject_reserved(&slug)?;
+    let _ = state.entities.get(&ctx, &slug, id).await?;
+    let entity = state.entities.registry().get(&slug)?;
+    let items: Vec<_> = state
+        .communications
+        .list_for_record(ctx.tenant_id, &entity.name, id)
+        .await?
+        .into_iter()
+        .map(|r| r.to_client_json())
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
+#[derive(Deserialize)]
+struct CommunicationSearch {
+    entity: Option<String>,
+    record: Option<Uuid>,
+    channel: Option<String>,
+    status: Option<String>,
+    recipient: Option<String>,
+}
+
+async fn list_communications(
+    State(state): State<AppState>,
+    Auth(ctx): Auth,
+    Query(q): Query<CommunicationSearch>,
+) -> Result<Json<Value>, ApiError> {
+    let entity = match q.entity.as_deref() {
+        Some(name) if !name.is_empty() => {
+            state
+                .entities
+                .permissions()
+                .check(&ctx, name, Action::Read)?;
+            Some(name)
+        }
+        _ if ctx.is_admin() => None,
+        _ => return Err(QefroError::forbidden("communication search requires an entity").into()),
+    };
+    let items: Vec<_> = state
+        .communications
+        .search(
+            ctx.tenant_id,
+            entity,
+            q.record,
+            q.channel.as_deref(),
+            q.status.as_deref(),
+            q.recipient.as_deref(),
+        )
+        .await?
+        .into_iter()
+        .map(|r| r.to_client_json())
+        .collect();
+    Ok(Json(json!({ "items": items })))
+}
+
 async fn add_comment(
     State(state): State<AppState>,
     Auth(ctx): Auth,
@@ -751,6 +838,9 @@ async fn execute_action(
     if is_generate_document(&name) {
         return generate_document_action(state, ctx, slug, id, body.map(|j| j.0)).await;
     }
+    if is_send_communication(&name) {
+        return send_communication_action(state, ctx, slug, id, body.map(|j| j.0)).await;
+    }
     let idempotency_key = headers
         .get("idempotency-key")
         .and_then(|v| v.to_str().ok())
@@ -780,6 +870,69 @@ fn is_generate_document(name: &str) -> bool {
         name,
         "generate_document" | "generate-document" | "generate_pdf" | "generate-pdf"
     )
+}
+
+fn is_send_communication(name: &str) -> bool {
+    matches!(name, "send_communication" | "send-communication")
+}
+
+async fn send_communication_action(
+    state: AppState,
+    ctx: qefro_core::OpContext,
+    slug: String,
+    id: Uuid,
+    body: Option<Value>,
+) -> Result<Json<Value>, ApiError> {
+    let entity = state.entities.registry().get(&slug)?;
+    state
+        .entities
+        .permissions()
+        .check(&ctx, &entity.name, Action::Read)?;
+    let template = body
+        .as_ref()
+        .and_then(|b| b.get("template").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .trim();
+    if template.is_empty() {
+        return Err(QefroError::bad_request("template is required").into());
+    }
+    let def = state
+        .communications_live()
+        .into_iter()
+        .find(|c| c.name == template && c.entity == entity.name)
+        .ok_or_else(|| QefroError::not_found(format!("communication '{template}' not found")))?;
+    let channel = body
+        .as_ref()
+        .and_then(|b| b.get("channel").and_then(|v| v.as_str()))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    if body
+        .as_ref()
+        .and_then(|b| b.get("recipient").and_then(|v| v.as_str()))
+        .is_some()
+        && !ctx.is_admin()
+    {
+        return Err(QefroError::forbidden("arbitrary recipients require authorization").into());
+    }
+    let queued = qefro_db::enqueue_communication(
+        &state.entities.job_queue(),
+        &state.communications,
+        &state.entities,
+        &ctx,
+        &def,
+        None,
+        id,
+        channel,
+    )
+    .await?;
+    Ok(Json(json!({
+        "queued": queued.iter().map(|r| r.to_client_json()).collect::<Vec<_>>(),
+        "message": if queued.is_empty() {
+            "No message queued"
+        } else {
+            "Communication queued"
+        },
+    })))
 }
 
 async fn generate_document_action(

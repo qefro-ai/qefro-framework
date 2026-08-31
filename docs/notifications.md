@@ -38,3 +38,5 @@ POST /api/v1/notifications/{id}/read
 The generic shell shows a notification bell (title, relative time, unread badge). Recipients are filtered by role; users without entity access are not notified of records they cannot read. Notifications are tenant-scoped.
 
 The restaurant example listens for `order.confirmed` and `order.ready` so kitchen workflow transitions surface in the in-app center without a custom backend.
+
+Customer-facing email / SMS / WhatsApp (and in-app when the recipient has a login) is the [Communication Runtime](communications.md). It extends this event → outbox → job pipeline. `NotificationDef` remains the staff in-app rule. Do not put `send_whatsapp(...)` on entities.

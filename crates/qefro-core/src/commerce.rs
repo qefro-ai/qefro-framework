@@ -5,6 +5,9 @@
 
 use crate::app::NavItem;
 use crate::automation::{AutomationAction, AutomationDef, AutomationTrigger, NotifyAction};
+use crate::communication::{
+    CommunicationDef, CHANNEL_EMAIL, CHANNEL_IN_APP, CHANNEL_WHATSAPP, PURPOSE_TRANSACTIONAL,
+};
 use crate::document::{DocumentConfig, NamingConfig, PrintFormat, PrintSection, ReportDef};
 use crate::entity::EntityDef;
 use crate::field::{ChildTableDef, FieldDef, OnDelete};
@@ -1393,6 +1396,33 @@ pub fn commerce_notifications() -> Vec<NotificationDef> {
             .recipients(&["Manager", "Staff"])
             .title("Payment received")
             .body("A customer payment was recorded."),
+    ]
+}
+
+pub fn commerce_communications() -> Vec<CommunicationDef> {
+    vec![
+        CommunicationDef::new("invoice_issued", "invoice.issued", INVOICE_ENTITY)
+            .channels(&[CHANNEL_EMAIL, CHANNEL_WHATSAPP, CHANNEL_IN_APP])
+            .purpose(PURPOSE_TRANSACTIONAL)
+            .subject("Invoice {{ number }}")
+            .body("Hello {{ customer_name }},\nyour invoice {{ number }} for {{ total | currency }} has been issued.")
+            .preferred_channel_field("communication_channel")
+            .opt_out_field("marketing_opt_out")
+            .attach_document(),
+        CommunicationDef::new("payment_received", "payment.received", SALES_PAYMENT_ENTITY)
+            .channels(&[CHANNEL_EMAIL, CHANNEL_IN_APP])
+            .purpose(PURPOSE_TRANSACTIONAL)
+            .subject("Payment received")
+            .body("Hello {{ customer_name }},\nwe received your payment of {{ amount | currency }}.")
+            .preferred_channel_field("communication_channel")
+            .opt_out_field("marketing_opt_out"),
+        CommunicationDef::new("sales_order_confirmed", "order.confirmed", SALES_ORDER_ENTITY)
+            .channels(&[CHANNEL_EMAIL, CHANNEL_WHATSAPP, CHANNEL_IN_APP])
+            .purpose(PURPOSE_TRANSACTIONAL)
+            .subject("Order {{ number }} confirmed")
+            .body("Hello {{ customer_name }},\nyour order {{ number }} is confirmed.\nTotal: {{ total | currency }}")
+            .preferred_channel_field("communication_channel")
+            .opt_out_field("marketing_opt_out"),
     ]
 }
 

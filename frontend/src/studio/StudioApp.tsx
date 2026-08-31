@@ -8,6 +8,7 @@ import Workflows from "./pages/Workflows";
 import Permissions from "./pages/Permissions";
 import ReportsStudio from "./pages/ReportsStudio";
 import PagesStudio from "./pages/PagesStudio";
+import CommunicationsStudio from "./pages/CommunicationsStudio";
 import System from "./pages/System";
 import Platform from "./pages/Platform";
 import CommandPalette from "./components/CommandPalette";
@@ -66,6 +67,7 @@ export default function StudioApp() {
           <NavLink to="/studio/dashboards">Dashboards</NavLink>
           <NavLink to="/studio/pages">Pages</NavLink>
           <NavLink to="/studio/print-formats">Print Formats</NavLink>
+          <NavLink to="/studio/communications">Templates</NavLink>
         </div>
         <div className="nav-group">
           <div className="nav-group-label">System</div>
@@ -97,6 +99,8 @@ export default function StudioApp() {
           <Route path="pages/:name" element={<PagesStudio caps={caps} />} />
           <Route path="print-formats" element={<ReportsStudio kind="print" caps={caps} />} />
           <Route path="print-formats/:name" element={<ReportsStudio kind="print" caps={caps} />} />
+          <Route path="communications" element={<CommunicationsStudio caps={caps} />} />
+          <Route path="communications/:name" element={<CommunicationsStudio caps={caps} />} />
           <Route path="system" element={<System caps={caps} />} />
           <Route path="*" element={<Navigate to="/studio" replace />} />
         </Routes>

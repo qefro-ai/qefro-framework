@@ -14,9 +14,9 @@ export function relativeTime(value: unknown, locale = "en"): string {
 
 export function statusTone(status: string): "neutral" | "info" | "success" | "warning" | "danger" {
   const s = status.toLowerCase();
-  if (/(complete|done|paid|active|confirmed|approved|resolved|success)/.test(s)) return "success";
+  if (/(complete|done|paid|active|confirmed|approved|resolved|success|sent|delivered)/.test(s)) return "success";
   if (/(pending|draft|open|new|queued)/.test(s)) return "warning";
-  if (/(cancel|fail|void|reject|overdue|closed)/.test(s)) return "danger";
+  if (/(cancel|fail|void|reject|overdue|closed|dead.?letter)/.test(s)) return "danger";
   if (/(progress|assigned|preparing|seated|submitted)/.test(s)) return "info";
   return "neutral";
 }

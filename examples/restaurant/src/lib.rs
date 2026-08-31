@@ -7,8 +7,9 @@ mod workflows;
 
 use qefro_api::InstalledApp;
 use qefro_core::{
-    AppModule, AutomationAction, AutomationDef, AutomationTrigger, Condition, NavItem,
-    NotificationDef, ReportDef, TenantBranding, WebhookDef,
+    AppModule, AutomationAction, AutomationDef, AutomationTrigger, CommunicationDef, Condition,
+    NavItem, NotificationDef, ReportDef, TenantBranding, WebhookDef, CHANNEL_EMAIL, CHANNEL_IN_APP,
+    CHANNEL_WHATSAPP, PURPOSE_TRANSACTIONAL,
 };
 use qefro_permissions::PermissionGrant;
 use qefro_workflow::WorkflowDef;
@@ -102,6 +103,28 @@ pub fn module() -> AppModule {
                 .channels(&["in_app"])
                 .recipients(&["Admin", "Staff", "Manager", "owner"])
                 .title("Order is ready")
+                .module("restaurant"),
+        )
+        .communication(
+            CommunicationDef::new("order_confirmed", "order.confirmed", "Order")
+                .channels(&[CHANNEL_WHATSAPP, CHANNEL_EMAIL, CHANNEL_IN_APP])
+                .purpose(PURPOSE_TRANSACTIONAL)
+                .subject("Order {{ number }} confirmed")
+                .body("Hello {{ customer.name }},\nyour order {{ number }} is confirmed.\nTotal: {{ total | currency }}")
+                .recipient_path("customer")
+                .preferred_channel_field("communication_channel")
+                .opt_out_field("marketing_opt_out")
+                .module("restaurant"),
+        )
+        .communication(
+            CommunicationDef::new("reservation_confirmed", "reservation.confirmed", "Reservation")
+                .channels(&[CHANNEL_WHATSAPP, CHANNEL_EMAIL, CHANNEL_IN_APP])
+                .purpose(PURPOSE_TRANSACTIONAL)
+                .subject("Reservation confirmed")
+                .body("Hello {{ customer.name }},\nyour reservation is confirmed.")
+                .recipient_path("customer")
+                .preferred_channel_field("communication_channel")
+                .opt_out_field("marketing_opt_out")
                 .module("restaurant"),
         )
         .webhook(
@@ -403,6 +426,13 @@ mod tests {
             .collect();
         assert!(names.contains(&"order_confirmed"), "{names:?}");
         assert!(names.contains(&"order_ready"), "{names:?}");
+        let comms: Vec<_> = module
+            .communications
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert!(comms.contains(&"order_confirmed"), "{comms:?}");
+        assert!(comms.contains(&"reservation_confirmed"), "{comms:?}");
         let autos: Vec<_> = module.automations.iter().map(|a| a.name.as_str()).collect();
         assert!(autos.contains(&"order_ready_notification"), "{autos:?}");
     }

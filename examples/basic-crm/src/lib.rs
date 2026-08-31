@@ -7,7 +7,8 @@ mod workflows;
 
 use qefro_api::InstalledApp;
 use qefro_core::{
-    AppModule, AutomationAction, AutomationDef, AutomationTrigger, Condition, NavItem, ReportDef,
+    AppModule, AutomationAction, AutomationDef, AutomationTrigger, CommunicationDef, Condition,
+    NavItem, ReportDef, CHANNEL_EMAIL, CHANNEL_IN_APP, PURPOSE_TRANSACTIONAL,
 };
 use qefro_permissions::PermissionGrant;
 use qefro_workflow::WorkflowDef;
@@ -47,6 +48,26 @@ pub fn module() -> AppModule {
             .description("Record activity when a CRM customer is created")
             .conditions(Condition::field_equals("entity", "CrmCustomer"))
             .action(AutomationAction::create_activity("Customer created")),
+        )
+        .communication(
+            CommunicationDef::new("opportunity_won", "", "Opportunity")
+                .channels(&[CHANNEL_EMAIL, CHANNEL_IN_APP])
+                .purpose(PURPOSE_TRANSACTIONAL)
+                .subject("Welcome")
+                .body("Hello {{ customer.name }},\nthank you for choosing us. Your opportunity {{ name }} is closed won.")
+                .recipient_path("customer")
+                .preferred_channel_field("communication_channel")
+                .opt_out_field("marketing_opt_out")
+                .module("crm"),
+        )
+        .automation(
+            AutomationDef::new(
+                "opportunity_won_onboarding",
+                AutomationTrigger::event("opportunity.won"),
+            )
+            .description("Send a customer onboarding message when an opportunity is won")
+            .action(AutomationAction::send_communication("opportunity_won"))
+            .action(AutomationAction::create_activity("Customer onboarding message queued")),
         )
         .build()
 }

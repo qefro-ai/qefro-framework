@@ -13,6 +13,7 @@ pub mod automation;
 pub mod blobs;
 pub mod bulk;
 pub mod commerce;
+pub mod communication;
 pub mod document_ops;
 pub mod due;
 pub mod global_search;
@@ -45,6 +46,12 @@ pub use bulk::BulkRequest;
 pub use commerce::{
     commerce_operation_defs, inventory_consume, inventory_release, inventory_reserve,
     inventory_restore, register_commerce_operations,
+};
+pub use communication::{
+    dispatch_event_communications, enqueue_communication, CommunicationDeliverJob,
+    CommunicationDispatcher, CommunicationHub, CommunicationLog, CommunicationProvider,
+    CommunicationStore, LogEmailProvider, LogSmsProvider, LogWhatsAppProvider, OutboundMessage,
+    RecordingProvider, COMMUNICATION_DELIVER_JOB,
 };
 pub use document_ops::register_document_operations;
 pub use due::{DueReminderJob, DUE_REMINDER_JOB};

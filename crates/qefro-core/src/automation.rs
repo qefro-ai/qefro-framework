@@ -98,6 +98,9 @@ pub enum AutomationAction {
     Notify {
         notify: NotifyAction,
     },
+    SendCommunication {
+        send_communication: CommunicationAction,
+    },
     CreateActivity {
         create_activity: ActivityAction,
     },
@@ -153,6 +156,16 @@ pub struct NotifyAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct CommunicationAction {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipient: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ActivityAction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -196,6 +209,7 @@ impl AutomationAction {
             Self::CreateEntity { .. } => "create_entity",
             Self::Transition { .. } => "transition",
             Self::Notify { .. } => "notify",
+            Self::SendCommunication { .. } => "send_communication",
             Self::CreateActivity { .. } => "create_activity",
             Self::CreateComment { .. } => "create_comment",
             Self::Assign { .. } => "assign",
@@ -208,6 +222,15 @@ impl AutomationAction {
         Self::Notify {
             notify: NotifyAction {
                 role: Some(role.into()),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub fn send_communication(template: impl Into<String>) -> Self {
+        Self::SendCommunication {
+            send_communication: CommunicationAction {
+                template: Some(template.into()),
                 ..Default::default()
             },
         }

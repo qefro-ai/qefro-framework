@@ -1,3 +1,4 @@
+use crate::communication::CommunicationDef;
 use crate::document::{PrintFormat, ReportDef};
 use crate::entity::EntityDef;
 use crate::error::QefroResult;
@@ -32,6 +33,7 @@ pub struct AppModule {
     pub reports: Vec<ReportDef>,
     pub print_formats: Vec<PrintFormat>,
     pub notifications: Vec<NotificationDef>,
+    pub communications: Vec<CommunicationDef>,
     pub webhooks: Vec<WebhookDef>,
     pub automations: Vec<crate::automation::AutomationDef>,
     /// Default tenant chrome when the tenant has not set branding yet.
@@ -184,6 +186,7 @@ impl AppModule {
                 reports: Vec::new(),
                 print_formats: Vec::new(),
                 notifications: Vec::new(),
+                communications: Vec::new(),
                 webhooks: Vec::new(),
                 automations: Vec::new(),
                 branding: crate::ui::TenantBranding::default(),
@@ -370,6 +373,14 @@ impl AppModuleBuilder {
 
     pub fn notification(mut self, def: NotificationDef) -> Self {
         self.module.notifications.push(def);
+        self
+    }
+
+    pub fn communication(mut self, mut def: crate::communication::CommunicationDef) -> Self {
+        if def.module.is_none() {
+            def.module = Some(self.module.name.clone());
+        }
+        self.module.communications.push(def);
         self
     }
 

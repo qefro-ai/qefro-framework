@@ -10,6 +10,7 @@ pub mod automation;
 pub mod bundle;
 pub mod catalog;
 pub mod commerce;
+pub mod communication;
 pub mod condition;
 pub mod context;
 pub mod document;
@@ -58,8 +59,8 @@ pub use accounting::{
 pub use app::{AppManifest, AppModule, AppModuleBuilder, NavItem};
 pub use automation::{
     ActivityAction, AssignAction, AutomationAction, AutomationDef, AutomationTrigger,
-    CommentAction, CreateEntityAction, NotifyAction, TransitionAction, UpdateEntityAction,
-    WebhookAction,
+    CommentAction, CommunicationAction, CreateEntityAction, NotifyAction, TransitionAction,
+    UpdateEntityAction, WebhookAction,
 };
 pub use bundle::AppBundle;
 pub use catalog::{
@@ -68,18 +69,24 @@ pub use catalog::{
     store_dir, AppFileManifest, DiscoveredApp, InstalledRecord, InstalledSet,
 };
 pub use commerce::{
-    apply_commerce_links, commerce_automations, commerce_child_slugs, commerce_dashboard,
-    commerce_entities, commerce_nav_items, commerce_notifications, commerce_reports,
-    invoice_entity, is_commerce_entity, product_entity, quote_entity, sales_order_entity,
-    sales_payment_entity, sales_return_entity, shipment_entity, CUSTOMER_ID_FIELD,
-    CUSTOMER_TYPE_FIELD, FULFILL_FULFILLED, FULFILL_PARTIAL, FULFILL_UNFULFILLED, INVOICE_ENTITY,
-    INVOICE_ITEM_ENTITY, INVOICE_PAID, INVOICE_SLUG, INVOICE_WORKFLOW, ORDER_COMPLETED,
-    ORDER_CONFIRMED, ORDER_FULFILLED, PAYMENT_ALLOCATION_ENTITY, PAYMENT_WORKFLOW, PAY_RECEIVED,
-    PRODUCT_ENTITY, PRODUCT_SLUG, QUOTE_ENTITY, QUOTE_ITEM_ENTITY, QUOTE_SLUG, QUOTE_WORKFLOW,
-    RETURN_WORKFLOW, SALES_ORDER_ENTITY, SALES_ORDER_ITEM_ENTITY, SALES_ORDER_SLUG,
-    SALES_ORDER_WORKFLOW, SALES_PAYMENT_ENTITY, SALES_PAYMENT_SLUG, SALES_RETURN_ENTITY,
-    SALES_RETURN_ITEM_ENTITY, SALES_RETURN_SLUG, SHIPMENT_ENTITY, SHIPMENT_ITEM_ENTITY,
-    SHIPMENT_SLUG, SHIPMENT_WORKFLOW,
+    apply_commerce_links, commerce_automations, commerce_child_slugs, commerce_communications,
+    commerce_dashboard, commerce_entities, commerce_nav_items, commerce_notifications,
+    commerce_reports, invoice_entity, is_commerce_entity, product_entity, quote_entity,
+    sales_order_entity, sales_payment_entity, sales_return_entity, shipment_entity,
+    CUSTOMER_ID_FIELD, CUSTOMER_TYPE_FIELD, FULFILL_FULFILLED, FULFILL_PARTIAL,
+    FULFILL_UNFULFILLED, INVOICE_ENTITY, INVOICE_ITEM_ENTITY, INVOICE_PAID, INVOICE_SLUG,
+    INVOICE_WORKFLOW, ORDER_COMPLETED, ORDER_CONFIRMED, ORDER_FULFILLED, PAYMENT_ALLOCATION_ENTITY,
+    PAYMENT_WORKFLOW, PAY_RECEIVED, PRODUCT_ENTITY, PRODUCT_SLUG, QUOTE_ENTITY, QUOTE_ITEM_ENTITY,
+    QUOTE_SLUG, QUOTE_WORKFLOW, RETURN_WORKFLOW, SALES_ORDER_ENTITY, SALES_ORDER_ITEM_ENTITY,
+    SALES_ORDER_SLUG, SALES_ORDER_WORKFLOW, SALES_PAYMENT_ENTITY, SALES_PAYMENT_SLUG,
+    SALES_RETURN_ENTITY, SALES_RETURN_ITEM_ENTITY, SALES_RETURN_SLUG, SHIPMENT_ENTITY,
+    SHIPMENT_ITEM_ENTITY, SHIPMENT_SLUG, SHIPMENT_WORKFLOW,
+};
+pub use communication::{
+    reject_unsafe_communication_payload, select_channels, validate_communication, CommunicationDef,
+    RecipientAddress, CHANNELS, CHANNEL_EMAIL, CHANNEL_IN_APP, CHANNEL_SMS, CHANNEL_WHATSAPP,
+    COMM_DEAD_LETTER, COMM_DELIVERED, COMM_FAILED, COMM_PENDING, COMM_QUEUED, COMM_SENDING,
+    COMM_SENT, COMM_SKIPPED, PURPOSE_MARKETING, PURPOSE_TRANSACTIONAL,
 };
 pub use condition::Condition;
 pub use context::{OpContext, ROLE_PUBLIC, ROLE_WORKER};
@@ -146,11 +153,11 @@ pub use template::{
 };
 pub use timezone::{canonicalize_datetime, local_to_utc, utc_to_local};
 pub use ui::{
-    CalendarViewSpec, CardViewSpec, ChartMeasureSpec, ChartViewSpec, DashboardCard, DashboardDef,
-    DetailViewSpec, EntityCapabilities, EntityPermissions, EntityViews, FormViewSpec,
-    KanbanCardSpec, KanbanViewSpec, ListViewSpec, PrintFormatSummary, TenantBranding,
-    TenantBusinessConfig, TenantConfig, TenantFeatures, TenantUiConfig, UiConfig, UiEntityMeta,
-    UiFieldMeta, UiWhen, UiWidget, ViewColumnSpec, ViewSectionSpec, WidgetOptions,
+    CalendarViewSpec, CardViewSpec, ChartMeasureSpec, ChartViewSpec, CommunicationSummary,
+    DashboardCard, DashboardDef, DetailViewSpec, EntityCapabilities, EntityPermissions,
+    EntityViews, FormViewSpec, KanbanCardSpec, KanbanViewSpec, ListViewSpec, PrintFormatSummary,
+    TenantBranding, TenantBusinessConfig, TenantConfig, TenantFeatures, TenantUiConfig, UiConfig,
+    UiEntityMeta, UiFieldMeta, UiWhen, UiWidget, ViewColumnSpec, ViewSectionSpec, WidgetOptions,
     WorkspaceNavItem, UI_SCHEMA_VERSION,
 };
 pub use validate::{

@@ -250,7 +250,7 @@ impl MetadataChangeService {
                 analysis.diff.push(format!("~ permissions {target}"));
                 Ok(analysis)
             }
-            "report" | "dashboard" | "page" | "print_format" => {
+            "report" | "dashboard" | "page" | "print_format" | "communication" => {
                 let mut analysis = ChangeAnalysis::safe();
                 analysis.diff.push(format!("~ {kind} {target}"));
                 Ok(analysis)
@@ -364,6 +364,15 @@ impl MetadataChangeService {
                 let pf: PrintFormat = serde_json::from_value(payload.clone())
                     .map_err(|e| QefroError::bad_request(e.to_string()))?;
                 let errors = qefro_core::validate_print_format(&pf, self.registry.as_ref());
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
+                }
+            }
+            "communication" => {
+                qefro_core::reject_unsafe_communication_payload(payload)?;
+                let def: qefro_core::CommunicationDef = serde_json::from_value(payload.clone())
+                    .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                let errors = qefro_core::validate_communication(&def, self.registry.as_ref());
                 if let Some(err) = errors.into_iter().next() {
                     return Err(QefroError::bad_request(err));
                 }
@@ -530,6 +539,10 @@ impl MetadataChangeService {
                 .catalog
                 .print_format(target)
                 .and_then(|p| serde_json::to_value(p).ok()),
+            "communication" => self
+                .catalog
+                .communication(target)
+                .and_then(|c| serde_json::to_value(c).ok()),
             _ => None,
         }
     }
@@ -606,6 +619,16 @@ impl MetadataChangeService {
                     return Err(QefroError::bad_request(err));
                 }
                 self.catalog.upsert_print_format(pf);
+            }
+            "communication" => {
+                qefro_core::reject_unsafe_communication_payload(payload)?;
+                let def: qefro_core::CommunicationDef = serde_json::from_value(payload.clone())
+                    .map_err(|e| QefroError::bad_request(e.to_string()))?;
+                let errors = qefro_core::validate_communication(&def, self.registry.as_ref());
+                if let Some(err) = errors.into_iter().next() {
+                    return Err(QefroError::bad_request(err));
+                }
+                self.catalog.upsert_communication(def);
             }
             other => {
                 return Err(QefroError::bad_request(format!(
