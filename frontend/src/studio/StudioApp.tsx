@@ -17,6 +17,7 @@ import CommandPalette from "./components/CommandPalette";
 export default function StudioApp() {
   const [caps, setCaps] = useState<string[]>([]);
   const [denied, setDenied] = useState(false);
+  const [ready, setReady] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -26,8 +27,17 @@ export default function StudioApp() {
         setCaps(d.capabilities);
         if (!d.capabilities.includes("studio.view")) setDenied(true);
       })
-      .catch(() => setDenied(true));
+      .catch(() => setDenied(true))
+      .finally(() => setReady(true));
   }, []);
+
+  if (!ready) {
+    return (
+      <div className="page">
+        <p className="muted">Loading Studio…</p>
+      </div>
+    );
+  }
 
   if (denied) {
     return (

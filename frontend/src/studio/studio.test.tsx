@@ -1,5 +1,6 @@
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import StudioApp from "./StudioApp";
 import Overview from "./pages/Overview";
 import FieldEditor from "./editors/FieldEditor";
 import FormPreview from "./preview/FormPreview";
@@ -282,5 +283,35 @@ describe("Studio UI", () => {
     fireEvent.click(screen.getByRole("button", { name: "Publish" }));
     expect(screen.getByRole("button", { name: "Disable" })).toBeInTheDocument();
     expect(screen.getByText(/Automation Runs|No automation runs|completed/i)).toBeTruthy();
+  });
+
+  it("does not render Studio chrome until capabilities confirm access", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo) => {
+        const url = String(input);
+        if (url.includes("/studio/capabilities")) {
+          return Promise.resolve({
+            ok: false,
+            status: 403,
+            json: async () => ({ error: "forbidden" }),
+          });
+        }
+        if (url.includes("/studio/overview")) {
+          throw new Error("overview must not be fetched before authorization");
+        }
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+      }),
+    );
+    render(
+      <MemoryRouter initialEntries={["/studio"]}>
+        <Routes>
+          <Route path="/studio/*" element={<StudioApp />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("You are not authorized to open Studio.")).toBeInTheDocument();
+    expect(screen.queryByText("Installed Apps")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Automations" })).not.toBeInTheDocument();
   });
 });

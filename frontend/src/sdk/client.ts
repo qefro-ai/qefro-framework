@@ -198,6 +198,18 @@ export class QefroClient {
     request<{ access_token: string; expires_in?: number }>("/api/v1/auth/refresh", {
       method: "POST",
     });
+  /** Replaces the stored Bearer token. The previous session is revoked server-side. */
+  switchTenant = async (tenantId: string) => {
+    const res = await request<{ access_token: string; expires_in?: number }>(
+      "/api/v1/auth/switch-tenant",
+      {
+        method: "POST",
+        body: JSON.stringify({ tenant_id: tenantId }),
+      },
+    );
+    saveToken(res.access_token, res.expires_in);
+    return res;
+  };
   register = (body: Record<string, string>) =>
     request<{ access_token: string; expires_in?: number }>("/api/v1/auth/register", {
       method: "POST",

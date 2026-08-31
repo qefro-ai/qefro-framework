@@ -58,6 +58,7 @@ Follow-up to the 3.7 audit. No second auth stack, no second permission system, E
 - CSP tightened (`frame-src`, `object-src`, `font-src`, swagger-ui origin narrowed). Rich-text `style` attributes stripped in the renderer.
 - `qefro_activity` RLS pilot (`SET LOCAL` tenant GUC; purge uses documented `qefro.rls_bypass`).
 - `SECURITY.md`, [dependencies.md](dependencies.md), [rls.md](rls.md), CI `cargo audit` (non-blocking).
+- Unauthenticated `/studio`, `/settings`, `/audit`, and entity URLs render login without fetching metadata. Studio waits for `studio.view` before painting chrome or overview. `switchTenant` overwrites the stored Bearer token.
 
 ### Mitigated
 

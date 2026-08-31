@@ -627,3 +627,57 @@ async fn metadata_cannot_execute_sql() {
     let blob = serde_json::to_string(&body).unwrap();
     assert!(!blob.to_ascii_lowercase().contains("drop table"));
 }
+
+#[tokio::test]
+async fn switch_tenant_rejects_cross_tenant_and_revokes_on_success() {
+    let router = runtime().await;
+    let suffix = &Uuid::new_v4().to_string()[..8];
+    let token_a = register(
+        &router,
+        &format!("hsw-{suffix}@ex.com"),
+        &format!("hsw-{suffix}"),
+    )
+    .await;
+    let token_b = register(
+        &router,
+        &format!("hswb-{suffix}@ex.com"),
+        &format!("hswb-{suffix}"),
+    )
+    .await;
+    let (status, me_b) = json(clone_router(&router), get("/api/v1/auth/me", Some(&token_b))).await;
+    assert_eq!(status, StatusCode::OK, "{me_b}");
+    let tenant_b = me_b["tenant_id"].as_str().unwrap();
+    let (status, me_a) = json(clone_router(&router), get("/api/v1/auth/me", Some(&token_a))).await;
+    assert_eq!(status, StatusCode::OK, "{me_a}");
+    let tenant_a = me_a["tenant_id"].as_str().unwrap().to_string();
+
+    let (status, cross) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/auth/switch-tenant",
+            Some(&token_a),
+            json!({ "tenant_id": tenant_b }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{cross}");
+    let (status, still) = json(clone_router(&router), get("/api/v1/auth/me", Some(&token_a))).await;
+    assert_eq!(status, StatusCode::OK, "{still}");
+
+    let (status, rotated) = json(
+        clone_router(&router),
+        post(
+            "/api/v1/auth/switch-tenant",
+            Some(&token_a),
+            json!({ "tenant_id": tenant_a }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{rotated}");
+    let next = rotated["access_token"].as_str().unwrap();
+    assert!(!next.is_empty());
+    let (status, old) = json(clone_router(&router), get("/api/v1/auth/me", Some(&token_a))).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{old}");
+    let (status, me) = json(clone_router(&router), get("/api/v1/auth/me", Some(next))).await;
+    assert_eq!(status, StatusCode::OK, "{me}");
+}

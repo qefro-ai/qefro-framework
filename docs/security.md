@@ -61,7 +61,7 @@ Browser and SDK both use **Authorization: Bearer** JWTs bound to a `sessions` ro
 
 The generic UI stores the access token in `localStorage` so reloads and extra tabs keep working. **XSS can still steal that token.** Mitigations: CSP, HTML sanitization (ammonia + DOM sanitizer), logout/tenant-switch revoke, `POST /api/v1/auth/refresh` to rotate a still-valid JWT, configurable `QEFRO_TOKEN_TTL_HOURS` (default 12). Server-to-server SDK usage is unchanged: the same Bearer token, no cookies, no CSRF tokens.
 
-Tokens must never appear in URLs, logs, error bodies, activity, or analytics.
+Tokens must never appear in URLs, logs, error bodies, activity, or analytics. Logout always clears `localStorage` even if the revoke call fails. `QefroClient.switchTenant` overwrites the stored token after the previous session is revoked. Unauthenticated routes (`/studio`, `/settings`, `/audit`, entity pages) render the login screen without fetching metadata. Studio waits for `studio.view` before painting chrome or overview data.
 
 ## Rate limits
 
