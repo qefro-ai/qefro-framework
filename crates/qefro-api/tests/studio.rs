@@ -747,7 +747,7 @@ async fn custom_field_publish_is_safe_and_flows_through_entity_service() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{created}");
+    assert_eq!(status, StatusCode::CREATED, "{created}");
     assert_eq!(created["loyalty_tier"], "Gold");
     assert!(created.get("qefro_custom").is_none());
 
@@ -763,7 +763,7 @@ async fn custom_field_publish_is_safe_and_flows_through_entity_service() {
         ),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
 
     let id = created["id"].as_str().unwrap();
     let (status, listed) = json(

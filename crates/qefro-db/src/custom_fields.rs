@@ -205,8 +205,16 @@ impl CustomFieldStore {
 }
 
 pub(crate) fn field_from_payload(payload: &Value) -> QefroResult<FieldDef> {
-    if let Ok(field) = serde_json::from_value::<FieldDef>(payload.clone()) {
-        return Ok(field);
+    let studio_alias = payload.get("type").and_then(|v| v.as_str()).is_some_and(|t| {
+        matches!(
+            t,
+            "select" | "textarea" | "number" | "email" | "phone" | "currency" | "enum"
+        )
+    });
+    if !studio_alias {
+        if let Ok(field) = serde_json::from_value::<FieldDef>(payload.clone()) {
+            return Ok(field);
+        }
     }
     let name = payload
         .get("name")
