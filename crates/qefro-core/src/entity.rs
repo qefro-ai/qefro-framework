@@ -194,6 +194,12 @@ impl EntityDef {
         self
     }
 
+    /// Related Quotes / Sales Orders / Invoices / Payments / Returns (polymorphic customer).
+    pub fn with_commerce(mut self) -> Self {
+        crate::commerce::apply_commerce_links(&mut self);
+        self
+    }
+
     pub fn action(mut self, action: EntityActionDef) -> Self {
         self.actions.push(action);
         self

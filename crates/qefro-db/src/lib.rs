@@ -12,6 +12,7 @@ pub mod audit;
 pub mod automation;
 pub mod blobs;
 pub mod bulk;
+pub mod commerce;
 pub mod document_ops;
 pub mod due;
 pub mod global_search;
@@ -41,6 +42,10 @@ pub use audit::AuditLogger;
 pub use automation::AutomationEngine;
 pub use blobs::{BlobMeta, BlobMetaStore};
 pub use bulk::BulkRequest;
+pub use commerce::{
+    commerce_operation_defs, inventory_consume, inventory_release, inventory_reserve,
+    inventory_restore, register_commerce_operations,
+};
 pub use document_ops::register_document_operations;
 pub use due::{DueReminderJob, DUE_REMINDER_JOB};
 pub use global_search::{SearchGroup, SearchHit, SearchResponse};

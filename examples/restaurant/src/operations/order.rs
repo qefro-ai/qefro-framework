@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use qefro_api::{post_ledger, OperationCtx, OperationHandler};
+use qefro_api::{
+    inventory_consume, inventory_release, inventory_reserve, post_ledger, OperationCtx,
+    OperationHandler,
+};
 use qefro_core::{LedgerPosting, QefroResult, ACCOUNT_KEY_CASH, ACCOUNT_KEY_SALES};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -84,6 +87,7 @@ impl OperationHandler for ConfirmOrder {
         let id = ctx.record_id()?;
         ensure_order_items(ctx).await?;
         apply_channel_rules(ctx, false)?;
+        inventory_reserve(ctx, &ctx.record.clone()).await?;
         ctx.apply_transition("confirm")?;
         ctx.emit("order.confirmed", json!({ "entity_id": id }));
         ctx.enqueue_job(
@@ -119,6 +123,7 @@ pub struct StartPreparation;
 #[async_trait]
 impl OperationHandler for StartPreparation {
     async fn handle(&self, ctx: &mut OperationCtx<'_, '_>) -> QefroResult<Value> {
+        inventory_consume(ctx, &ctx.record.clone()).await?;
         ctx.apply_transition("prepare")?;
         ctx.emit("order.preparing", json!({ "entity_id": ctx.record_id()? }));
         Ok(ctx.record.clone())
@@ -205,6 +210,7 @@ impl OperationHandler for CancelOrder {
                 ));
             }
         };
+        inventory_release(ctx, &ctx.record.clone()).await?;
         ctx.emit("order.cancelled", json!({ "entity_id": ctx.record_id()? }));
         Ok(ctx.record.clone())
     }

@@ -54,6 +54,11 @@ pub fn money_zero() -> Decimal {
     Decimal::ZERO
 }
 
+/// `quantity × unit_price` using decimal arithmetic.
+pub fn money_mul_qty(unit: Decimal, qty: i64) -> Decimal {
+    round_money(unit * Decimal::from(qty))
+}
+
 /// Sum debit and credit columns on journal lines. Does not use floating point.
 pub fn sum_debit_credit(lines: &[Value]) -> QefroResult<(Decimal, Decimal)> {
     let mut debit = Decimal::ZERO;
@@ -164,6 +169,19 @@ mod tests {
         }
         let (d, c) = sum_debit_credit(&lines).unwrap();
         assert_eq!(d, c);
+    }
+
+    #[test]
+    fn quantity_times_unit_price_is_decimal() {
+        let unit = parse_money(&json!("20.00")).unwrap();
+        assert_eq!(
+            money_mul_qty(unit, 2),
+            parse_money(&json!("40.00")).unwrap()
+        );
+        let discount = parse_money(&json!("5")).unwrap();
+        let tax = parse_money(&json!("3.50")).unwrap();
+        let total = round_money(money_mul_qty(unit, 2) - discount + tax);
+        assert_eq!(total, parse_money(&json!("38.50")).unwrap());
     }
 
     #[test]

@@ -551,6 +551,11 @@ fn cmd_entity_show(app: &str, name: &str) -> Result<()> {
         entity.audit,
         entity.workflow.is_some()
     );
+    if qefro_core::is_commerce_entity(&entity.name) {
+        println!(
+            "commerce:       Quote → Sales Order → Fulfillment → Invoice → Payment → Return (EntityService operations; no commerce API)"
+        );
+    }
     println!(
         "row_policy:     {}",
         entity

@@ -377,6 +377,7 @@ pub fn platform_entities() -> Vec<EntityDef> {
     let mut entities = crate::identity::identity_entities();
     entities.push(task_entity());
     entities.extend(crate::accounting::accounting_entities());
+    entities.extend(crate::commerce::commerce_entities());
     entities
 }
 
@@ -459,5 +460,9 @@ mod tests {
         assert!(names.contains(&"Account".into()));
         assert!(names.contains(&"JournalEntry".into()));
         assert!(names.contains(&"FiscalPeriod".into()));
+        assert!(names.contains(&"Quote".into()));
+        assert!(names.contains(&"SalesOrder".into()));
+        assert!(names.contains(&"Invoice".into()));
+        assert!(names.contains(&"Product".into()));
     }
 }
