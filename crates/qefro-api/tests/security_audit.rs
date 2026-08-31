@@ -165,6 +165,8 @@ async fn production_rejects_default_jwt_and_star_cors() {
     cfg.env = "production".into();
     assert!(cfg.validate().is_err());
     cfg.jwt_secret = "a-sufficiently-long-secret".into();
+    assert!(cfg.validate().is_err());
+    cfg.database_url = "postgres://app:unique-not-default@127.0.0.1:5432/qefro".into();
     assert!(cfg.validate().is_ok());
     cfg.cors_origins = vec!["*".into()];
     assert!(cfg.validate().is_err());

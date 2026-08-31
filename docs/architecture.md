@@ -35,7 +35,7 @@ V0.4 extends V0.3. It does not rewrite CRUD, operations, or the agent boundary. 
 - Singletons, attachments, actions, links, and public forms
 - Notifications, webhooks, import, search, and realtime fan-out
 
-`EntityDef` is the source of truth. `EntityService` is the execution boundary. Generic List / Card / Kanban / Calendar / Chart / Form / Detail renderers consume UI metadata. Studio overlays presentation (`entity.field.ui`, `entity.views`); it does not replace the business model.
+`EntityDef` is the source of truth. `EntityService` is the execution boundary. Generic List / Card / Kanban / Calendar / Chart / Form / Detail renderers consume UI metadata. Studio overlays presentation (`entity.field.ui`, `entity.views`); it does not replace the business model. Authorization is RBAC + RowPolicy inside `EntityService`, not a second permission engine. PostgreSQL RLS is an optional defense-in-depth pilot on `qefro_activity` only ([rls.md](rls.md)).
 
 See [sdk.md](sdk.md) and [Create an application](creating-an-app.md).
 

@@ -103,6 +103,17 @@ describe("FieldValue", () => {
     expect(screen.getByText("Overdue")).toBeInTheDocument();
   });
 
+  it("strips style attributes from rich text", () => {
+    wrap(
+      <FieldValue
+        row={{ notes: '<p style="background:url(javascript:alert(1))">Hi</p>' }}
+        field={field({ name: "notes", widget: "rich_text" })}
+      />,
+    );
+    expect(screen.getByText("Hi")).toBeInTheDocument();
+    expect(document.querySelector("[style]")).toBeNull();
+  });
+
   it("does not execute script tags in rich text", () => {
     wrap(
       <FieldValue

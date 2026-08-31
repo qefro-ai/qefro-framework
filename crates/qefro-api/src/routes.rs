@@ -26,6 +26,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/auth/register", post(register))
         .route("/api/v1/auth/login", post(login))
         .route("/api/v1/auth/logout", post(logout))
+        .route("/api/v1/auth/refresh", post(refresh_session))
         .route("/api/v1/auth/me", get(me))
         .route("/api/v1/auth/switch-tenant", post(switch_tenant))
         .route("/api/v1/tenants", get(list_tenants).post(create_tenant))
@@ -175,11 +176,24 @@ struct RegisterBody {
 
 async fn register(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<RegisterBody>,
 ) -> Result<Json<AuthToken>, ApiError> {
     if !state.allow_register {
         return Err(QefroError::forbidden("registration is disabled").into());
     }
+    let email = body.email.to_ascii_lowercase();
+    let ip = client_ip(&headers);
+    rate_limit(
+        &state.auth_limiter,
+        &format!("register:{email}"),
+        "too many attempts",
+    )?;
+    rate_limit(
+        &state.auth_limiter,
+        &format!("register-ip:{ip}"),
+        "too many attempts",
+    )?;
     let token = state
         .auth
         .register(
@@ -202,19 +216,40 @@ struct LoginBody {
 
 async fn login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(body): Json<LoginBody>,
 ) -> Result<Json<AuthToken>, ApiError> {
-    if !state
-        .login_limiter
-        .allow(&format!("login:{}", body.email.to_ascii_lowercase()))
-    {
-        return Err(QefroError::rate_limited("too many login attempts").into());
-    }
+    let email = body.email.to_ascii_lowercase();
+    let ip = client_ip(&headers);
+    rate_limit(
+        &state.login_limiter,
+        &format!("login:{email}"),
+        "too many login attempts",
+    )?;
+    rate_limit(
+        &state.login_limiter,
+        &format!("login-ip:{ip}"),
+        "too many login attempts",
+    )?;
     let token = state
         .auth
         .login(&body.email, &body.password, body.tenant_slug.as_deref())
         .await?;
     Ok(Json(token))
+}
+
+async fn refresh_session(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<AuthToken>, ApiError> {
+    let header = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| QefroError::unauthorized("missing authorization header"))?;
+    let token = header
+        .strip_prefix("Bearer ")
+        .ok_or_else(|| QefroError::unauthorized("expected Bearer token"))?;
+    Ok(Json(state.auth.refresh(token).await?))
 }
 
 async fn logout(State(state): State<AppState>, Auth(ctx): Auth) -> Result<StatusCode, ApiError> {
@@ -249,6 +284,11 @@ async fn switch_tenant(
     Auth(ctx): Auth,
     Json(body): Json<SwitchBody>,
 ) -> Result<Json<AuthToken>, ApiError> {
+    rate_limit(
+        &state.auth_limiter,
+        &format!("switch:{}:{}", ctx.tenant_id, ctx.user_id),
+        "too many attempts",
+    )?;
     let token = state
         .auth
         .switch_tenant(ctx.user_id, body.tenant_id, ctx.session_id)
@@ -590,6 +630,27 @@ fn reject_reserved(slug: &str) -> Result<(), ApiError> {
     }
 }
 
+fn client_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".into())
+}
+
+fn rate_limit(
+    limiter: &qefro_core::MemoryRateLimiter,
+    key: &str,
+    message: &str,
+) -> Result<(), ApiError> {
+    let decision = limiter.check(key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(message, decision.retry_after_secs()).into());
+    }
+    Ok(())
+}
+
 async fn bulk_entities(
     State(state): State<AppState>,
     Auth(ctx): Auth,
@@ -597,6 +658,11 @@ async fn bulk_entities(
     Json(body): Json<qefro_db::BulkRequest>,
 ) -> Result<Json<Value>, ApiError> {
     reject_reserved(&slug)?;
+    rate_limit(
+        &state.expensive_limiter,
+        &format!("bulk:{}:{}", ctx.tenant_id, ctx.user_id),
+        "rate limit exceeded",
+    )?;
     Ok(Json(state.entities.bulk(&ctx, &slug, body).await?))
 }
 
@@ -607,6 +673,11 @@ async fn export_entities(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, ApiError> {
     reject_reserved(&slug)?;
+    rate_limit(
+        &state.expensive_limiter,
+        &format!("export:{}:{}", ctx.tenant_id, ctx.user_id),
+        "rate limit exceeded",
+    )?;
     let entity = state.entities.registry().get(&slug)?;
     let ids = params.get("ids").and_then(|raw| {
         let parsed: Vec<Uuid> = raw
@@ -1317,6 +1388,11 @@ async fn get_dashboard(
     if !ctx.allows_app(dash.module.as_deref()) {
         return Err(QefroError::not_found(format!("dashboard '{name}' not found")).into());
     }
+    rate_limit(
+        &state.expensive_limiter,
+        &format!("dashboard:{}:{}", ctx.tenant_id, ctx.user_id),
+        "rate limit exceeded",
+    )?;
     let extra: Vec<qefro_core::ui::DashboardFilter> = params
         .into_iter()
         .filter(|(k, v)| !k.is_empty() && !v.is_empty() && !["name"].contains(&k.as_str()))
@@ -1467,6 +1543,11 @@ async fn run_report(
     if !ctx.allows_app(report.module.as_deref()) {
         return Err(QefroError::not_found(format!("report '{name}' not found")).into());
     }
+    rate_limit(
+        &state.expensive_limiter,
+        &format!("report:{}:{}", ctx.tenant_id, ctx.user_id),
+        "rate limit exceeded",
+    )?;
     let filters = body.get("filters").cloned().unwrap_or(json!([]));
     Ok(Json(
         state.entities.run_report(&ctx, &report, filters).await?,

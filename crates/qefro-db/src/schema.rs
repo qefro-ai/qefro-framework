@@ -423,6 +423,26 @@ CREATE INDEX IF NOT EXISTS qefro_activity_actor_idx
 CREATE INDEX IF NOT EXISTS qefro_activity_created_idx
     ON qefro_activity (tenant_id, created_at DESC);
 
+ALTER TABLE qefro_activity ENABLE ROW LEVEL SECURITY;
+ALTER TABLE qefro_activity FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS qefro_activity_tenant ON qefro_activity;
+CREATE POLICY qefro_activity_tenant ON qefro_activity
+    FOR ALL
+    USING (
+        current_setting('qefro.rls_bypass', true) = 'on'
+        OR (
+            current_setting('qefro.tenant_id', true) <> ''
+            AND tenant_id = CAST(current_setting('qefro.tenant_id', true) AS uuid)
+        )
+    )
+    WITH CHECK (
+        current_setting('qefro.rls_bypass', true) = 'on'
+        OR (
+            current_setting('qefro.tenant_id', true) <> ''
+            AND tenant_id = CAST(current_setting('qefro.tenant_id', true) AS uuid)
+        )
+    );
+
 CREATE TABLE IF NOT EXISTS qefro_custom_fields (
     id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,

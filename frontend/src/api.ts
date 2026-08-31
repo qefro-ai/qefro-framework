@@ -12,6 +12,7 @@ export {
   saveToken,
   clearToken,
   hasToken,
+  TOKEN_KEY,
   onAuthChange,
   listVisible,
   formVisible,
