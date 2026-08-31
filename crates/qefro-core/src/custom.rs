@@ -227,6 +227,12 @@ pub fn merge_custom_fields(base: &EntityDef, extras: &[FieldDef]) -> QefroResult
         let mut field = extra.clone();
         field.custom = true;
         field.ui.sortable = false;
+        if field.label.is_empty() {
+            field.label = field.name.clone();
+        }
+        if field.ui.label.is_empty() {
+            field.ui.label = field.label.clone();
+        }
         validate_custom_field(&merged, &field)?;
         if merged.get_field(&field.name).is_some() {
             return Err(QefroError::bad_request(format!(
@@ -424,6 +430,28 @@ mod tests {
         };
         assert!(custom_types_compatible(&old, &wider));
         assert!(!custom_types_compatible(&old, &narrower));
+    }
+
+    #[test]
+    fn merge_fills_ui_label_from_field_label() {
+        let mut extra = FieldDef::string("gst_number").custom();
+        extra.label = "GST Number".into();
+        extra.ui.label.clear();
+        let merged = merge_custom_fields(&customer(), &[extra]).unwrap();
+        assert_eq!(
+            merged.get_field("gst_number").unwrap().ui.label,
+            "GST Number"
+        );
+        assert_eq!(
+            merged
+                .to_ui_meta()
+                .fields
+                .iter()
+                .find(|f| f.name == "gst_number")
+                .unwrap()
+                .label,
+            "GST Number"
+        );
     }
 
     #[test]
