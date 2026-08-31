@@ -9,10 +9,10 @@ use qefro_core::{
     AppModule, EntityRegistry, HookRegistry, LocalBlobStore, OperationDef, StudioCatalog,
 };
 use qefro_db::{
-    apply_schema, connect, AttachmentStore, AutomationEngine, BlobMetaStore, EmailNotifyJob,
-    EntityService, JobHandler, JobQueue, JobRegistry, LogNotificationJob, MetadataChangeService,
-    NotificationStore, OperationHandler, OperationRegistry, PlatformDispatcher, SavedFilterStore,
-    WebhookLog,
+    apply_schema, connect, AttachmentStore, AutomationEngine, BlobMetaStore, DueReminderJob,
+    EmailNotifyJob, EntityService, JobHandler, JobQueue, JobRegistry, LogNotificationJob,
+    MetadataChangeService, NotificationStore, OperationHandler, OperationRegistry,
+    PlatformDispatcher, SavedFilterStore, WebhookLog, DUE_REMINDER_JOB,
 };
 use qefro_events::InProcessEventBus;
 use qefro_permissions::{PermissionGrant, PermissionRegistry};
@@ -175,28 +175,39 @@ impl QefroRuntime {
     }
 
     pub fn entity_names(&self) -> Vec<String> {
-        self.apps
-            .iter()
-            .flat_map(|a| a.module.entities.iter().map(|e| e.name.clone()))
-            .collect()
+        let mut names: Vec<String> = qefro_core::platform_entities()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        names.extend(
+            self.apps
+                .iter()
+                .flat_map(|a| a.module.entities.iter().map(|e| e.name.clone())),
+        );
+        names
     }
 
     pub fn permission_grants(&self) -> Vec<PermissionGrant> {
-        self.apps
-            .iter()
-            .flat_map(|a| a.permissions.clone())
-            .collect()
+        let mut grants = qefro_permissions::identity_grants();
+        grants.extend(qefro_permissions::task_grants());
+        grants.extend(self.apps.iter().flat_map(|a| a.permissions.clone()));
+        grants
     }
 
     pub fn workflows(&self) -> Vec<WorkflowDef> {
-        self.apps.iter().flat_map(|a| a.workflows.clone()).collect()
+        let mut wfs = vec![qefro_workflow::task_workflow()];
+        wfs.extend(self.apps.iter().flat_map(|a| a.workflows.clone()));
+        wfs
     }
 
     pub fn automations(&self) -> Vec<qefro_core::AutomationDef> {
-        self.apps
-            .iter()
-            .flat_map(|a| a.module.automations.clone())
-            .collect()
+        let mut autos = qefro_core::task_automations();
+        autos.extend(
+            self.apps
+                .iter()
+                .flat_map(|a| a.module.automations.clone()),
+        );
+        autos
     }
 
     pub fn reports(&self) -> Vec<qefro_core::ReportDef> {
@@ -207,15 +218,18 @@ impl QefroRuntime {
     }
 
     pub fn dashboards(&self) -> Vec<qefro_core::DashboardDef> {
-        self.apps
+        let mut cards: Vec<qefro_core::DashboardDef> = self
+            .apps
             .iter()
             .flat_map(|a| a.module.dashboards.clone())
-            .collect()
+            .collect();
+        cards.push(qefro_core::task_dashboard());
+        cards
     }
 
     pub fn tool_names(&self) -> Vec<String> {
         let mut names = Vec::new();
-        for entity in self.entities() {
+        let mut push = |entity: &qefro_core::EntityDef| {
             let snake = qefro_core::ident::snake_case(&entity.name);
             names.push(format!("create_{snake}"));
             names.push(format!("get_{snake}"));
@@ -225,6 +239,12 @@ impl QefroRuntime {
             if entity.workflow.is_some() {
                 names.push(format!("transition_{snake}"));
             }
+        };
+        for entity in qefro_core::platform_entities() {
+            push(&entity);
+        }
+        for entity in self.entities() {
+            push(entity);
         }
         for app in &self.apps {
             for (def, _) in &app.operations {
@@ -237,6 +257,9 @@ impl QefroRuntime {
 
     pub fn operation_defs(&self) -> Vec<OperationDef> {
         let mut defs = Vec::new();
+        for entity in qefro_core::platform_entities() {
+            defs.extend(qefro_db::crud_operation_defs(&entity));
+        }
         for entity in self.entities() {
             defs.extend(qefro_db::crud_operation_defs(entity));
         }
@@ -259,10 +282,18 @@ impl QefroRuntime {
             .collect()
     }
 
-    pub fn entity(&self, name: &str) -> Option<&qefro_core::EntityDef> {
-        self.entities()
+    pub fn entity(&self, name: &str) -> Option<qefro_core::EntityDef> {
+        if let Some(entity) = qefro_core::platform_entities()
             .into_iter()
             .find(|e| e.name.eq_ignore_ascii_case(name) || e.slug.eq_ignore_ascii_case(name))
+        {
+            return Some(entity);
+        }
+        self.apps
+            .iter()
+            .flat_map(|a| a.module.entities.iter())
+            .find(|e| e.name.eq_ignore_ascii_case(name) || e.slug.eq_ignore_ascii_case(name))
+            .cloned()
     }
 
     pub fn routes_summary(&self) -> Vec<String> {
@@ -277,6 +308,7 @@ impl QefroRuntime {
             "GET/PATCH /api/v1/users/:id".into(),
             "GET/POST /api/v1/people".into(),
             "GET/POST /api/v1/organizations".into(),
+            "GET/POST /api/v1/tasks".into(),
             "GET /api/v1/meta/ui".into(),
             "GET /api/v1/meta/dashboards".into(),
             "GET /api/v1/meta/reports".into(),
@@ -331,7 +363,7 @@ impl QefroRuntime {
         let mut reports = Vec::new();
         let mut print_formats = Vec::new();
 
-        for entity in qefro_core::identity_entities() {
+        for entity in qefro_core::platform_entities() {
             let name = entity.name.clone();
             registry.register(entity)?;
             permissions.ensure_admin(&name);
@@ -339,6 +371,10 @@ impl QefroRuntime {
         for grant in qefro_permissions::identity_grants() {
             permissions.grant(grant);
         }
+        for grant in qefro_permissions::task_grants() {
+            permissions.grant(grant);
+        }
+        workflows.register(qefro_workflow::task_workflow());
 
         for app in &self.apps {
             app.module.install_entities(&mut registry)?;
@@ -365,6 +401,7 @@ impl QefroRuntime {
                 print_formats.extend(entity.print_formats.clone());
             }
         }
+        dashboards.push(qefro_core::task_dashboard());
 
         registry.wire_identity_inverses()?;
 
@@ -417,6 +454,8 @@ impl QefroRuntime {
         let jobs = Arc::new(JobQueue::new(pool.clone()));
         job_handlers.register("notify", Arc::new(LogNotificationJob));
         job_handlers.register("notify.email", Arc::new(EmailNotifyJob));
+        let due_reminder = DueReminderJob::new();
+        job_handlers.register(DUE_REMINDER_JOB, due_reminder.clone());
         job_handlers.register(
             "webhook.deliver",
             Arc::new(WebhookDeliverJob {
@@ -436,9 +475,9 @@ impl QefroRuntime {
             }
         }
 
-        let mut notification_defs = Vec::new();
+        let mut notification_defs = qefro_core::task_notifications();
         let mut webhook_defs = Vec::new();
-        let mut automation_defs = Vec::new();
+        let mut automation_defs = qefro_core::task_automations();
         for app in &self.apps {
             notification_defs.extend(app.module.notifications.clone());
             webhook_defs.extend(app.module.webhooks.clone());
@@ -475,6 +514,7 @@ impl QefroRuntime {
             .with_identity(auth.clone()),
         );
         automation.bind(entities.clone());
+        due_reminder.bind(entities.clone());
         entities
             .events()
             .subscribe_async(
@@ -513,7 +553,7 @@ impl QefroRuntime {
             .iter()
             .flat_map(|a| a.module.default_nav_slugs())
             .collect();
-        let default_nav_items: Vec<qefro_core::WorkspaceNavItem> = self
+        let mut default_nav_items: Vec<qefro_core::WorkspaceNavItem> = self
             .apps
             .iter()
             .flat_map(|a| {
@@ -535,6 +575,17 @@ impl QefroRuntime {
                 })
             })
             .collect();
+        default_nav_items.push(
+            qefro_core::WorkspaceNavItem {
+                label: "Tasks".into(),
+                entity: qefro_core::TASK_ENTITY.into(),
+                slug: qefro_core::TASK_SLUG.into(),
+                query: None,
+                view: None,
+                module: None,
+                section: Some("Work".into()),
+            },
+        );
         let mut default_hidden_entities: Vec<String> = vec![
             qefro_core::PERSON_SLUG.into(),
             qefro_core::ORGANIZATION_SLUG.into(),

@@ -443,3 +443,40 @@ mod tests {
         );
     }
 }
+
+/// Framework Task workflow. Status is workflow-managed; clients must transition.
+pub fn task_workflow() -> WorkflowDef {
+    use qefro_core::{STATUS_CANCELLED, STATUS_COMPLETED, STATUS_IN_PROGRESS, STATUS_OPEN, TASK_ENTITY, TASK_WORKFLOW};
+
+    WorkflowDef::new(TASK_WORKFLOW, TASK_ENTITY, STATUS_OPEN)
+        .state(StateDef::new(STATUS_IN_PROGRESS))
+        .state(StateDef::new(STATUS_COMPLETED).terminal())
+        .state(StateDef::new(STATUS_CANCELLED).terminal())
+        .transition(
+            TransitionDef::new("start", STATUS_OPEN, STATUS_IN_PROGRESS).label("Start"),
+        )
+        .transition(
+            TransitionDef::new("completed", STATUS_OPEN, STATUS_COMPLETED).label("Complete"),
+        )
+        .transition(
+            TransitionDef::new("completed", STATUS_IN_PROGRESS, STATUS_COMPLETED).label("Complete"),
+        )
+        .transition(
+            TransitionDef::new("cancelled", STATUS_OPEN, STATUS_CANCELLED)
+                .label("Cancel")
+                .confirm("Cancel this task?"),
+        )
+        .transition(
+            TransitionDef::new("cancelled", STATUS_IN_PROGRESS, STATUS_CANCELLED)
+                .label("Cancel")
+                .confirm("Cancel this task?"),
+        )
+}
+
+#[cfg(test)]
+mod task_workflow_tests {
+    #[test]
+    fn task_workflow_is_structurally_valid() {
+        crate::task_workflow().validate().unwrap();
+    }
+}

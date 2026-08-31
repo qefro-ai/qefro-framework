@@ -89,6 +89,29 @@ export function datePresetRange(preset: string, now = new Date()): { from: strin
   }
 }
 
+/** Derived due label. Does not persist overdue state. */
+export function dueChip(
+  value: unknown,
+  status?: unknown,
+  now = new Date(),
+): "Overdue" | "Due today" | "Due tomorrow" | null {
+  if (value == null || value === "") return null;
+  const st = String(status ?? "").toLowerCase();
+  if (st === "completed" || st === "cancelled") return null;
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return null;
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const dueDay = new Date(date);
+  dueDay.setHours(0, 0, 0, 0);
+  const diff = Math.round((dueDay.getTime() - start.getTime()) / 86400000);
+  if (date.getTime() < now.getTime() && diff < 0) return "Overdue";
+  if (diff < 0) return "Overdue";
+  if (diff === 0) return "Due today";
+  if (diff === 1) return "Due tomorrow";
+  return null;
+}
+
 export function downloadCsv(filename: string, headers: string[], rows: unknown[][]) {
   const lines = [
     headers.map(csvEscape).join(","),

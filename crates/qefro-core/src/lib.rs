@@ -32,6 +32,7 @@ pub mod schedule;
 pub mod seed;
 pub mod storage;
 pub mod studio;
+pub mod task;
 pub mod timezone;
 pub mod ui;
 pub mod validate;
@@ -71,6 +72,12 @@ pub use identity::{
     strip_secrets, user_entity, validate_party, ORGANIZATION_ENTITY, ORGANIZATION_LINK_FIELD,
     ORGANIZATION_SLUG, PARTY_TYPE_FIELD, PARTY_TYPE_ORGANIZATION, PARTY_TYPE_PERSON, PERSON_ENTITY,
     PERSON_LINK_FIELD, PERSON_SLUG, SECRET_KEYS, USER_ENTITY, USER_SLUG,
+};
+pub use task::{
+    apply_task_link, platform_entities, task_automations, task_dashboard, task_entity,
+    task_nav_item, task_notifications, task_priorities, task_statuses, RELATED_ID_FIELD,
+    RELATED_TYPE_FIELD, STATUS_CANCELLED, STATUS_COMPLETED, STATUS_IN_PROGRESS, STATUS_OPEN,
+    TASK_ENTITY, TASK_SLUG, TASK_WORKFLOW,
 };
 pub use lifecycle::{lifecycle_event_name, LifecycleHookDef};
 pub use metering::MeteringEvent;

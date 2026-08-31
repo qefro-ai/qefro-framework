@@ -373,7 +373,7 @@ async fn search_respects_rbac_and_field_permissions() {
         post(
             "/api/v1/employees",
             Some(&token),
-            json!({ "name": "Ahmed Khan", "email": format!("ahmed-{suffix}@ex.com"), "salary": 9 }),
+            json!({ "name": "Ahmed Khan", "email": format!("ahmed-{suffix}@ex.com"), "salary": 123456 }),
         ),
     )
     .await;
@@ -388,7 +388,7 @@ async fn search_respects_rbac_and_field_permissions() {
     assert!(items.iter().any(|i| i["entity"] == "Employee"), "{results}");
     for hit in &items {
         let snippet = hit["snippet"].as_str().unwrap_or("");
-        assert!(!snippet.contains('9'), "{hit}");
+        assert!(!snippet.contains("123456"), "{hit}");
     }
 }
 

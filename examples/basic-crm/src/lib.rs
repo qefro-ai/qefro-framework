@@ -86,6 +86,11 @@ mod tests {
         assert!(person.ui.list);
         assert!(customer.get_field("party_type").is_some());
         assert!(customer.get_field("organization_id").is_some());
+        assert!(customer.get_field("tasks").is_some());
+        assert!(customer
+            .links
+            .iter()
+            .any(|l| l.entity == "Task" && l.relation == "entity_id"));
         let identity = customer
             .fields
             .iter()

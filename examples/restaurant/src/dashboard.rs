@@ -59,4 +59,22 @@ pub fn ops() -> DashboardDef {
         ))
         .card(DashboardCard::recent("Recent orders", "Order", 8))
         .card(DashboardCard::audit("Changes today").roles(&["Admin"]))
+        .card(
+            DashboardCard::kpi("Open tasks", "Task")
+                .filter("status.neq", "Completed")
+                .filter("status.neq", "Cancelled")
+                .size("sm"),
+        )
+        .card(
+            DashboardCard::count("Overdue tasks", "Task")
+                .filter("due_at.lt", "now")
+                .filter("status.neq", "Completed")
+                .filter("status.neq", "Cancelled"),
+        )
+        .card(
+            DashboardCard::count("Tasks due today", "Task")
+                .filter("due_at.gte", "today")
+                .filter("due_at.lt", "tomorrow")
+                .filter("status.neq", "Completed"),
+        )
 }

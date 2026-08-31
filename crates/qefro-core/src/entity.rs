@@ -21,6 +21,8 @@ pub struct RecordLifecycle {
 pub enum RowPolicy {
     AssignedTo,
     CreatedBy,
+    /// Visible when the user is the assignee or the creator.
+    AssignedToOrCreatedBy,
 }
 
 /// Serializable entity metadata. Applications register these at startup; YAML
@@ -183,6 +185,12 @@ impl EntityDef {
     /// Optional Person / Organization identity fields (`party_type`, `person_id`, `organization_id`).
     pub fn with_party(mut self) -> Self {
         crate::identity::apply_party_fields(&mut self);
+        self
+    }
+
+    /// Related Tasks panel (`entity_type` / `entity_id` on Task). Metadata only.
+    pub fn with_tasks(mut self) -> Self {
+        crate::task::apply_task_link(&mut self);
         self
     }
 

@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import type { UiEntity, UiField } from "../../metadata/types";
 import { expandedLabel, type Expanded } from "../../sdk/client";
-import { relativeTime } from "../../format";
+import { relativeTime, dueChip } from "../../format";
 import { formatMoney, utcToDatetimeLocal } from "../../metadata/timezone";
 import { useTenantTheme } from "../../metadata/context";
 import { displayValue } from "../../metadata/views";
@@ -62,6 +62,16 @@ export function FieldValue({
     return <div className="rich-surface" dangerouslySetInnerHTML={{ __html: String(value) }} />;
   }
   if (widget === "datetime" || field?.type === "datetime") {
+    if (name === "due_at") {
+      const chip = dueChip(value, row.status);
+      if (chip) {
+        return (
+          <span className={`status-badge tone-${chip === "Overdue" ? "danger" : "warning"}`}>
+            {chip}
+          </span>
+        );
+      }
+    }
     if (relativeDates) return relativeTime(value, theme.locale);
     return utcToDatetimeLocal(value, theme.timezone).replace("T", " ");
   }

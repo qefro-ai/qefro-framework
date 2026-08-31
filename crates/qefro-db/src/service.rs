@@ -12,7 +12,8 @@ use qefro_core::{
     apply_entity_rules, canonicalize_datetime, existence_rules, is_person_link_field,
     person_backref_field, sanitize_html, strip_secrets, validate_party, validate_record,
     EntityRegistry, FieldError, FieldType, HookRegistry, OpContext, OperationDef, QefroError,
-    QefroResult, PERSON_ENTITY, PERSON_LINK_FIELD, USER_ENTITY,
+    QefroResult, RELATED_ID_FIELD, RELATED_TYPE_FIELD, PERSON_ENTITY, PERSON_LINK_FIELD,
+    STATUS_CANCELLED, STATUS_COMPLETED, USER_ENTITY,
 };
 use qefro_events::{DomainEvent, InProcessEventBus};
 use qefro_permissions::{Action, PermissionRegistry};
@@ -223,6 +224,7 @@ impl EntityService {
             return self.list_users(ctx, query).await;
         }
         let mut query = query.sanitize(&entity)?;
+        resolve_query_placeholders(&mut query, ctx);
         self.apply_row_policy_filters(ctx, &entity, &mut query);
         let mut page = self.repo.list(&entity, ctx, &query).await?;
         for item in &mut page.items {
@@ -292,6 +294,7 @@ impl EntityService {
         validate_record(entity.business_fields(), &data, false)?;
         apply_entity_rules(entity.business_fields(), &entity.validation, &data, false)?;
         self.check_relation_existence(ctx, &entity, &data).await?;
+        self.check_assignment(ctx, &entity, &data).await?;
         self.validate_child_payloads(ctx, &entity, &children, false)
             .await?;
         self.check_uniques(ctx, &entity, &data, None).await?;
@@ -381,7 +384,7 @@ impl EntityService {
             let _ = tx.rollback().await;
             return Err(e);
         }
-        let events = mutation_events(
+        let mut events = mutation_events(
             &entity.name,
             id,
             ctx,
@@ -389,7 +392,36 @@ impl EntityService {
             "created",
             "entity.created",
         );
+        if crate::activity::assignment_changed(None, Some(&created)) {
+            events.push(
+                DomainEvent::new(
+                    format!("{}.assigned", snake(&entity.name)),
+                    entity.name.clone(),
+                    id,
+                    ctx.tenant_id,
+                    json!({ "assigned_to": created.get("assigned_to") }),
+                )
+                .with_user(ctx.user_id),
+            );
+            events.push(
+                DomainEvent::new(
+                    "entity.assigned".to_string(),
+                    entity.name.clone(),
+                    id,
+                    ctx.tenant_id,
+                    json!({ "assigned_to": created.get("assigned_to") }),
+                )
+                .with_user(ctx.user_id),
+            );
+        }
         if let Err(e) = Outbox::enqueue_many_tx(&mut tx, &events).await {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+        if let Err(e) = self
+            .enqueue_due_reminder_tx(&mut tx, ctx, &entity, &created)
+            .await
+        {
             let _ = tx.rollback().await;
             return Err(e);
         }
@@ -464,6 +496,7 @@ impl EntityService {
         }
         apply_entity_rules(entity.business_fields(), &entity.validation, &merged, true)?;
         self.check_relation_existence(ctx, &entity, &merged).await?;
+        self.check_assignment(ctx, &entity, &merged).await?;
         self.validate_child_payloads(ctx, &entity, &children, true)
             .await?;
         self.check_uniques(ctx, &entity, &patch, Some(id)).await?;
@@ -570,6 +603,13 @@ impl EntityService {
             );
         }
         if let Err(e) = Outbox::enqueue_many_tx(&mut tx, &events).await {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
+        if let Err(e) = self
+            .enqueue_due_reminder_tx(&mut tx, ctx, &entity, &updated)
+            .await
+        {
             let _ = tx.rollback().await;
             return Err(e);
         }
@@ -695,7 +735,16 @@ impl EntityService {
             t.guard_allows(&current)?;
         }
         let to = self.workflows.apply(&entity.name, &from, transition, ctx)?;
-        let patch = json!({ wf.field.clone(): to.clone() });
+        let mut patch = serde_json::Map::new();
+        patch.insert(wf.field.clone(), json!(to.clone()));
+        if entity.get_field("completed_at").is_some() {
+            if to == STATUS_COMPLETED {
+                patch.insert("completed_at".into(), json!(Utc::now().to_rfc3339()));
+            } else if from == STATUS_COMPLETED {
+                patch.insert("completed_at".into(), Value::Null);
+            }
+        }
+        let patch = Value::Object(patch);
         let mut tx = self
             .pool()
             .begin()
@@ -761,6 +810,13 @@ impl EntityService {
             let _ = tx.rollback().await;
             return Err(e);
         }
+        if let Err(e) = self
+            .enqueue_due_reminder_tx(&mut tx, ctx, &entity, &updated)
+            .await
+        {
+            let _ = tx.rollback().await;
+            return Err(e);
+        }
         tx.commit()
             .await
             .map_err(|e| QefroError::database(e.to_string()))?;
@@ -777,6 +833,7 @@ impl EntityService {
         coerce_numeric_json(entity, &mut record);
         strip_secrets(Some(entity), &mut record);
         self.expand_many_to_one(ctx, entity, &mut record).await?;
+        self.expand_related_record(ctx, entity, &mut record).await?;
         self.expand_one_to_many(ctx, entity, &mut record).await?;
         self.expand_child_tables(ctx, entity, &mut record).await?;
         self.attach_workflow(ctx, entity, &mut record);
@@ -934,6 +991,12 @@ impl EntityService {
                 field: link.relation.clone(),
                 value: id.clone(),
             });
+            for extra in &link.filters {
+                query.filters.push(qefro_search::Filter::Eq {
+                    field: extra.field.clone(),
+                    value: json!(extra.value.clone()),
+                });
+            }
             let total = self
                 .repo
                 .list(&target, ctx, &query)
@@ -1097,6 +1160,11 @@ impl EntityService {
         self.activity
             .record_tx(tx, ctx, &entity.name, id, activity_type, &message, metadata)
             .await?;
+        if let Some(related) = new.or(old) {
+            let _ = self
+                .write_related_activity_tx(tx, ctx, entity, related, activity_type, &message)
+                .await;
+        }
         Ok(())
     }
 
@@ -1364,6 +1432,7 @@ impl EntityService {
                         "total": page.total,
                         "columns": columns,
                         "limit": link.and_then(|l| l.limit),
+                        "filters": link.map(|l| l.filters.clone()).unwrap_or_default(),
                     }),
                 );
             }
@@ -1910,10 +1979,13 @@ impl EntityService {
             .filters
             .iter()
             .map(|f| {
-                let value = if f.value == "today" {
-                    chrono::Utc::now().date_naive().to_string()
-                } else {
-                    f.value.clone()
+                let value = match f.value.as_str() {
+                    "today" => chrono::Utc::now().date_naive().to_string(),
+                    "tomorrow" => (chrono::Utc::now().date_naive() + chrono::Days::new(1))
+                        .to_string(),
+                    "now" => chrono::Utc::now().to_rfc3339(),
+                    "current_user" | "me" => ctx.user_id.to_string(),
+                    _ => f.value.clone(),
                 };
                 (f.field.clone(), value)
             })
@@ -2356,6 +2428,195 @@ impl EntityService {
             Err(QefroError::validation(errors))
         }
     }
+
+    async fn check_assignment(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        data: &Value,
+    ) -> QefroResult<()> {
+        if entity.get_field("assigned_to").is_none() {
+            return Ok(());
+        }
+        let Some(raw) = data.get("assigned_to") else {
+            return Ok(());
+        };
+        if raw.is_null() {
+            return Ok(());
+        }
+        let Some(id) = raw.as_str().and_then(|s| Uuid::parse_str(s).ok()) else {
+            return Err(QefroError::bad_request("assigned_to must be a user id"));
+        };
+        if id != ctx.user_id {
+            self.permissions.check(ctx, USER_ENTITY, Action::Read)?;
+        }
+        let Some(identity) = self.identity_service() else {
+            return Ok(());
+        };
+        let user = match identity.get_tenant_user(ctx.tenant_id, id).await {
+            Ok(user) => user,
+            Err(QefroError::NotFound { .. }) => {
+                return Err(QefroError::bad_request(
+                    "cannot assign to a user outside this tenant",
+                ));
+            }
+            Err(e) => return Err(e),
+        };
+        if user
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .is_some_and(|enabled| !enabled)
+        {
+            return Err(QefroError::bad_request(
+                "cannot assign to a disabled user",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn enqueue_due_reminder_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        record: &Value,
+    ) -> QefroResult<()> {
+        if entity.get_field("due_at").is_none() {
+            return Ok(());
+        }
+        let status = record.get("status").and_then(|v| v.as_str()).unwrap_or("");
+        if status.eq_ignore_ascii_case(STATUS_COMPLETED)
+            || status.eq_ignore_ascii_case(STATUS_CANCELLED)
+        {
+            return Ok(());
+        }
+        let Some(due) = record.get("due_at").and_then(|v| v.as_str()).filter(|s| !s.is_empty())
+        else {
+            return Ok(());
+        };
+        let id = record_id(record)?;
+        let key = format!("due:{}:{}:{}", entity.name, id, due);
+        self.jobs
+            .enqueue_tx(
+                tx,
+                ctx,
+                crate::due::DUE_REMINDER_JOB,
+                json!({
+                    "entity": entity.name,
+                    "record_id": id,
+                    "due_at": due,
+                    "run_at": due,
+                    "idempotency_key": key,
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn expand_related_record(
+        &self,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        record: &mut Value,
+    ) -> QefroResult<()> {
+        if entity.get_field(RELATED_TYPE_FIELD).is_none()
+            || entity.get_field(RELATED_ID_FIELD).is_none()
+        {
+            return Ok(());
+        }
+        let Some(type_name) = record
+            .get(RELATED_TYPE_FIELD)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        else {
+            return Ok(());
+        };
+        let Some(id) = record
+            .get(RELATED_ID_FIELD)
+            .and_then(|v| v.as_str())
+            .and_then(|s| Uuid::parse_str(s).ok())
+        else {
+            return Ok(());
+        };
+        let Ok(target) = self.registry.get(type_name) else {
+            return Ok(());
+        };
+        if self
+            .permissions
+            .check(ctx, &target.name, Action::Read)
+            .is_err()
+        {
+            return Ok(());
+        }
+        let Ok(related) = self.repo.get(&target, ctx, id).await else {
+            return Ok(());
+        };
+        let nested = self
+            .nested_relation_expansions(ctx, &target, &related)
+            .await
+            .unwrap_or_default();
+        let expansion = relation_expansion(&target, id, &related, nested);
+        if let Some(obj) = record.as_object_mut() {
+            let expanded = obj
+                .entry("_expanded")
+                .or_insert_with(|| json!({}))
+                .as_object_mut();
+            if let Some(map) = expanded {
+                map.insert(RELATED_ID_FIELD.into(), expansion);
+            }
+        }
+        Ok(())
+    }
+
+    async fn write_related_activity_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        ctx: &OpContext,
+        entity: &qefro_core::EntityDef,
+        record: &Value,
+        activity_type: &str,
+        message: &str,
+    ) -> QefroResult<()> {
+        if entity.get_field(RELATED_TYPE_FIELD).is_none() {
+            return Ok(());
+        }
+        let Some(type_name) = record
+            .get(RELATED_TYPE_FIELD)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty() && *s != entity.name)
+        else {
+            return Ok(());
+        };
+        let Some(related_id) = record
+            .get(RELATED_ID_FIELD)
+            .and_then(|v| v.as_str())
+            .and_then(|s| Uuid::parse_str(s).ok())
+        else {
+            return Ok(());
+        };
+        let Ok(target) = self.registry.get(type_name) else {
+            return Ok(());
+        };
+        if !target.activity {
+            return Ok(());
+        }
+        self.activity
+            .record_tx(
+                tx,
+                ctx,
+                &target.name,
+                related_id,
+                crate::activity::TYPE_SYSTEM,
+                message,
+                json!({
+                    "source_entity": entity.name,
+                    "activity_type": activity_type,
+                    "title": record.get("title"),
+                }),
+            )
+            .await?;
+        Ok(())
+    }
 }
 
 struct RelatedSpec {
@@ -2553,6 +2814,31 @@ fn reject_client_tenant(data: &Value) -> QefroResult<()> {
 
 fn snake(name: &str) -> String {
     qefro_core::ident::snake_case(name)
+}
+
+fn resolve_query_placeholders(query: &mut qefro_search::Query, ctx: &OpContext) {
+    use qefro_search::Filter;
+    let me = json!(ctx.user_id.to_string());
+    let now = json!(Utc::now().to_rfc3339());
+    for filter in &mut query.filters {
+        match filter {
+            Filter::Eq { value, .. }
+            | Filter::Neq { value, .. }
+            | Filter::Gt { value, .. }
+            | Filter::Gte { value, .. }
+            | Filter::Lt { value, .. }
+            | Filter::Lte { value, .. } => {
+                if let Some(s) = value.as_str() {
+                    match s {
+                        "current_user" | "me" => *value = me.clone(),
+                        "now" => *value = now.clone(),
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 fn mutation_events(

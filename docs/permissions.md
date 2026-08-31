@@ -40,4 +40,4 @@ These APIs load the owning record (or require Admin) through `EntityService` fir
 
 ## Identity
 
-Person is a tenant-owned individual (canonical name/email/phone once `person_id` is set). User is the existing auth login (roles, membership, enabled). Customer / Patient / Employee are business records and must not be modeled as User. See [identity.md](identity.md).
+Person is a tenant-owned individual (canonical name/email/phone once `person_id` is set). User is the existing auth login (roles, membership, enabled). Customer / Patient / Employee are business records and must not be modeled as User. See [identity.md](identity.md). Platform Task uses the same matrix (`Task` Create/Read/Update/Delete) without a separate permission registry. See [tasks.md](tasks.md).

@@ -1,4 +1,4 @@
-import { datePresetRange, fileSize, relativeTime, statusTone } from "./format";
+import { datePresetRange, dueChip, fileSize, relativeTime, statusTone } from "./format";
 
 describe("format", () => {
   it("computes date presets without sql", () => {
@@ -18,5 +18,16 @@ describe("format", () => {
   it("formats attachment sizes", () => {
     expect(fileSize(245 * 1024)).toMatch(/245 KB/);
     expect(fileSize(1.2 * 1024 * 1024)).toMatch(/1\.2 MB/);
+  });
+
+  it("derives due chips without persisting overdue", () => {
+    const now = new Date(2026, 7, 30, 12, 0, 0);
+    expect(dueChip(new Date(2026, 7, 29, 9, 0, 0).toISOString(), "Open", now)).toBe("Overdue");
+    expect(dueChip(new Date(2026, 7, 30, 18, 0, 0).toISOString(), "Open", now)).toBe("Due today");
+    expect(dueChip(new Date(2026, 7, 31, 9, 0, 0).toISOString(), "In Progress", now)).toBe(
+      "Due tomorrow",
+    );
+    expect(dueChip(new Date(2026, 7, 29, 9, 0, 0).toISOString(), "Completed", now)).toBeNull();
+    expect(dueChip(new Date(2026, 7, 29, 9, 0, 0).toISOString(), "Cancelled", now)).toBeNull();
   });
 });

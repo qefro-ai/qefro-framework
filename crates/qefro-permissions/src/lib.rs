@@ -89,7 +89,7 @@ pub const ROLE_CUSTOMER: &str = "Customer";
 pub const ROLE_HR: &str = "HR";
 pub const ROLE_PUBLIC: &str = "Public";
 
-/// Grants for framework Person / User. Admin is added via `ensure_admin`.
+/// Grants for framework Person / User / Task. Admin is added via `ensure_admin`.
 pub fn identity_grants() -> Vec<PermissionGrant> {
     vec![
         PermissionGrant::read(ROLE_MANAGER, "User"),
@@ -103,6 +103,19 @@ pub fn identity_grants() -> Vec<PermissionGrant> {
         PermissionGrant::new(
             ROLE_STAFF,
             "Organization",
+            vec![Action::Create, Action::Read, Action::Update, Action::List],
+        ),
+    ]
+}
+
+/// Task is a platform entity. Admin is added via `ensure_admin("Task")`.
+pub fn task_grants() -> Vec<PermissionGrant> {
+    vec![
+        PermissionGrant::crud(ROLE_MANAGER, "Task"),
+        PermissionGrant::new(ROLE_MANAGER, "Task", vec![Action::Export]),
+        PermissionGrant::new(
+            ROLE_STAFF,
+            "Task",
             vec![Action::Create, Action::Read, Action::Update, Action::List],
         ),
     ]
