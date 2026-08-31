@@ -331,12 +331,34 @@ impl EntityService {
     }
 }
 
-fn csv_escape(value: &str) -> String {
-    if value.contains([',', '"', '\n', '\r']) {
-        format!("\"{}\"", value.replace('"', "\"\""))
-    } else {
-        value.to_string()
+/// Quote CSV cells and neutralize spreadsheet formula injection (`=`, `+`, `-`, `@`).
+pub(crate) fn csv_escape(value: &str) -> String {
+    let mut s = value.to_string();
+    if looks_like_formula(&s) {
+        s.insert(0, '\'');
     }
+    if s.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s
+    }
+}
+
+fn looks_like_formula(value: &str) -> bool {
+    let trimmed = value.trim_start();
+    let Some(first) = trimmed.chars().next() else {
+        return false;
+    };
+    matches!(first, '=' | '+' | '@' | '\t' | '\r')
+        || (first == '-' && !is_plain_number(&trimmed[1..]))
+}
+
+fn is_plain_number(rest: &str) -> bool {
+    if rest.is_empty() {
+        return false;
+    }
+    rest.chars()
+        .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
 }
 
 fn value_text(value: &Value) -> String {

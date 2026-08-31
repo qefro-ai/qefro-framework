@@ -675,20 +675,53 @@ export class QefroClient {
     request<Record<string, unknown>>(`/api/v1/studio/automations/${name}/enable`, { method: "POST" });
   studioPublicForms = () =>
     request<{ public_forms: Array<Record<string, unknown>> }>("/api/v1/studio/public-forms");
-  importPreview = (slug: string, csv: string, mapping?: Array<{ column: string; field?: string | null; default?: unknown }>) =>
+  importPreview = (
+    slug: string,
+    body: {
+      csv?: string;
+      json?: string;
+      mapping?: Array<{ column: string; field?: string | null; default?: unknown }>;
+      mode?: string;
+      duplicate_policy?: string;
+      match_field?: string;
+      format?: string;
+      blob_key?: string;
+    },
+  ) =>
     request<Record<string, unknown>>(`/api/v1/${slug}/import/preview`, {
       method: "POST",
-      body: JSON.stringify({ csv, mapping: mapping ?? [] }),
+      body: JSON.stringify(body),
     });
   importRun = (
     slug: string,
-    csv: string,
-    mapping?: Array<{ column: string; field?: string | null; default?: unknown }>,
+    body: {
+      csv?: string;
+      json?: string;
+      mapping?: Array<{ column: string; field?: string | null; default?: unknown }>;
+      mode?: string;
+      duplicate_policy?: string;
+      match_field?: string;
+      dry_run?: boolean;
+      batch_size?: number;
+      blob_key?: string;
+      idempotency_key?: string;
+    },
   ) =>
     request<Record<string, unknown>>(`/api/v1/${slug}/import`, {
       method: "POST",
-      body: JSON.stringify({ csv, mapping: mapping ?? [], batch_size: 100 }),
+      body: JSON.stringify({ batch_size: 100, ...body }),
     });
+  importUpload = (slug: string, file: File) => xhrUpload(`/api/v1/${slug}/import/upload`, file);
+  importJobs = (slug?: string) =>
+    request<{ items: Array<Record<string, unknown>> }>(
+      slug ? `/api/v1/${slug}/imports` : "/api/v1/imports",
+    );
+  importJob = (id: string) => request<Record<string, unknown>>(`/api/v1/imports/${id}`);
+  cancelImport = (id: string) =>
+    request<Record<string, unknown>>(`/api/v1/imports/${id}/cancel`, { method: "POST" });
+  retryImport = (id: string) =>
+    request<Record<string, unknown>>(`/api/v1/imports/${id}/retry`, { method: "POST" });
+  importErrorsUrl = (id: string) => `/api/v1/imports/${id}/errors`;
   webhookDeliveries = (name: string) =>
     request<{ deliveries: Array<Record<string, unknown>> }>(`/api/v1/webhooks/${name}/deliveries`);
   testWebhook = (name: string) =>

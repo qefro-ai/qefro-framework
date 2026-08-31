@@ -59,7 +59,7 @@ Do not log passwords, access tokens, `DATABASE_URL`, or JWT secrets. HTTP 5xx us
 
 `RateLimiter` is an in-memory hook keyed by `tenant:user:path` (and specialized keys for login, search, public forms, uploads, and imports). Client-supplied tenant ids cannot change the key. It is not a distributed limiter. A Redis adapter can implement the same trait later.
 
-Limits: list page size ≤ 200, max 20 filters, max 3 sort fields, search ≤ 200 characters, CSV import ≤ 2 MiB, attachments ≤ 10 MiB, request body ≤ 12 MiB.
+Limits: list page size ≤ 200, max 20 filters, max 3 sort fields, search ≤ 200 characters, CSV/JSON import ≤ 10 MiB (max 100,000 rows / 64 columns), attachments ≤ 10 MiB, request body ≤ 12 MiB.
 
 See also [threat-model.md](threat-model.md) and [v1-compatibility.md](v1-compatibility.md).
 

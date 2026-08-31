@@ -502,6 +502,49 @@ impl EntityRepository {
         Ok(count > 0)
     }
 
+    /// Return matching ids for an exact field value. Caps at `limit` so callers
+    /// can detect ambiguity without loading a full page.
+    pub async fn find_ids_by_field(
+        &self,
+        entity: &EntityDef,
+        ctx: &OpContext,
+        field: &str,
+        value: &Value,
+        limit: i64,
+    ) -> QefroResult<Vec<Uuid>> {
+        let limit = limit.clamp(1, 20);
+        let mut qb = QueryBuilder::<Postgres>::new("SELECT ");
+        qb.push(quote_ident("id")?);
+        qb.push(" FROM ");
+        qb.push(table_ident(entity)?);
+        qb.push(" WHERE ");
+        qb.push(column_ident(entity, field)?);
+        qb.push(" = ");
+        push_bind_owned(&mut qb, entity.get_field(field), value);
+        if entity.tenant_owned {
+            qb.push(" AND ");
+            qb.push(quote_ident("tenant_id")?);
+            qb.push(" = ");
+            qb.push_bind(ctx.tenant_id);
+        }
+        if entity.soft_delete {
+            qb.push(" AND ");
+            qb.push(quote_ident("deleted_at")?);
+            qb.push(" IS NULL");
+        }
+        qb.push(" LIMIT ");
+        qb.push_bind(limit);
+        let rows = qb.build().fetch_all(&self.pool).await.map_err(map_db_err)?;
+        let mut ids = Vec::with_capacity(rows.len());
+        for row in rows {
+            ids.push(
+                row.try_get::<Uuid, _>(0)
+                    .map_err(|e| QefroError::database(e.to_string()))?,
+            );
+        }
+        Ok(ids)
+    }
+
     pub async fn list_by_ids(
         &self,
         entity: &EntityDef,

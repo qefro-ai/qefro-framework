@@ -58,7 +58,10 @@ pub use communication::{
 pub use document_ops::register_document_operations;
 pub use due::{DueReminderJob, DUE_REMINDER_JOB};
 pub use global_search::{SearchGroup, SearchHit, SearchResponse};
-pub use import::{ImportMapping, ImportPreview, ImportResult};
+pub use import::{
+    DuplicatePolicy, ImportFormat, ImportJobRecord, ImportMapping, ImportMode, ImportOptions,
+    ImportPreview, ImportResult, ImportRunJob, IMPORT_RUN_JOB,
+};
 pub use jobs::{JobHandler, JobQueue, JobRecord, JobRegistry, LogNotificationJob};
 pub use notifications::{EmailNotifyJob, InAppNotification, NotificationStore, PlatformDispatcher};
 pub use operation::{
