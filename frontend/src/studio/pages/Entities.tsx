@@ -9,6 +9,7 @@ import FormPreview from "../preview/FormPreview";
 import ViewsPreview from "../preview/ViewsPreview";
 import ViewsEditor from "../editors/ViewsEditor";
 import LayoutEditor from "../editors/LayoutEditor";
+import FieldEditor from "../editors/FieldEditor";
 import SchedulingEditor from "../editors/SchedulingEditor";
 
 type EntityPayload = {
