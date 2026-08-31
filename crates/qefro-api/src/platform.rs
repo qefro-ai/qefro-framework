@@ -104,8 +104,13 @@ async fn global_search(
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let key = format!("search:{}:{}", ctx.tenant_id, ctx.user_id);
-    if !state.search_limiter.allow(&key) {
-        return Err(QefroError::rate_limited("search rate limit exceeded").into());
+    let decision = state.search_limiter.check(&key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(
+            "search rate limit exceeded",
+            decision.retry_after_secs(),
+        )
+        .into());
     }
     let results = state
         .entities
@@ -262,8 +267,13 @@ async fn upload_attachment(
     mut multipart: Multipart,
 ) -> Result<Json<Value>, ApiError> {
     let key = format!("upload:{}:{}", ctx.tenant_id, ctx.user_id);
-    if !state.rate_limiter.allow(&key) {
-        return Err(QefroError::rate_limited("upload rate limit exceeded").into());
+    let decision = state.rate_limiter.check(&key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(
+            "upload rate limit exceeded",
+            decision.retry_after_secs(),
+        )
+        .into());
     }
     let entity = state.entities.entity_by_slug(&slug)?;
     let (filename, mime, bytes) = read_multipart_file(&mut multipart).await?;
@@ -355,8 +365,13 @@ async fn replace_attachment(
     mut multipart: Multipart,
 ) -> Result<Json<Value>, ApiError> {
     let key = format!("upload:{}:{}", ctx.tenant_id, ctx.user_id);
-    if !state.rate_limiter.allow(&key) {
-        return Err(QefroError::rate_limited("upload rate limit exceeded").into());
+    let decision = state.rate_limiter.check(&key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(
+            "upload rate limit exceeded",
+            decision.retry_after_secs(),
+        )
+        .into());
     }
     let (filename, mime, bytes) = read_multipart_file(&mut multipart).await?;
     let row = state
@@ -466,8 +481,13 @@ async fn run_import(
     Json(body): Json<ImportBody>,
 ) -> Result<Json<Value>, ApiError> {
     let key = format!("import:{}:{}", ctx.tenant_id, ctx.user_id);
-    if !state.rate_limiter.allow(&key) {
-        return Err(QefroError::rate_limited("import rate limit exceeded").into());
+    let decision = state.rate_limiter.check(&key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(
+            "import rate limit exceeded",
+            decision.retry_after_secs(),
+        )
+        .into());
     }
     let entity = state.entities.entity_by_slug(&slug)?;
     let opts = import_opts(&body)?;
@@ -508,8 +528,13 @@ async fn upload_import(
     mut multipart: Multipart,
 ) -> Result<Json<Value>, ApiError> {
     let key = format!("import:{}:{}", ctx.tenant_id, ctx.user_id);
-    if !state.rate_limiter.allow(&key) {
-        return Err(QefroError::rate_limited("import rate limit exceeded").into());
+    let decision = state.rate_limiter.check(&key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(
+            "import rate limit exceeded",
+            decision.retry_after_secs(),
+        )
+        .into());
     }
     let entity = state.entities.entity_by_slug(&slug)?;
     let (filename, mime, bytes) = read_multipart_file(&mut multipart).await?;
@@ -721,8 +746,13 @@ async fn public_form_submit(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("unknown");
     let key = format!("public:{ip}:{tenant}:{form}");
-    if !state.public_limiter.allow(&key) {
-        return Err(QefroError::rate_limited("public form rate limit exceeded").into());
+    let decision = state.public_limiter.check(&key);
+    if !decision.allowed {
+        return Err(QefroError::rate_limited_retry(
+            "public form rate limit exceeded",
+            decision.retry_after_secs(),
+        )
+        .into());
     }
     let (ctx, entity, public) = resolve_public(&state, &tenant, &form).await?;
     if let Some(obj) = body.as_object_mut() {
@@ -836,6 +866,22 @@ impl qefro_db::JobHandler for WebhookDeliverJob {
                 .await?;
             return Ok(());
         }
+        if let Err(err) = ensure_public_http_url(target).await {
+            self.log
+                .record(
+                    ctx.tenant_id,
+                    webhook,
+                    event,
+                    event_id,
+                    target,
+                    None,
+                    false,
+                    1,
+                    Some("outbound URL is not allowed"),
+                )
+                .await?;
+            return Err(err);
+        }
         let mut req = self.client.post(target).body(bytes);
         for (k, v) in headers {
             req = req.header(k, v);
@@ -880,6 +926,55 @@ impl qefro_db::JobHandler for WebhookDeliverJob {
             }
         }
     }
+}
+
+async fn ensure_public_http_url(raw: &str) -> qefro_core::QefroResult<()> {
+    qefro_core::validate_http_url(raw)?;
+    if raw.trim().starts_with("test://") {
+        return Ok(());
+    }
+    let rest = raw.split_once("://").map(|(_, r)| r).unwrap_or("");
+    let hostport = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let https = raw.trim().to_ascii_lowercase().starts_with("https://");
+    let default_port = if https { 443 } else { 80 };
+    let (host, port) = if hostport.starts_with('[') {
+        let host = hostport
+            .split(']')
+            .next()
+            .unwrap_or("")
+            .trim_start_matches('[')
+            .to_string();
+        let port = hostport
+            .split("]:")
+            .nth(1)
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(default_port);
+        (host, port)
+    } else {
+        let mut parts = hostport.split(':');
+        let host = parts.next().unwrap_or("").to_string();
+        let port = parts
+            .next()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(default_port);
+        (host, port)
+    };
+    if host.is_empty() {
+        return Err(QefroError::bad_request("outbound URL is not allowed"));
+    }
+    let lookup = format!("{host}:{port}");
+    let addrs = tokio::net::lookup_host(&lookup)
+        .await
+        .map_err(|_| QefroError::bad_request("outbound URL is not allowed"))?;
+    let mut any = false;
+    for addr in addrs {
+        any = true;
+        qefro_core::assert_public_ip(addr.ip())?;
+    }
+    if !any {
+        return Err(QefroError::bad_request("outbound URL is not allowed"));
+    }
+    Ok(())
 }
 
 #[allow(dead_code)]

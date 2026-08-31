@@ -35,6 +35,49 @@ This document is the security-boundary inventory and findings from the framework
 
 No known remaining critical findings. No known high-severity tenant-isolation failures after the fixes below.
 
+## Security Hardening v2
+
+Follow-up to the 3.7 audit. No second auth stack, no second permission system, EntityService remains the boundary.
+
+| Severity | Count | Status |
+| --- | ---: | --- |
+| Critical | 0 | — |
+| High | 0 remaining | — |
+| Medium | 0 new | Activity RowPolicy, SSRF, production gates |
+| Low | residuals | Token XSS, in-memory limits, entity RLS, DNS rebinding, sqlx/rkyv |
+
+### Fixed
+
+- Activity timelines, dashboard activity widgets, and activity counts use `EntityService::get` (same RowPolicy as records).
+- Webhook outbound URLs: scheme/host checks, private IP / metadata block, no redirects, DNS resolution before connect.
+- Automation jobs ignore payload `tenant_id` / `user_id`; `OpContext` from the job row wins.
+- Production startup rejects compose default DB password and debug/trace log level (without printing secrets).
+- Query `IN` lists capped at 100 values.
+- `POST /api/v1/auth/refresh` reissues a JWT for the same session.
+- Login/register/export/dashboard/report/bulk specialized rate limits with `Retry-After`.
+- CSP tightened (`frame-src`, `object-src`, `font-src`, swagger-ui origin narrowed). Rich-text `style` attributes stripped in the renderer.
+- `qefro_activity` RLS pilot (`SET LOCAL` tenant GUC; purge uses documented `qefro.rls_bypass`).
+- `SECURITY.md`, [dependencies.md](dependencies.md), [rls.md](rls.md), CI `cargo audit` (non-blocking).
+
+### Mitigated
+
+- Bearer token still in `localStorage` (SPA + SDK compatibility). Lifetime configurable; UI refreshes before expiry; logout/tenant switch clear storage; tokens not logged. **XSS can still steal the token.**
+- Rate limits remain in-memory (`RateLimitStore` boundary for a future distributed adapter).
+- sqlx/rust_decimal unused optional features disabled so `rkyv` and `rsa` are not in the runtime graph (`cargo tree -i rkyv` / `rsa` empty).
+
+### Accepted residual
+
+| Risk | Reason | Mitigation | Future action |
+| --- | --- | --- | --- |
+| Token in `localStorage` | SPA Bearer model; HttpOnly cookies would require CSRF | CSP, sanitizers, session revoke, refresh, TTL | Optional HttpOnly cookie only with CSRF tokens |
+| In-memory rate limits | Single-process default; no Redis required | Proxy limiter; `RateLimitStore` trait | Redis adapter when multi-instance |
+| Entity tables without RLS | Pooling / query-path complexity | Tenant predicates + RowPolicy; activity RLS pilot | Expand RLS table-by-table with `SET LOCAL` |
+| SSE event metadata without row policy | Cost of `get()` per event | Entity Read filter; record subscribe uses `get()` | Optional per-event get |
+| Webhook DNS rebinding | reqwest resolves again after our check | Block literals/private names; no redirects | Pin IPs / egress firewall |
+| `rkyv` / `rsa` rustsec | Previously pulled by rust_decimal / sqlx-mysql optionals | `default-features = false` on those crates | Re-run `cargo audit` when adding features |
+| Public `/metrics` `/docs` | Operator surfaces | Do not expose API port without edge authz | Optional auth on docs |
+| Register email uniqueness timing | Unique index | Uniform error text | Accept |
+
 ---
 
 ## Boundaries
@@ -77,11 +120,11 @@ Webhook HMAC secrets and communication provider credentials are never returned t
 
 ### Database
 
-Parameterized values; identifiers via `quote_ident` / `assert_safe_ident`. Tenant predicates are bound. Application login should not be PostgreSQL SUPERUSER.
+Parameterized values; identifiers via `quote_ident` / `assert_safe_ident`. Tenant predicates are bound. Application login should not be PostgreSQL SUPERUSER. `qefro_activity` has FORCE RLS keyed by `qefro.tenant_id` (`SET LOCAL` in the activity transaction). Entity tables do not. See [rls.md](rls.md).
 
 ### Browser
 
-Bearer token in `localStorage` (XSS ⇒ session theft — residual). Rich text is sanitized with ammonia on write and again in the React renderer. Color values are allowlisted before use in CSS. nginx (and the API) send CSP, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`.
+The generic UI stores the access token in `localStorage` (XSS ⇒ session theft — residual). `POST /auth/refresh` rotates a still-valid JWT. Rich text is sanitized with ammonia on write and again in the React renderer (`style` / `javascript:` stripped). Color values are allowlisted before use in CSS. nginx (and the API) send CSP, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`. `unsafe-eval` is not used. `unsafe-inline` remains for SPA inline styles and for `/docs` swagger-ui.
 
 Auth is **Authorization: Bearer**, not cookies, so classic cookie CSRF does not apply. Production CORS is an explicit origin list (`QEFRO_CORS_ORIGINS` or the origin of `QEFRO_PUBLIC_URL`), never `*`.
 
@@ -172,26 +215,18 @@ Auth is **Authorization: Bearer**, not cookies, so classic cookie CSRF does not 
 ### L4 — In-memory rate limits / spoofable `X-Forwarded-For`
 
 **Severity:** LOW  
-**Mitigation:** Documented; put a trusted proxy in front in production.
+**Mitigation:** `RateLimitStore` + remaining/`Retry-After`. Specialized login/register/expensive-op limiters. Login 429 text is uniform. Put a trusted proxy in front in production. Multi-instance does not share counters.
 
 ### L5 — Activity / audit widgets vs RowPolicy
 
 **Severity:** LOW  
-**Mitigation:** Audit remains Admin-only. Activity lists are tenant-scoped, not row-policy filtered. Do not put secrets in activity messages.
+**Fix (v2):** Activity list/get/dashboard/counts call `EntityService::get` (RowPolicy). Audit remains Admin-only. Do not put secrets in activity messages.
 
 ---
 
 ## Residual risk (accepted)
 
-| Item | Why accepted | Mitigation |
-| --- | --- | --- |
-| Token in `localStorage` | SPA Bearer model; HttpOnly cookie would require CSRF work | CSP, ammonia, logout revoke, 12h TTL |
-| No PostgreSQL RLS | V1 tenant predicate in SQL | Database ACLs, least-privilege role |
-| In-memory rate limiter | Per process | Reverse proxy / Redis later |
-| Activity timeline not RowPolicy-filtered | Would require a join per row on every widget | Keep secrets out of messages |
-| SSE event metadata without row policy | Cost of `get()` per event | Entity Read filter; record subscribe uses `get()` |
-| Public `/metrics` `/docs` OpenAPI | Intentional operator surfaces | Do not expose the API port to the internet without authz at the edge |
-| CSV formula prefix | Neutralized with `'` | Keep using `csv_escape` |
+See **Security Hardening v2** above. The v1 table is superseded; remaining items are token XSS, in-memory limits, entity-table RLS, SSE metadata, DNS rebinding, and transitive rustsec findings.
 
 ---
 
@@ -206,6 +241,8 @@ Auth is **Authorization: Bearer**, not cookies, so classic cookie CSRF does not 
 | `QEFRO_CORS_ORIGINS` | Explicit origins, or omit to use `QEFRO_PUBLIC_URL` |
 | `QEFRO_AUTO_MIGRATE` | false; run `qefro migrate` separately |
 | `QEFRO_EMBED_WORKER` | false when running `qefro worker` |
+| `QEFRO_TOKEN_TTL_HOURS` | Optional; default 12 |
+| `QEFRO_LOG_LEVEL` | not `debug` / `trace` |
 
 TLS terminates at the reverse proxy. The app assumes `X-Forwarded-For` is set by a **trusted** proxy only.
 
@@ -214,8 +251,10 @@ TLS terminates at the reverse proxy. The app assumes `X-Forwarded-For` is set by
 ## Regression tests
 
 - `crates/qefro-api/tests/security_audit.rs`
+- `crates/qefro-api/tests/security_hardening.rs` (v2: activity RowPolicy, tenant matrix, privilege, workflow, secrets, refresh, SSRF, IN cap)
 - `crates/qefro-api/tests/http_security.rs` (headers)
 - `crates/qefro-api/tests/v1_security.rs` (cross-tenant)
 - `crates/qefro-api/tests/identity.rs` (escalation, disable)
-- `crates/qefro-core` automation privileged-role tests
+- `crates/qefro-core` outbound URL / rate-limit / automation privileged-role tests
 - `frontend` FieldValue XSS / CSS tests
+- CI: `cargo test --workspace`, `npm test`, `cargo audit` (non-blocking)

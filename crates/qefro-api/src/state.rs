@@ -30,6 +30,8 @@ pub struct AppState {
     pub public_limiter: Arc<MemoryRateLimiter>,
     pub search_limiter: Arc<MemoryRateLimiter>,
     pub login_limiter: Arc<MemoryRateLimiter>,
+    pub auth_limiter: Arc<MemoryRateLimiter>,
+    pub expensive_limiter: Arc<MemoryRateLimiter>,
     pub installed_apps: Vec<String>,
     pub default_navigation: Vec<String>,
     pub default_nav_items: Vec<qefro_core::WorkspaceNavItem>,

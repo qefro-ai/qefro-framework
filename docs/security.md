@@ -55,20 +55,38 @@ Background jobs rebuild `OpContext` with role `Worker`, not `Admin` or `System`.
 
 Do not log passwords, access tokens, `DATABASE_URL`, or JWT secrets. HTTP 5xx uses `QefroError::public_message`. Structured logs include `request_id`, `tenant_id`, `user_id`, path, duration, and status. Every response may echo `x-request-id`. User `password_hash` and session tokens are never returned by EntityService or `/meta/ui`. Activity, audit, attachments, and agent schemas also strip those keys. `GET /api/v1/audit` is Admin-only. Attachments are tenant-scoped; guessing another tenant's file id returns 404. See [Identity](identity.md), [Audit](audit.md), [Activity](activity.md), and [Files](files.md).
 
+## Token model
+
+Browser and SDK both use **Authorization: Bearer** JWTs bound to a `sessions` row. This is not a cookie session; classic CSRF does not apply. Production CORS is an explicit origin list.
+
+The generic UI stores the access token in `localStorage` so reloads and extra tabs keep working. **XSS can still steal that token.** Mitigations: CSP, HTML sanitization (ammonia + DOM sanitizer), logout/tenant-switch revoke, `POST /api/v1/auth/refresh` to rotate a still-valid JWT, configurable `QEFRO_TOKEN_TTL_HOURS` (default 12). Server-to-server SDK usage is unchanged: the same Bearer token, no cookies, no CSRF tokens.
+
+Tokens must never appear in URLs, logs, error bodies, activity, or analytics.
+
 ## Rate limits
 
-`RateLimiter` is an in-memory hook keyed by `tenant:user:path` (and specialized keys for login, search, public forms, uploads, and imports). Client-supplied tenant ids cannot change the key. It is not a distributed limiter. A Redis adapter can implement the same trait later.
+`RateLimiter` + `RateLimitStore` is an in-memory hook (default `MemoryRateLimiter`). Keys include `tenant:user:path` plus specialized keys for login, register, search, public forms, uploads, imports, exports, dashboards, and reports. Responses may include `Retry-After`. Client-supplied tenant ids cannot change the key.
 
-Limits: list page size ≤ 200, max 20 filters, max 3 sort fields, search ≤ 200 characters, CSV/JSON import ≤ 10 MiB (max 100,000 rows / 64 columns), attachments ≤ 10 MiB, request body ≤ 12 MiB.
+**Single-instance:** counters are per process. **Multi-instance:** counters are not shared unless a distributed `RateLimitStore` is provided later; put a reverse proxy limiter in front. Redis is not required.
+
+Login is keyed by normalized email **and** client IP. Unknown and known accounts share the same 429 message (`too many login attempts`) so rate limiting does not become a user-existence oracle.
+
+Limits: list page size ≤ 200, max 20 filters, max 100 `IN` values, max 3 sort fields, search ≤ 200 characters, CSV/JSON import ≤ 10 MiB (max 100,000 rows / 64 columns), attachments ≤ 10 MiB, request body ≤ 12 MiB.
+
+## PostgreSQL RLS
+
+Application authorization is authoritative. A small RLS **pilot** is enabled on `qefro_activity` (`SET LOCAL qefro.tenant_id` per transaction). Entity tables are not converted. See [rls.md](rls.md).
 
 ## Production gates
 
 - `JWT_SECRET` must be non-default and at least 16 characters when `QEFRO_ENV=production`.
+- `DATABASE_URL` must not use the compose default `qefro:qefro` password in production.
+- `QEFRO_LOG_LEVEL` must not be `debug` or `trace` in production.
 - `QEFRO_ALLOW_REGISTER` defaults to false in production.
 - `QEFRO_CORS_ORIGINS` must not be `*`. Unset uses the origin of `QEFRO_PUBLIC_URL`.
-- Authentication is the `Authorization: Bearer` header, not cookies. Cookie CSRF tokens are not used. Logout revokes the session row; tenant switch revokes the previous session.
+- Authentication is the `Authorization: Bearer` header, not cookies. Cookie CSRF tokens are not used. Logout revokes the session row; tenant switch revokes the previous session. Validation failures never print secret values.
 
-See also [threat-model.md](threat-model.md), [security-audit.md](security-audit.md), and [v1-compatibility.md](v1-compatibility.md).
+See also [threat-model.md](threat-model.md), [security-audit.md](security-audit.md), [dependencies.md](dependencies.md), and [v1-compatibility.md](v1-compatibility.md).
 
 ## Field permissions
 

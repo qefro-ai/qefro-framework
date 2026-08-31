@@ -7,6 +7,8 @@ import type { UiEntity, UiField, WidgetOptions, UiWhen } from "../metadata/types
 export type { UiEntity, UiField, WidgetOptions, UiWhen };
 
 const TOKEN_KEY = "qefro_token";
+const TOKEN_EXP_KEY = "qefro_token_exp";
+export { TOKEN_KEY };
 
 export type TenantConfig = {
   branding: {
@@ -187,13 +189,17 @@ function xhrUpload(
 
 export class QefroClient {
   login = (email: string, password: string) =>
-    request<{ access_token: string; roles: string[] }>("/api/v1/auth/login", {
+    request<{ access_token: string; expires_in?: number; roles: string[] }>("/api/v1/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
   logout = () => request<void>("/api/v1/auth/logout", { method: "POST" });
+  refresh = () =>
+    request<{ access_token: string; expires_in?: number }>("/api/v1/auth/refresh", {
+      method: "POST",
+    });
   register = (body: Record<string, string>) =>
-    request<{ access_token: string }>("/api/v1/auth/register", {
+    request<{ access_token: string; expires_in?: number }>("/api/v1/auth/register", {
       method: "POST",
       body: JSON.stringify(body),
     });
@@ -743,13 +749,44 @@ export function notifyMetadata() {
   window.dispatchEvent(new Event(METADATA_EVENT));
 }
 
-export function saveToken(token: string) {
+let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+function scheduleRefresh(expiresIn?: number) {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = undefined;
+  }
+  if (!expiresIn || expiresIn < 60) return;
+  const waitMs = Math.max(30_000, Math.floor(expiresIn * 1000 * 0.8));
+  refreshTimer = setTimeout(() => {
+    api
+      .refresh()
+      .then((res) => saveToken(res.access_token, res.expires_in))
+      .catch(() => undefined);
+  }, waitMs);
+}
+
+if (typeof window !== "undefined") {
+  const exp = Number(localStorage.getItem(TOKEN_EXP_KEY) || 0);
+  if (exp > Date.now() && localStorage.getItem(TOKEN_KEY)) {
+    scheduleRefresh(Math.floor((exp - Date.now()) / 1000));
+  }
+}
+
+export function saveToken(token: string, expiresIn?: number) {
   localStorage.setItem(TOKEN_KEY, token);
+  if (expiresIn && expiresIn > 0) {
+    localStorage.setItem(TOKEN_EXP_KEY, String(Date.now() + expiresIn * 1000));
+  } else {
+    localStorage.removeItem(TOKEN_EXP_KEY);
+  }
   notifyAuth();
+  scheduleRefresh(expiresIn);
 }
 
 export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_EXP_KEY);
   notifyAuth();
 }
 

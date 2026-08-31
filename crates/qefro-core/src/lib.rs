@@ -24,10 +24,12 @@ pub mod hook;
 pub mod ident;
 pub mod identity;
 pub mod lifecycle;
+pub mod log_redact;
 pub mod metering;
 pub mod migration;
 pub mod money;
 pub mod operation;
+pub mod outbound;
 pub mod package;
 pub mod page;
 pub mod platform;
@@ -126,12 +128,14 @@ pub use identity::{
     PERSON_LINK_FIELD, PERSON_SLUG, SECRET_KEYS, USER_ENTITY, USER_SLUG,
 };
 pub use lifecycle::{lifecycle_event_name, LifecycleHookDef};
+pub use log_redact::looks_sensitive;
 pub use metering::MeteringEvent;
 pub use migration::{sql_is_destructive, AppMigration};
 pub use money::{
     assert_balanced, money_mul_qty, parse_money, round_money, sum_debit_credit, MONEY_SCALE,
 };
 pub use operation::{operation, OperationDef};
+pub use outbound::{assert_public_ip, is_blocked_host, is_public_ip, validate_http_url};
 pub use package::{extract_package, inspect_package, write_package, PackageMeta};
 pub use page::{
     normalize_layout, reject_unsafe_page_payload, validate_page, PageActionRef, PageDef,
@@ -141,7 +145,7 @@ pub use platform::{
     webhook_secret, webhook_signature, ConfirmationDef, EntityActionDef, LinkDef, LinkFilter,
     NotificationDef, PublicFormDef, WebhookDef,
 };
-pub use rate_limit::{MemoryRateLimiter, RateLimiter};
+pub use rate_limit::{MemoryRateLimiter, RateLimitDecision, RateLimitStore, RateLimiter};
 pub use registry::EntityRegistry;
 pub use sanitize::sanitize_html;
 pub use schedule::{next_run_after, parse_cron, parse_timezone, schedule_slot_key, CronExpr};

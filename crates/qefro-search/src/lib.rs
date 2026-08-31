@@ -110,6 +110,15 @@ impl Query {
         if self.filters.len() > 20 {
             return Err(QefroError::bad_request("too many filters (max 20)"));
         }
+        for filter in &self.filters {
+            let count = match filter {
+                Filter::In { values, .. } | Filter::NotIn { values, .. } => values.len(),
+                _ => 0,
+            };
+            if count > 100 {
+                return Err(QefroError::bad_request("IN filter is too large (max 100)"));
+            }
+        }
         if self.sort.len() > 3 {
             self.sort.truncate(3);
         }
@@ -409,6 +418,17 @@ mod tests {
     fn tenant_id_not_filterable() {
         let entity = customer();
         let raw = vec![("tenant_id".into(), "x".into())];
+        assert!(parse_query(&entity, &raw).is_err());
+    }
+
+    #[test]
+    fn rejects_huge_in_list() {
+        let entity = customer();
+        let values = (0..101)
+            .map(|i| format!("n{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let raw = vec![("name.in".into(), values)];
         assert!(parse_query(&entity, &raw).is_err());
     }
 }

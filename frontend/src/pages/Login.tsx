@@ -14,7 +14,7 @@ export default function Login() {
     try {
       if (mode === "login") {
         const res = await api.login(String(data.get("email")), String(data.get("password")));
-        saveToken(res.access_token);
+        saveToken(res.access_token, res.expires_in);
       } else {
         const res = await api.register({
           name: String(data.get("name")),
@@ -23,7 +23,7 @@ export default function Login() {
           tenant_name: String(data.get("tenant_name")),
           tenant_slug: String(data.get("tenant_slug")),
         });
-        saveToken(res.access_token);
+        saveToken(res.access_token, res.expires_in);
       }
       navigate("/", { replace: true });
     } catch (err) {

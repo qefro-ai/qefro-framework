@@ -131,7 +131,7 @@ export function sanitizeRichHtml(html: string): string {
     for (const attr of Array.from(el.attributes)) {
       const name = attr.name.toLowerCase();
       const value = attr.value.trim().toLowerCase();
-      if (name.startsWith("on") || value.startsWith("javascript:") || value.startsWith("data:text/html")) {
+      if (name.startsWith("on") || name === "style" || value.startsWith("javascript:") || value.startsWith("data:text/html")) {
         el.removeAttribute(attr.name);
       }
     }

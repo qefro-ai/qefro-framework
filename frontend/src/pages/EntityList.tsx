@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   api,
   ApiError,
+  TOKEN_KEY,
   formVisible,
   listVisible,
   type EntityAction,
@@ -999,7 +1000,7 @@ function ImportPanel({
   async function downloadErrors() {
     const id = jobId || String(result?.id ?? "");
     if (!id) return;
-    const token = localStorage.getItem("qefro_token");
+    const token = localStorage.getItem(TOKEN_KEY);
     const res = await fetch(api.importErrorsUrl(id), {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });

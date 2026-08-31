@@ -271,6 +271,12 @@ impl AutomationEngine {
             .cloned()
             .map(event_from_json)
             .unwrap_or_else(|| scheduled_event(ctx, &def, event_id));
+        event.tenant_id = ctx.tenant_id;
+        event.user_id = if ctx.user_id.is_nil() {
+            None
+        } else {
+            Some(ctx.user_id)
+        };
         self.remember_execution(ctx.tenant_id, &def, event_id, &event)
             .await?;
         let stored = self

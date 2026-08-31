@@ -37,6 +37,8 @@ pub enum QefroError {
     },
     RateLimited {
         message: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_after: Option<u64>,
     },
     Locked {
         message: String,
@@ -167,6 +169,14 @@ impl QefroError {
     pub fn rate_limited(message: impl Into<String>) -> Self {
         Self::RateLimited {
             message: message.into(),
+            retry_after: None,
+        }
+    }
+
+    pub fn rate_limited_retry(message: impl Into<String>, retry_after_secs: u64) -> Self {
+        Self::RateLimited {
+            message: message.into(),
+            retry_after: Some(retry_after_secs.max(1)),
         }
     }
 
@@ -267,7 +277,7 @@ impl fmt::Display for QefroError {
             | Self::BadRequest { message }
             | Self::Workflow { message }
             | Self::Business { message, .. }
-            | Self::RateLimited { message }
+            | Self::RateLimited { message, .. }
             | Self::AppNotEnabled { message }
             | Self::MigrationRequired { message }
             | Self::PayloadTooLarge { message }

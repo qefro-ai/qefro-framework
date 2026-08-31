@@ -59,6 +59,15 @@ impl AuthService {
         }
     }
 
+    pub fn with_token_ttl_hours(mut self, hours: i64) -> Self {
+        self.token_ttl_hours = hours.clamp(1, 24 * 30);
+        self
+    }
+
+    pub fn token_ttl_hours(&self) -> i64 {
+        self.token_ttl_hours
+    }
+
     pub async fn register(
         &self,
         name: &str,
@@ -212,6 +221,18 @@ impl AuthService {
             .await
             .map_err(|e| QefroError::database(e.to_string()))?;
         Ok(())
+    }
+
+    /// Issue a new access token for the same session. The JWT must still be
+    /// valid; this is not a second secret. Browser clients refresh before expiry.
+    /// Server SDKs may keep using the original token until it expires.
+    pub async fn refresh(&self, token: &str) -> QefroResult<AuthToken> {
+        let ctx = self.authenticate(token).await?;
+        let sid = ctx
+            .session_id
+            .ok_or_else(|| QefroError::unauthorized("invalid token"))?;
+        self.reissue(sid, ctx.user_id, ctx.tenant_id, ctx.roles.clone())
+            .await
     }
 
     pub async fn authenticate(&self, token: &str) -> QefroResult<OpContext> {
@@ -567,6 +588,28 @@ impl AuthService {
         Ok(current)
     }
 
+    async fn reissue(
+        &self,
+        session_id: Uuid,
+        user_id: Uuid,
+        tenant_id: Uuid,
+        roles: Vec<String>,
+    ) -> QefroResult<AuthToken> {
+        let expires_at = Utc::now() + Duration::hours(self.token_ttl_hours);
+        let updated =
+            sqlx::query("UPDATE sessions SET expires_at = $2 WHERE id = $1 AND revoked_at IS NULL")
+                .bind(session_id)
+                .bind(expires_at)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| QefroError::database(e.to_string()))?;
+        if updated.rows_affected() == 0 {
+            return Err(QefroError::unauthorized("session expired"));
+        }
+        self.encode_token(session_id, user_id, tenant_id, roles, expires_at)
+            .await
+    }
+
     async fn issue_token(
         &self,
         user_id: Uuid,
@@ -591,7 +634,18 @@ impl AuthService {
         .execute(&self.pool)
         .await
         .map_err(|e| QefroError::database(e.to_string()))?;
+        self.encode_token(session_id, user_id, tenant_id, roles, expires_at)
+            .await
+    }
 
+    async fn encode_token(
+        &self,
+        session_id: Uuid,
+        user_id: Uuid,
+        tenant_id: Uuid,
+        roles: Vec<String>,
+        expires_at: DateTime<Utc>,
+    ) -> QefroResult<AuthToken> {
         let now = Utc::now().timestamp();
         let claims = Claims {
             sub: user_id,

@@ -49,6 +49,9 @@ pub struct Config {
     /// Allowed browser origins. Empty in development means any origin.
     /// Production never uses `*`; unset falls back to `public_url`.
     pub cors_origins: Vec<String>,
+    /// Access-token lifetime in hours. Default 12. Browser clients refresh
+    /// before expiry; SDKs may keep the original token.
+    pub token_ttl_hours: i64,
 }
 
 impl Default for Config {
@@ -65,6 +68,7 @@ impl Default for Config {
             embed_worker: true,
             allow_register: true,
             cors_origins: Vec::new(),
+            token_ttl_hours: 12,
         }
     }
 }
@@ -109,6 +113,11 @@ impl Config {
             },
             allow_register,
             cors_origins,
+            token_ttl_hours: std::env::var("QEFRO_TOKEN_TTL_HOURS")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(12)
+                .clamp(1, 24 * 30),
             env,
         })
     }
@@ -135,8 +144,19 @@ impl Config {
             if self.database_url.is_empty() {
                 anyhow::bail!("DATABASE_URL is required");
             }
+            if self.database_url.contains("postgres://qefro:qefro@")
+                || self.database_url.contains("postgresql://qefro:qefro@")
+            {
+                anyhow::bail!(
+                    "DATABASE_URL must not use the compose default password in production"
+                );
+            }
             if self.cors_origins.iter().any(|o| o == "*") {
                 anyhow::bail!("QEFRO_CORS_ORIGINS must not be '*' in production");
+            }
+            let level = self.log_level.to_ascii_lowercase();
+            if level == "debug" || level == "trace" {
+                anyhow::bail!("QEFRO_LOG_LEVEL must not be debug or trace in production");
             }
         }
         if self.bind.parse::<std::net::SocketAddr>().is_err() {
@@ -609,6 +629,7 @@ impl QefroRuntime {
             Arc::new(WebhookDeliverJob {
                 client: reqwest::Client::builder()
                     .timeout(std::time::Duration::from_secs(10))
+                    .redirect(reqwest::redirect::Policy::none())
                     .build()
                     .unwrap_or_else(|_| reqwest::Client::new()),
                 log: webhook_log.clone(),
@@ -658,10 +679,10 @@ impl QefroRuntime {
         qefro_db::register_commerce_operations(&mut operations);
         let operations = Arc::new(operations);
         let job_handlers = Arc::new(job_handlers);
-        let auth = Arc::new(AuthService::new(
-            pool.clone(),
-            self.config.jwt_secret.clone(),
-        ));
+        let auth = Arc::new(
+            AuthService::new(pool.clone(), self.config.jwt_secret.clone())
+                .with_token_ttl_hours(self.config.token_ttl_hours),
+        );
 
         let entities = Arc::new(
             EntityService::new(
@@ -935,7 +956,15 @@ impl QefroRuntime {
                 std::time::Duration::from_secs(60),
             )),
             login_limiter: Arc::new(qefro_core::MemoryRateLimiter::new(
-                20,
+                10,
+                std::time::Duration::from_secs(60),
+            )),
+            auth_limiter: Arc::new(qefro_core::MemoryRateLimiter::new(
+                10,
+                std::time::Duration::from_secs(60),
+            )),
+            expensive_limiter: Arc::new(qefro_core::MemoryRateLimiter::new(
+                30,
                 std::time::Duration::from_secs(60),
             )),
             installed_apps,
@@ -1125,7 +1154,7 @@ async fn security_headers(req: Request<axum::body::Body>, next: Next) -> Respons
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(
-            "default-src 'none'; script-src 'self' https://unpkg.com 'unsafe-inline'; style-src 'self' https://unpkg.com 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'",
+            "default-src 'none'; script-src 'self' https://unpkg.com/swagger-ui-dist@5/ 'unsafe-inline'; style-src 'self' https://unpkg.com/swagger-ui-dist@5/ 'unsafe-inline'; img-src 'self' data: https://unpkg.com; font-src 'self' https://unpkg.com; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
         ),
     );
     res

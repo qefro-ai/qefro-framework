@@ -58,8 +58,13 @@ impl FromRequestParts<AppState> for Auth {
 
         let path = parts.uri.path();
         let key = format!("{}:{}:{}", ctx.tenant_id, ctx.user_id, path);
-        if !state.rate_limiter.allow(&key) {
-            return Err(QefroError::rate_limited("rate limit exceeded").into());
+        let decision = state.rate_limiter.check(&key);
+        if !decision.allowed {
+            return Err(QefroError::rate_limited_retry(
+                "rate limit exceeded",
+                decision.retry_after_secs(),
+            )
+            .into());
         }
 
         tracing::info!(

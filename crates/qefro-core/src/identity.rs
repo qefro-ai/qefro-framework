@@ -47,6 +47,11 @@ pub const SECRET_KEYS: &[&str] = &[
     "reset_token",
     "private_key",
     "storage_credentials",
+    "storage_key",
+    "secret_env",
+    "provider_secret",
+    "webhook_secret",
+    "api_key",
 ];
 
 pub fn is_secret_key(name: &str) -> bool {

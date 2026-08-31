@@ -6,6 +6,7 @@ import { registerWidget, renderWidget, type WidgetProps } from "../../metadata/r
 import { localToUtcIso, utcToLocalParts, formatMoney } from "../../metadata/timezone";
 import { previewFormula } from "../../metadata/formula";
 import { StatusBadge } from "../ui/StatusBadge";
+import { sanitizeRichHtml } from "./FieldValue";
 
 function opt(field: WidgetProps["field"]) {
   return field.widget_options ?? {};
@@ -491,13 +492,14 @@ export function JsonEditor({ field, value, onChange, disabled, id, invalid }: Wi
 export function RichText({ field, value, onChange, disabled, id, invalid }: WidgetProps) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (ref.current && ref.current.innerHTML !== String(value ?? "")) {
-      ref.current.innerHTML = String(value ?? "");
+    const next = sanitizeRichHtml(String(value ?? ""));
+    if (ref.current && ref.current.innerHTML !== next) {
+      ref.current.innerHTML = next;
     }
   }, [value]);
   function cmd(command: string) {
     document.execCommand(command);
-    onChange(ref.current?.innerHTML ?? "");
+    onChange(sanitizeRichHtml(ref.current?.innerHTML ?? ""));
   }
   return (
     <div className="rich-text">
@@ -516,7 +518,7 @@ export function RichText({ field, value, onChange, disabled, id, invalid }: Widg
         </button>
         <button type="button" className="ghost" disabled={disabled} onClick={() => {
           document.execCommand("formatBlock", false, "h3");
-          onChange(ref.current?.innerHTML ?? "");
+          onChange(sanitizeRichHtml(ref.current?.innerHTML ?? ""));
         }}>
           H
         </button>
@@ -526,15 +528,17 @@ export function RichText({ field, value, onChange, disabled, id, invalid }: Widg
           disabled={disabled}
           onClick={() => {
             const url = window.prompt("Link URL");
-            if (url) document.execCommand("createLink", false, url);
-            onChange(ref.current?.innerHTML ?? "");
+            if (url && !/^\s*(javascript:|data:)/i.test(url)) {
+              document.execCommand("createLink", false, url);
+            }
+            onChange(sanitizeRichHtml(ref.current?.innerHTML ?? ""));
           }}
         >
           Link
         </button>
         <button type="button" className="ghost" disabled={disabled} onClick={() => {
           document.execCommand("formatBlock", false, "blockquote");
-          onChange(ref.current?.innerHTML ?? "");
+          onChange(sanitizeRichHtml(ref.current?.innerHTML ?? ""));
         }}>
           Quote
         </button>
@@ -551,6 +555,11 @@ export function RichText({ field, value, onChange, disabled, id, invalid }: Widg
         aria-invalid={invalid || undefined}
         aria-readonly={field.readonly || undefined}
         onInput={() => onChange(ref.current?.innerHTML ?? "")}
+        onBlur={() => {
+          const html = sanitizeRichHtml(ref.current?.innerHTML ?? "");
+          if (ref.current) ref.current.innerHTML = html;
+          onChange(html);
+        }}
       />
     </div>
   );

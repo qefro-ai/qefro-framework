@@ -2269,8 +2269,7 @@ impl EntityService {
         if kind == "activity" {
             let limit = card.limit.unwrap_or(8).clamp(1, 50);
             let rows = self
-                .activity
-                .list_recent(ctx.tenant_id, Some(&entity.name), limit as i64)
+                .list_recent_activity(ctx, Some(&entity.name), limit as i64)
                 .await?;
             let items: Vec<Value> = rows
                 .into_iter()

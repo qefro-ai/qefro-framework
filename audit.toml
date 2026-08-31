@@ -1,0 +1,5 @@
+# cargo-audit ignore list. Each entry is an accepted residual until a
+# safe upgrade exists. See docs/security-audit.md.
+
+[advisories]
+ignore = []
