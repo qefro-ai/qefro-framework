@@ -4,6 +4,7 @@
 //! workflow engine, and the existing filter/aggregation SQL builders.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -198,6 +199,9 @@ pub struct ReportDef {
     pub chart: Option<String>,
     #[serde(default)]
     pub module: Option<String>,
+    /// Default filters merged into every run. Same JSON as the report API.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filters: Vec<Value>,
 }
 
 impl ReportDef {
@@ -211,6 +215,7 @@ impl ReportDef {
             aggregations: HashMap::new(),
             chart: None,
             module: None,
+            filters: Vec::new(),
             name,
         }
     }
@@ -262,6 +267,15 @@ impl ReportDef {
 
     pub fn module(mut self, name: impl Into<String>) -> Self {
         self.module = Some(name.into());
+        self
+    }
+
+    pub fn filter_eq(mut self, field: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.filters.push(serde_json::json!({
+            "field": field.into(),
+            "op": "eq",
+            "value": value.into(),
+        }));
         self
     }
 }

@@ -115,6 +115,45 @@ export default function System({ caps }: { caps: string[] }) {
             />
           </label>
           <label>
+            Cash account code
+            <input
+              value={config.business?.cash_account ?? ""}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  business: { ...config.business, cash_account: e.target.value },
+                })
+              }
+              placeholder="1100"
+            />
+          </label>
+          <label>
+            Receivable account code
+            <input
+              value={config.business?.receivable_account ?? ""}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  business: { ...config.business, receivable_account: e.target.value },
+                })
+              }
+              placeholder="1200"
+            />
+          </label>
+          <label>
+            Sales account code
+            <input
+              value={config.business?.sales_account ?? ""}
+              onChange={(e) =>
+                setConfig({
+                  ...config,
+                  business: { ...config.business, sales_account: e.target.value },
+                })
+              }
+              placeholder="4100"
+            />
+          </label>
+          <label>
             Timezone
             <input
               value={config.business?.timezone ?? ""}

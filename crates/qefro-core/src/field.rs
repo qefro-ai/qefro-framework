@@ -191,6 +191,9 @@ pub struct FieldDef {
     /// Server-calculated. Client writes are discarded.
     #[serde(default)]
     pub computed: bool,
+    /// Client REST/UI writes are discarded. Operations may still set these.
+    #[serde(default)]
+    pub server_managed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub formula: Option<String>,
     /// 0 = normal, 1 = restricted, 2 = sensitive, 3 = highly sensitive.
@@ -321,6 +324,7 @@ impl FieldDef {
             },
             system: false,
             computed: false,
+            server_managed: false,
             formula: None,
             permission_level: 0,
             allow_on_submit: false,
@@ -661,6 +665,12 @@ impl FieldDef {
         self.ui.readonly = true;
         self.required = false;
         self.nullable = true;
+        self
+    }
+
+    /// Not writable through REST/UI. Business operations may still set the value.
+    pub fn server_managed(mut self) -> Self {
+        self.server_managed = true;
         self
     }
 

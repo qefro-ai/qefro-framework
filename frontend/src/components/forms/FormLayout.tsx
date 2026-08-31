@@ -122,6 +122,7 @@ export function FormLayout({
             )}
           </Section>
         ))}
+      <BalanceHint values={values} />
     </div>
   );
 }
@@ -221,6 +222,27 @@ function Section({
       ) : null}
       {hidden ? null : children}
     </fieldset>
+  );
+}
+
+function moneyAmount(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function BalanceHint({ values }: { values: Record<string, unknown> }) {
+  const debit = moneyAmount(values.total_debit);
+  const credit = moneyAmount(values.total_credit);
+  if (debit == null || credit == null) return null;
+  const diff = Math.round((debit - credit) * 100) / 100;
+  const balanced = diff === 0;
+  return (
+    <p className={`ledger-balance${balanced ? " is-balanced" : " is-unbalanced"}`} role="status">
+      {balanced
+        ? `Balanced ✓  Debit: ${debit.toFixed(2)}  Credit: ${credit.toFixed(2)}`
+        : `Not balanced  Debit: ${debit.toFixed(2)}  Credit: ${credit.toFixed(2)}  Difference: ${Math.abs(diff).toFixed(2)}`}
+    </p>
   );
 }
 

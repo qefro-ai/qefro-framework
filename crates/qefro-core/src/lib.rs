@@ -4,6 +4,7 @@
 //! used by the CLI, agent layer, and application modules independently of the
 //! runtime.
 
+pub mod accounting;
 pub mod app;
 pub mod automation;
 pub mod bundle;
@@ -22,6 +23,7 @@ pub mod identity;
 pub mod lifecycle;
 pub mod metering;
 pub mod migration;
+pub mod money;
 pub mod operation;
 pub mod package;
 pub mod platform;
@@ -39,6 +41,17 @@ pub mod validate;
 pub mod validation;
 pub mod version;
 
+pub use accounting::{
+    account_entity, accounting_automations, accounting_dashboard, accounting_entities,
+    accounting_nav_items, accounting_notifications, accounting_reports, fiscal_period_entity,
+    journal_entry_entity, journal_line_entity, tenant_account_code, LedgerPosting, ACCOUNT_ENTITY,
+    ACCOUNT_KEY_CASH, ACCOUNT_KEY_COGS, ACCOUNT_KEY_INVENTORY, ACCOUNT_KEY_PAYABLE,
+    ACCOUNT_KEY_RECEIVABLE, ACCOUNT_KEY_SALES, ACCOUNT_SLUG, ACCOUNT_TYPE_ASSET,
+    ACCOUNT_TYPE_EQUITY, ACCOUNT_TYPE_EXPENSE, ACCOUNT_TYPE_LIABILITY, ACCOUNT_TYPE_REVENUE,
+    JOURNAL_DRAFT, JOURNAL_ENTITY, JOURNAL_LINE_ENTITY, JOURNAL_LINE_SLUG, JOURNAL_POSTED,
+    JOURNAL_REVERSED, JOURNAL_SLUG, JOURNAL_WORKFLOW, PERIOD_CLOSED, PERIOD_ENTITY, PERIOD_OPEN,
+    PERIOD_SLUG, PERIOD_WORKFLOW,
+};
 pub use app::{AppManifest, AppModule, AppModuleBuilder, NavItem};
 pub use automation::{
     ActivityAction, AssignAction, AutomationAction, AutomationDef, AutomationTrigger,
@@ -76,6 +89,7 @@ pub use identity::{
 pub use lifecycle::{lifecycle_event_name, LifecycleHookDef};
 pub use metering::MeteringEvent;
 pub use migration::{sql_is_destructive, AppMigration};
+pub use money::{assert_balanced, parse_money, round_money, sum_debit_credit, MONEY_SCALE};
 pub use operation::{operation, OperationDef};
 pub use package::{extract_package, inspect_package, write_package, PackageMeta};
 pub use platform::{
@@ -113,8 +127,8 @@ pub use validate::{
 };
 pub use validation::{
     apply_entity_rules, apply_field_rules, compare_rule_line, existence_rules, field_is_readonly,
-    field_rule_lines, reject_readonly_writes, strip_computed_fields, validate_record,
-    CompareClause, ValidationRule, ValidationRules, WhenClause,
+    field_rule_lines, reject_readonly_writes, strip_computed_fields, strip_server_managed_fields,
+    validate_record, CompareClause, ValidationRule, ValidationRules, WhenClause,
 };
 pub use version::{
     is_framework_dep, API_VERSION, APP_API_VERSION, FRAMEWORK_COMPAT_REQ, FRAMEWORK_VERSION,

@@ -31,6 +31,12 @@ export type TenantConfig = {
     locale?: string;
     date_format?: string;
     number_format?: string;
+    cash_account?: string | null;
+    receivable_account?: string | null;
+    payable_account?: string | null;
+    sales_account?: string | null;
+    cogs_account?: string | null;
+    inventory_account?: string | null;
   };
   business_config?: unknown;
   features?: { flags?: Record<string, boolean> };
@@ -327,12 +333,14 @@ export class QefroClient {
     name: string,
     body: unknown = {},
     opts?: { idempotencyKey?: string },
-  ) =>
-    request<Record<string, unknown>>(`/api/v1/${slug}/${id}/actions/${name}`, {
+  ) => {
+    const key = opts?.idempotencyKey || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    return request<Record<string, unknown>>(`/api/v1/${slug}/${id}/actions/${name}`, {
       method: "POST",
       body: JSON.stringify(body ?? {}),
-      headers: opts?.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : undefined,
+      headers: { "Idempotency-Key": key },
     });
+  };
   execute = (
     args: { entity: string; id: string; action: string; inputs?: unknown; idempotencyKey?: string },
   ) => this.action(args.entity, args.id, args.action, args.inputs ?? {}, { idempotencyKey: args.idempotencyKey });

@@ -29,6 +29,18 @@ pub struct OpContext {
     pub locale: String,
     #[serde(default)]
     pub currency: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cash_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receivable_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payable_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sales_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cogs_account: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory_account: Option<String>,
     #[serde(default)]
     pub plan: Option<String>,
     /// Display name of the acting user. Never agent chain-of-thought.
@@ -54,6 +66,12 @@ impl OpContext {
             timezone: "UTC".into(),
             locale: "en-US".into(),
             currency: "USD".into(),
+            cash_account: None,
+            receivable_account: None,
+            payable_account: None,
+            sales_account: None,
+            cogs_account: None,
+            inventory_account: None,
             plan: None,
             actor_name: None,
             source: String::new(),
@@ -139,6 +157,12 @@ impl OpContext {
         self.timezone = config.business.timezone.clone();
         self.locale = config.business.locale.clone();
         self.currency = config.business.currency.clone();
+        self.cash_account = config.business.cash_account.clone();
+        self.receivable_account = config.business.receivable_account.clone();
+        self.payable_account = config.business.payable_account.clone();
+        self.sales_account = config.business.sales_account.clone();
+        self.cogs_account = config.business.cogs_account.clone();
+        self.inventory_account = config.business.inventory_account.clone();
         self.plan = config.plan.clone();
     }
 }
