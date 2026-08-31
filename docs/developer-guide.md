@@ -1,6 +1,6 @@
 # App Developer Guide
 
-This is the handbook for building applications on Qefro. It covers every feature you can ship in a YAML or Rust app. Deep-dive references live next to each section; the [documentation index](README.md) lists them all.
+This is the handbook for building applications on Qefro. It covers every feature you can ship in a YAML or Rust app. Deep-dive references live next to each section; the [documentation index](index.md) lists them all.
 
 **Mental model:** define the business once. Qefro generates PostgreSQL schema, REST, validation, a generic UI, workflows, reports, documents, automation, realtime, and agent tools. You do **not** write a React page, REST controller, or SQL migration per entity.
 
@@ -1410,5 +1410,5 @@ See [Security](security.md) and [Threat model](threat-model.md).
 | Scaffold and click through the generic UI | [Create an application](creating-an-app.md) |
 | Build customers / products / orders | [Fullstack tutorial](fullstack.md) |
 | Understand the runtime | [Architecture](architecture.md), [Business object runtime](business-object-runtime.md) |
-| Browse every doc | [Documentation index](README.md) |
+| Browse every doc | [Documentation index](index.md) |
 | Copy a working app | [Examples](examples.md), `apps/helpdesk`, `apps/inventory` |

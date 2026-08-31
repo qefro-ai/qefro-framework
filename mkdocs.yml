@@ -1,0 +1,157 @@
+site_name: Qefro
+site_description: App developer documentation for the Qefro framework
+site_url: https://qefro-ai.github.io/qefro-framework/
+repo_url: https://github.com/qefro-ai/qefro-framework
+repo_name: qefro-ai/qefro-framework
+edit_uri: edit/main/docs/
+docs_dir: docs
+copyright: Qefro Framework
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/qefro-ai/qefro-framework
+
+exclude_docs: |
+  README.md
+
+nav:
+  - Home: index.md
+  - Start:
+      - Getting started: getting-started.md
+      - Create an application: creating-an-app.md
+      - App Developer Guide: developer-guide.md
+      - Fullstack tutorial: fullstack.md
+      - YAML vs Rust: app-development.md
+      - Examples: examples.md
+  - Data model:
+      - Entities: entities.md
+      - Child tables: child-tables.md
+      - Validation: validation.md
+      - Formulas: formulas.md
+      - Singletons: singletons.md
+      - Identity: identity.md
+  - Business logic:
+      - Workflows: workflows.md
+      - Operations: operations.md
+      - Permissions: permissions.md
+      - Field permissions: field-permissions.md
+      - Documents: documents.md
+      - Numbering: numbering.md
+      - Allow on submit: allow-on-submit.md
+      - Actions and links: actions-links.md
+      - Tasks: tasks.md
+  - UI:
+      - Generic UI: ui.md
+      - UI 2.1: ui-2.md
+      - Views: views.md
+      - View metadata: view-metadata.md
+      - List views: list-views.md
+      - Kanban: kanban.md
+      - Calendar: calendar.md
+      - Forms: forms.md
+      - Layouts: layouts.md
+      - Detail views: detail-views.md
+      - Widgets: ui-widgets.md
+      - Widget registry: widgets.md
+      - UI schema: ui-schema.md
+      - UI components: ui-components.md
+      - Workspaces: workspaces.md
+      - Theming: theming.md
+      - Accessibility: accessibility.md
+  - Insights:
+      - Dashboards: dashboards.md
+      - Dashboard drill-down: dashboard-drilldown.md
+      - Reports: reports.md
+      - Print formats: print-formats.md
+  - Platform:
+      - Attachments: attachments.md
+      - Activity: activity.md
+      - Timeline: timeline.md
+      - Audit: audit.md
+      - Search: search.md
+      - CSV import: imports.md
+      - Public forms: public-forms.md
+      - Notifications: notifications.md
+      - Realtime: realtime.md
+      - Events: events.md
+      - Jobs: jobs.md
+      - Automation: automation.md
+      - Webhooks: webhooks.md
+      - Agents: agents.md
+      - SDK: sdk.md
+      - Connectors: connectors.md
+  - Studio:
+      - Studio: studio.md
+      - Publishing: studio-publishing.md
+      - Entities: studio-entities.md
+      - Workflows: studio-workflows.md
+      - Permissions: studio-permissions.md
+      - Dashboards: studio-dashboards.md
+      - Reports: studio-reports.md
+  - Operate:
+      - Applications: apps.md
+      - App packaging: app-packaging.md
+      - App lifecycle: app-lifecycle.md
+      - App dependencies: app-dependencies.md
+      - Multi-tenancy: multitenancy.md
+      - Tenants: tenants.md
+      - Licenses: licenses.md
+      - API: api.md
+      - Configuration: configuration.md
+      - Deployment: deployment.md
+      - Security: security.md
+      - Threat model: threat-model.md
+      - Architecture: architecture.md
+      - Business object runtime: business-object-runtime.md
+      - V1 compatibility: v1-compatibility.md
+      - Release: release.md
+      - ADRs: adr.md
+      - Benchmarks: benchmarks.md

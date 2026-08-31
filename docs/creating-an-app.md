@@ -14,7 +14,7 @@ Entity YAML / EntityDef
          EntityService
 ```
 
-This guide creates a YAML app. Every feature (entities through agents): [App Developer Guide](developer-guide.md). Longer customers/products/orders walkthrough: [Build a fullstack application](fullstack.md). Packaging and tenant enablement: [Applications](apps.md). Catalog of all docs: [Documentation index](README.md).
+This guide creates a YAML app. Every feature (entities through agents): [App Developer Guide](developer-guide.md). Longer customers/products/orders walkthrough: [Build a fullstack application](fullstack.md). Packaging and tenant enablement: [Applications](apps.md). Catalog of all docs: [Documentation index](index.md).
 
 ## Prerequisites
 
@@ -364,7 +364,7 @@ qefro app install myshop-0.1.0.qefro
 | Topic | Doc |
 | --- | --- |
 | Every feature, with examples | [developer-guide.md](developer-guide.md) |
-| Feature catalog | [README.md](README.md) |
+| Feature catalog | [index.md](index.md) |
 | Full shop tutorial | [fullstack.md](fullstack.md) |
 | Field types and relations | [entities.md](entities.md) |
 | Child tables | [child-tables.md](child-tables.md) |

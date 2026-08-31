@@ -1,7 +1,5 @@
 # Qefro documentation
 
-Published site: [https://qefro-ai.github.io/qefro-framework/](https://qefro-ai.github.io/qefro-framework/). Homepage source: [index.md](index.md).
-
 Qefro is a Rust-native, metadata-driven framework for building secure, multi-tenant business applications. One entity definition produces PostgreSQL schema, REST APIs, validation, a generic UI, workflows, reports, documents, automation, realtime, integrations, and agent tools.
 
 **App developers start here:** [App Developer Guide](developer-guide.md)

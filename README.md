@@ -4,7 +4,7 @@ Rust-native, metadata-driven framework for building secure, multi-tenant busines
 
 Define entities, workflows, permissions, and **business operations**. The runtime generates PostgreSQL schema, REST APIs, validation, audit logs, a generic UI, agent tools, events, and a Postgres job queue. Authorization always runs on the server. Agents never get a database connection.
 
-**V1.3** adds search, reports, dashboards, saved views, declarative validation, computed strings, and `AutomationDef` on the same EntityService path. App developers: [App Developer Guide](docs/developer-guide.md) (every feature) and the [documentation index](docs/README.md). Also [Getting started](docs/getting-started.md), [Business object runtime](docs/business-object-runtime.md), [Automation](docs/automation.md), [Validation](docs/validation.md), [Identity](docs/identity.md), and [V1 compatibility](docs/v1-compatibility.md).
+**V1.3** adds search, reports, dashboards, saved views, declarative validation, computed strings, and `AutomationDef` on the same EntityService path. App developers: [App Developer Guide](docs/developer-guide.md) (every feature) and the [documentation index](docs/index.md). Live docs: [qefro-ai.github.io/qefro-framework](https://qefro-ai.github.io/qefro-framework/). Also [Getting started](docs/getting-started.md), [Business object runtime](docs/business-object-runtime.md), [Automation](docs/automation.md), [Validation](docs/validation.md), [Identity](docs/identity.md), and [V1 compatibility](docs/v1-compatibility.md).
 
 ## Install
 
@@ -222,7 +222,7 @@ Or `make check`. Integration tests require `DATABASE_URL` (they fail closed if i
 
 ## Docs
 
-**Start here:** [Documentation index](docs/README.md) · [App Developer Guide](docs/developer-guide.md) (every feature, with YAML/Rust examples)
+**Start here:** [Documentation index](docs/index.md) · [App Developer Guide](docs/developer-guide.md) (every feature, with YAML/Rust examples) · [Live site](https://qefro-ai.github.io/qefro-framework/)
 
 | Path | Doc |
 | --- | --- |
@@ -231,5 +231,5 @@ Or `make check`. Integration tests require `DATABASE_URL` (they fail closed if i
 | Shop tutorial | [Build a fullstack application](docs/fullstack.md) |
 | YAML vs Rust | [App development](docs/app-development.md) |
 | Architecture | [Architecture](docs/architecture.md) |
-| Feature catalog | [docs/README.md](docs/README.md) |
+| Feature catalog | [docs/index.md](docs/index.md) |
 | Examples | [Examples](docs/examples.md) |

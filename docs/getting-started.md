@@ -49,12 +49,12 @@ cd frontend && npm install && npm run dev
 
 ## Documentation map
 
-The full catalog (every feature with a one-line description) is the [documentation index](README.md). How to use each feature while building an app: [App Developer Guide](developer-guide.md).
+The full catalog (every feature with a one-line description) is the [documentation index](index.md). How to use each feature while building an app: [App Developer Guide](developer-guide.md).
 
 | Topic | Doc |
 | --- | --- |
 | App developer handbook | [developer-guide.md](developer-guide.md) |
-| Feature catalog | [README.md](README.md) |
+| Feature catalog | [index.md](index.md) |
 | Architecture | [architecture.md](architecture.md) |
 | Compatibility | [v1-compatibility.md](v1-compatibility.md) |
 | Create an app | [creating-an-app.md](creating-an-app.md) |
