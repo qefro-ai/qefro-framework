@@ -152,7 +152,10 @@ pub fn validate_record(fields: &[FieldDef], record: &Value, partial: bool) -> Qe
         if field.system || field.computed || field.is_child_table() {
             continue;
         }
-        if !field.stores_column() {
+        if !field.stores_column() && !field.custom {
+            continue;
+        }
+        if field.custom && !field.custom_status.in_effective_metadata() {
             continue;
         }
         let value = obj.get(&field.name);

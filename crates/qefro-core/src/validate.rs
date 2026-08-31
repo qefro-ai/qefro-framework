@@ -104,6 +104,23 @@ pub fn validate_bundle(bundle: &AppBundle, installed: &[InstalledAppRef]) -> Val
             }
         }
         for field in &entity.fields {
+            if field.custom {
+                if let Err(e) = crate::custom::validate_custom_field(entity, field) {
+                    report.error(e.to_string());
+                }
+                if entity
+                    .fields
+                    .iter()
+                    .filter(|f| f.name == field.name)
+                    .count()
+                    > 1
+                {
+                    report.error(format!(
+                        "duplicate field '{}' on entity '{}'",
+                        field.name, entity.name
+                    ));
+                }
+            }
             if let Some(rel) = &field.relation {
                 if matches!(
                     rel.kind,

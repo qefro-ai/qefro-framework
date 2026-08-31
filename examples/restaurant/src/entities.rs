@@ -71,6 +71,27 @@ pub fn customer() -> EntityDef {
                 .permission_level(1)
                 .section("Contact"),
         )
+        .custom_field(
+            FieldDef::enum_values("loyalty_tier", vec!["Bronze", "Silver", "Gold"])
+                .nullable()
+                .default_value(json!("Bronze"))
+                .filterable()
+                .label("Loyalty Tier")
+                .section("Custom"),
+        )
+        .custom_field(
+            FieldDef::string("preferred_table")
+                .nullable()
+                .label("Preferred Table")
+                .section("Custom"),
+        )
+        .custom_field(
+            FieldDef::text("dietary_notes")
+                .nullable()
+                .list(false)
+                .label("Dietary Notes")
+                .section("Custom"),
+        )
         .views(EntityViews {
             list: Some(ListViewSpec {
                 columns: vec![
@@ -94,6 +115,11 @@ pub fn customer() -> EntityDef {
                         width: None,
                         widget: Some("relation".into()),
                     },
+                    ListColumnSpec {
+                        field: "loyalty_tier".into(),
+                        width: None,
+                        widget: None,
+                    },
                 ],
                 default_sort: Some(SortSpec {
                     field: "name".into(),
@@ -110,6 +136,11 @@ pub fn customer() -> EntityDef {
                     .fields(&["organization_id"])
                     .visible_when("party_type", json!("Organization")),
                 ViewSectionSpec::new("Notes").fields(&["notes"]),
+                ViewSectionSpec::new("Custom").fields(&[
+                    "loyalty_tier",
+                    "preferred_table",
+                    "dietary_notes",
+                ]),
             ])),
             detail: Some(DetailViewSpec::sections(vec![
                 ViewSectionSpec::new("Customer").fields(&["name", "email", "phone", "communication_channel", "marketing_opt_out"]),
@@ -117,6 +148,11 @@ pub fn customer() -> EntityDef {
                 ViewSectionSpec::new("Organization Details")
                     .fields(&["organization_id"])
                     .visible_when("party_type", json!("Organization")),
+                ViewSectionSpec::new("Custom").fields(&[
+                    "loyalty_tier",
+                    "preferred_table",
+                    "dietary_notes",
+                ]),
             ])),
             ..Default::default()
         })

@@ -831,7 +831,7 @@ impl EntityService {
         Ok(())
     }
 
-    pub fn preview_import(
+    pub async fn preview_import(
         &self,
         ctx: &OpContext,
         entity_name: &str,
@@ -844,16 +844,17 @@ impl EntityService {
             ..ImportOptions::default()
         };
         self.preview_import_source(ctx, entity_name, csv, &opts)
+            .await
     }
 
-    pub fn preview_import_source(
+    pub async fn preview_import_source(
         &self,
         ctx: &OpContext,
         entity_name: &str,
         source: &str,
         opts: &ImportOptions,
     ) -> QefroResult<ImportPreview> {
-        let entity = self.registry().get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_importable(ctx, &entity)?;
         self.permissions()
             .check(ctx, &entity.name, Action::Create)?;
@@ -948,7 +949,7 @@ impl EntityService {
         blob_meta: Option<&BlobMetaStore>,
         notifications: Option<&NotificationStore>,
     ) -> QefroResult<ImportResult> {
-        let entity = self.registry().get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_importable(ctx, &entity)?;
         self.permissions()
             .check(ctx, &entity.name, Action::Create)?;
@@ -1072,7 +1073,7 @@ impl EntityService {
         blobs: &dyn BlobStore,
         blob_meta: &BlobMetaStore,
     ) -> QefroResult<(String, String, ImportFormat)> {
-        let entity = self.registry().get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         self.ensure_importable(ctx, &entity)?;
         self.permissions()
             .check(ctx, &entity.name, Action::Create)?;
@@ -1147,7 +1148,7 @@ impl EntityService {
             }
         }
         let (columns, rows) = parse_source(source, opts.format)?;
-        let entity = self.registry().get(entity_name)?;
+        let entity = self.entity_for(ctx, entity_name).await?;
         let wf = self.import_wf_field(&entity);
         let mapping = if opts.mapping.is_empty() {
             suggest_mapping(&entity, &columns, wf.as_deref())
@@ -1402,7 +1403,7 @@ impl EntityService {
         }
         self.set_import_status(job_id, ctx.tenant_id, "validating", None)
             .await?;
-        let entity = self.registry().get(&job.entity)?;
+        let entity = self.entity_for(ctx, &job.entity).await?;
         let key = job
             .blob_key
             .as_deref()

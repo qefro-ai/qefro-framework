@@ -245,6 +245,18 @@ impl EntityDef {
         self
     }
 
+    /// Application-level custom field. Stored in the JSONB bag, not a new column.
+    /// Tenant Studio fields use the same [`FieldDef`] shape and are merged at request time.
+    pub fn custom_field(mut self, mut field: FieldDef) -> Self {
+        field.custom = true;
+        field.ui.sortable = false;
+        if field.ui.section.is_none() {
+            field.ui.section = Some("Custom".into());
+        }
+        self.fields.push(field);
+        self
+    }
+
     pub fn child_table(mut self, def: ChildTableDef) -> Self {
         if !self.fields.iter().any(|f| f.name == def.name) {
             self.fields.push(FieldDef::child_table_field(&def));
@@ -529,10 +541,24 @@ impl EntityDef {
                 | "archived_at"
                 | "created_by"
                 | "updated_by"
+                | crate::custom::CUSTOM_BAG_COLUMN
         ) || self
             .stored_fields()
             .iter()
             .any(|f| f.name == name || f.column_name() == name)
+    }
+
+    /// Filterable through a real column or the JSONB bag (`->>` equality).
+    pub fn is_filterable_field(&self, name: &str) -> bool {
+        self.has_column(name)
+            || self
+                .get_field(name)
+                .is_some_and(|f| f.custom && f.custom_status.in_effective_metadata())
+    }
+
+    /// JSONB custom fields are not sortable (no per-key btree index).
+    pub fn is_sortable_field(&self, name: &str) -> bool {
+        self.has_column(name) && self.get_field(name).map(|f| !f.custom).unwrap_or(true)
     }
 
     pub fn searchable_fields(&self) -> Vec<&FieldDef> {
@@ -831,6 +857,8 @@ impl EntityDef {
                     permission_level: f.permission_level,
                     allow_on_submit: f.allow_on_submit,
                     secret: f.secret,
+                    custom: f.custom,
+                    custom_status: f.custom.then(|| f.custom_status.as_str().to_string()),
                     child_entity: f.relation.as_ref().and_then(|r| {
                         if f.is_child_table() {
                             Some(r.target_entity.clone())

@@ -36,6 +36,9 @@ pub struct AppModule {
     pub communications: Vec<CommunicationDef>,
     pub webhooks: Vec<WebhookDef>,
     pub automations: Vec<crate::automation::AutomationDef>,
+    /// Application-level custom fields for entities this module does not own
+    /// (for example restaurant extending framework Product). Applied via overlay.
+    pub entity_extensions: Vec<(String, Vec<crate::field::FieldDef>)>,
     /// Default tenant chrome when the tenant has not set branding yet.
     pub branding: crate::ui::TenantBranding,
 }
@@ -189,6 +192,7 @@ impl AppModule {
                 communications: Vec::new(),
                 webhooks: Vec::new(),
                 automations: Vec::new(),
+                entity_extensions: Vec::new(),
                 branding: crate::ui::TenantBranding::default(),
             },
         }
@@ -200,6 +204,30 @@ impl AppModule {
                 entity.module = Some(self.name.clone());
             }
             registry.register(entity)?;
+        }
+        self.apply_entity_extensions(registry)?;
+        Ok(())
+    }
+
+    /// Merge Git-committable application custom fields onto already-registered entities.
+    pub fn apply_entity_extensions(&self, registry: &EntityRegistry) -> QefroResult<()> {
+        for (name, fields) in &self.entity_extensions {
+            let mut def = (*registry.get(name)?).clone();
+            for field in fields {
+                let mut field = field.clone();
+                field.custom = true;
+                field.ui.sortable = false;
+                crate::custom::validate_custom_field(&def, &field)?;
+                if def.get_field(&field.name).is_some() {
+                    return Err(crate::error::QefroError::bad_request(format!(
+                        "application extension '{}.{}' collides with an existing field",
+                        def.name, field.name
+                    )));
+                }
+                def.fields.push(field);
+            }
+            def.normalize();
+            registry.overlay_put(def)?;
         }
         Ok(())
     }
@@ -339,6 +367,16 @@ impl AppModuleBuilder {
 
     pub fn entity(mut self, entity: EntityDef) -> Self {
         self.module.entities.push(entity);
+        self
+    }
+
+    /// Extend an already-registered entity (often a framework entity) with custom fields.
+    pub fn extend_entity(
+        mut self,
+        name: impl Into<String>,
+        fields: Vec<crate::field::FieldDef>,
+    ) -> Self {
+        self.module.entity_extensions.push((name.into(), fields));
         self
     }
 

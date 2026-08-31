@@ -848,6 +848,11 @@ pub struct UiFieldView {
     pub allow_on_submit: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub secret: bool,
+    /// Extension field from application or tenant metadata.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub custom: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub child_entity: Option<String>,
 }

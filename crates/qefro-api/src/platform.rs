@@ -452,10 +452,10 @@ async fn import_preview(
 ) -> Result<Json<Value>, ApiError> {
     let entity = state.entities.entity_by_slug(&slug)?;
     let opts = import_opts(&body)?;
-    let preview =
-        state
-            .entities
-            .preview_import_source(&ctx, &entity.name, import_text(&body)?, &opts)?;
+    let preview = state
+        .entities
+        .preview_import_source(&ctx, &entity.name, import_text(&body)?, &opts)
+        .await?;
     Ok(Json(serde_json::to_value(preview).unwrap_or(json!({}))))
 }
 
@@ -533,7 +533,8 @@ async fn upload_import(
     };
     let preview = state
         .entities
-        .preview_import_source(&ctx, &entity.name, &text, &opts)?;
+        .preview_import_source(&ctx, &entity.name, &text, &opts)
+        .await?;
     Ok(Json(json!({
         "blob_key": blob_key,
         "filename": filename,

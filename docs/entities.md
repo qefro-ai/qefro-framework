@@ -1,6 +1,6 @@
 # Entities
 
-An entity is the unit of metadata. One definition produces schema, REST, UI, validation, audit, and tools.
+An entity is the unit of metadata. One definition produces schema, REST, UI, validation, audit, and tools. Application and tenant [custom fields](custom-fields.md) extend that definition without a second runtime.
 
 ## Builder
 

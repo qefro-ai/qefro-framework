@@ -8,8 +8,8 @@ mod workflows;
 use qefro_api::InstalledApp;
 use qefro_core::{
     AppModule, AutomationAction, AutomationDef, AutomationStep, AutomationTrigger,
-    CommunicationDef, Condition, NavItem, NotificationDef, ReportDef, TenantBranding, WebhookDef,
-    CHANNEL_EMAIL, CHANNEL_IN_APP, CHANNEL_WHATSAPP, PURPOSE_TRANSACTIONAL,
+    CommunicationDef, Condition, FieldDef, NavItem, NotificationDef, ReportDef, TenantBranding,
+    WebhookDef, CHANNEL_EMAIL, CHANNEL_IN_APP, CHANNEL_WHATSAPP, PURPOSE_TRANSACTIONAL,
 };
 use qefro_permissions::PermissionGrant;
 use qefro_workflow::WorkflowDef;
@@ -62,6 +62,24 @@ pub fn module() -> AppModule {
         .entity(entities::payment())
         .entity(entities::ui_showcase())
         .entity(entities::showcase_line())
+        .extend_entity(
+            "Product",
+            vec![
+                FieldDef::string("manufacturer")
+                    .nullable()
+                    .label("Manufacturer")
+                    .section("Custom"),
+                FieldDef::integer("warranty_months")
+                    .nullable()
+                    .min(0.0)
+                    .label("Warranty Months")
+                    .section("Custom"),
+                FieldDef::string("color")
+                    .nullable()
+                    .label("Color")
+                    .section("Custom"),
+            ],
+        )
         .dashboard(dashboard::ops())
         .page(pages::restaurant_operations())
         .page(pages::customer_workspace())

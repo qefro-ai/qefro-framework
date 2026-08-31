@@ -354,7 +354,7 @@ async fn get_entity(
     Path(entity): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     require(&ctx, &state.env, CAP_VIEW)?;
-    let def = state.entities.registry().get(&entity)?;
+    let def = state.entities.entity_for(&ctx, &entity).await?;
     if !ctx.allows_app(def.module.as_deref()) {
         return Err(QefroError::not_found(format!("entity '{entity}' not found")).into());
     }

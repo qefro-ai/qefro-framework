@@ -209,6 +209,16 @@ pub struct FieldDef {
     /// No database column. UI/action flags such as `create_account`.
     #[serde(default)]
     pub ephemeral: bool,
+    /// Extension field. Values live in the shared `qefro_custom` JSONB bag.
+    /// Not a second field type — same [`FieldDef`] / validation as core fields.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub custom: bool,
+    /// Tenant custom-field lifecycle. Application `.custom_field()` stays Active.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::custom::CustomFieldStatus::skip_if_active"
+    )]
+    pub custom_status: crate::custom::CustomFieldStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -330,6 +340,8 @@ impl FieldDef {
             allow_on_submit: false,
             secret: false,
             ephemeral: false,
+            custom: false,
+            custom_status: crate::custom::CustomFieldStatus::Active,
         }
     }
 
@@ -830,6 +842,16 @@ impl FieldDef {
         self
     }
 
+    /// Store in the JSONB bag instead of a dedicated column. No runtime DDL.
+    pub fn custom(mut self) -> Self {
+        self.custom = true;
+        self.ui.sortable = false;
+        if self.ui.section.is_none() {
+            self.ui.section = Some("Custom".into());
+        }
+        self
+    }
+
     fn ui_display_entity(mut self, entity: String) -> Self {
         self.ui.widget_options.entity = Some(entity);
         self
@@ -838,6 +860,9 @@ impl FieldDef {
     pub fn stores_column(&self) -> bool {
         if self.system {
             return true;
+        }
+        if self.custom {
+            return false;
         }
         if self.secret || self.ephemeral {
             return false;
@@ -936,6 +961,16 @@ mod tests {
         let field: FieldDef =
             serde_json::from_value(json!({"name": "rate", "type": "datetime"})).unwrap();
         assert_eq!(field.field_type.as_str(), "datetime");
+    }
+
+    #[test]
+    fn custom_fields_do_not_store_columns() {
+        let field =
+            FieldDef::enum_values("loyalty_tier", vec!["Bronze", "Silver", "Gold"]).custom();
+        assert!(field.custom);
+        assert!(!field.stores_column());
+        assert!(!field.ui.sortable);
+        assert_eq!(field.ui.section.as_deref(), Some("Custom"));
     }
 
     #[test]
