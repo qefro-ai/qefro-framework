@@ -1,6 +1,6 @@
 # UI
 
-The backend exposes UI metadata at `GET /api/v1/meta/ui`. The payload is versioned (`schema_version: "1"`). The React app in `frontend/` is a generic renderer. It does not hardcode entity names. **UI 2.0** polishes that renderer (shell, lists, documents, theme) without changing `schema_version: "1"`. See [UI 2.0](ui-2.md).
+The backend exposes UI metadata at `GET /api/v1/meta/ui`. The payload is versioned (`schema_version: "1"`). The React renderer is `@qefro/js`; `frontend/` is the reference app that consumes it. It does not hardcode entity names. **UI 2.0** polishes that renderer (shell, lists, documents, theme) without changing `schema_version: "1"`. See [UI 2.0](ui-2.md) and [qefro.js](qefro-js.md).
 
 ## Routes
 

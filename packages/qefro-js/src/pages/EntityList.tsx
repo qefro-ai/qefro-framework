@@ -33,12 +33,22 @@ import { useTenantTheme } from "../metadata/context";
 import { availableViews, calendarStartField, canCreate, canDelete, canExport, canUpdate, defaultView, listGroupField, listViewSpec } from "../metadata/views";
 import { entityCount, t } from "../i18n";
 import type { ViewKind } from "../metadata/types";
+import { resolveEntity } from "../metadata/navigation";
 import { usePrefsOptional } from "../prefsContext";
 import { useRealtime } from "../realtime";
 
-export default function EntityList({ entities }: { entities: UiEntity[] }) {
-  const { slug } = useParams();
-  const meta = entities.find((e) => e.slug === slug);
+export default function EntityList({
+  entities,
+  entity,
+  view: viewOption,
+}: {
+  entities: UiEntity[];
+  entity?: string;
+  view?: ViewKind;
+}) {
+  const { slug: routeSlug } = useParams();
+  const meta = resolveEntity(entities, entity ?? routeSlug);
+  const slug = meta?.slug ?? routeSlug;
   const [params, setParams] = useSearchParams();
   const search = params.get("search") ?? "";
   const page = Number(params.get("page") ?? "1");
@@ -51,8 +61,8 @@ export default function EntityList({ entities }: { entities: UiEntity[] }) {
   const sort = params.get("sort") ?? table?.sort ?? defaultSort;
   const views = useMemo(() => (meta ? availableViews(meta) : (["list"] as ViewKind[])), [meta]);
   const fallbackView = meta ? defaultView(meta) : "list";
-  const view = (views.includes((params.get("view") || "") as ViewKind)
-    ? (params.get("view") as ViewKind)
+  const view = (views.includes((params.get("view") || viewOption || "") as ViewKind)
+    ? ((params.get("view") || viewOption) as ViewKind)
     : ((table?.view as ViewKind) || fallbackView)) as ViewKind;
   const currentView = views.includes(view) ? view : "list";
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);

@@ -1,0 +1,38 @@
+{
+  "name": "@qefro/js",
+  "version": "0.1.0",
+  "description": "Qefro UI runtime: metadata-driven workspace, entity renderer, and design system.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": [
+    "./src/widgets.tsx",
+    "./src/views/index.ts",
+    "./src/components/fields/widgets.tsx",
+    "./src/styles.css"
+  ],
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "vitest run --config ../../frontend/vite.config.ts",
+    "build": "vite build --config ../../frontend/vite.config.ts"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qefro-ai/qefro-framework",
+    "directory": "packages/qefro-js"
+  }
+}

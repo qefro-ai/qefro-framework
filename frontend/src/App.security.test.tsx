@@ -12,7 +12,7 @@ describe("unauthenticated browser navigation", () => {
     localStorage.clear();
   });
 
-  it.each(["/studio", "/admin", "/audit", "/settings", "/settings/audit", "/customers/other-id"])(
+  it.each(["/studio", "/admin", "/audit", "/settings", "/settings/audit", "/customers/other-id", "/pages/secret"])(
     "redirects %s to login without fetching app data",
     (path) => {
       const fetchSpy = vi.spyOn(globalThis, "fetch");

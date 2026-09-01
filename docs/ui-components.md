@@ -18,4 +18,4 @@ The generic frontend is a small set of renderers. There is no `CustomerPage.tsx`
 | Palette | `CommandPalette` | Create / Go to / Search / Reports |
 | Status | `StatusBadge` | Appearance from field metadata |
 
-Extension point: `registerWidget(name, component)` in `frontend/src/metadata/registry.ts`.
+Extension point: `registerWidget(name, component)` in `@qefro/js` (`packages/qefro-js/src/metadata/registry.ts`). Applications can also `qefro.register({ field, entity, page, widget })` — see [qefro.js](qefro-js.md).

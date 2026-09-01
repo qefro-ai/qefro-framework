@@ -11,6 +11,8 @@ import { t } from "../i18n";
 import { previewFormula } from "../metadata/formula";
 import { fieldReadonly } from "../metadata/conditions";
 import { displayValue } from "../metadata/views";
+import { resolveEntity } from "../metadata/navigation";
+import { emitUiEvent } from "../core/events";
 import { useBreadcrumbRecord } from "../components/shell/breadcrumbContext";
 
 const DRAFT_PREFIX = "qefro:form-draft:";
@@ -58,15 +60,18 @@ function previewDefault(field: UiField): unknown {
   return "";
 }
 
-export default function EntityForm({ entities }: { entities: UiEntity[] }) {
-  const { slug, id } = useParams();
-  return <EntityFormEditor key={`${slug}:${id ?? "new"}`} entities={entities} />;
+export default function EntityForm({ entities, entity }: { entities: UiEntity[]; entity?: string }) {
+  const { slug: routeSlug, id } = useParams();
+  const meta = resolveEntity(entities, entity ?? routeSlug);
+  const slug = meta?.slug ?? routeSlug;
+  return <EntityFormEditor key={`${slug}:${id ?? "new"}`} entities={entities} entity={entity} />;
 }
 
-function EntityFormEditor({ entities }: { entities: UiEntity[] }) {
-  const { slug, id } = useParams();
+function EntityFormEditor({ entities, entity }: { entities: UiEntity[]; entity?: string }) {
+  const { slug: routeSlug, id } = useParams();
+  const meta = resolveEntity(entities, entity ?? routeSlug);
+  const slug = meta?.slug ?? routeSlug;
   const [searchParams] = useSearchParams();
-  const meta = entities.find((e) => e.slug === slug);
   const navigate = useNavigate();
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [error, setError] = useState("");
@@ -225,6 +230,13 @@ function EntityFormEditor({ entities }: { entities: UiEntity[] }) {
       clearDraft(entitySlug, id);
       setSaved(true);
       showSnackbar(id ? "Saved" : "Created");
+      if (createdId && meta) {
+        emitUiEvent(id ? "entity:updated" : "entity:created", {
+          entity: meta.entity,
+          slug: entitySlug,
+          id: String(createdId),
+        });
+      }
       if (returnTo && createdId && returnField) {
         const dest = new URL(returnTo, window.location.origin);
         dest.searchParams.set(returnField, createdId);

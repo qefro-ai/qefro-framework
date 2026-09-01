@@ -23,7 +23,7 @@ postgres:
 check:
 	./scripts/setup-postgres.sh --check
 	DATABASE_URL=$(DATABASE_URL) cargo test --workspace -- --test-threads=1
-	cd frontend && npm test
+	cd frontend && npm test && npm run build
 
 install:
 	cargo install --path crates/qefro-cli --locked --force

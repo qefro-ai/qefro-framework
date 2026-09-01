@@ -323,7 +323,7 @@ cd frontend && npm install && npm run dev
 
 Open the UI, sign in, and use **Companies** / **Contacts**. Relation fields are searchable pickers, not raw UUIDs. Related contacts appear on the company detail page; **Add Contact** prefills `company_id`.
 
-The UI talks to the backend through `QefroClient` (`frontend/src/sdk/client.ts`) → `/api/v1` → `EntityService`. Agents use `EntityOps` on the same path. See [QefroClient](sdk.md).
+The UI talks to the backend through `QefroClient` in `@qefro/js` → `/api/v1` → `EntityService`. Agents use `EntityOps` on the same path. See [QefroClient](sdk.md) and [qefro.js](qefro-js.md).
 
 ## What you get without writing UI code
 

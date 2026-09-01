@@ -25,13 +25,16 @@ import { useTenantTheme } from "../metadata/context";
 import { canDeleteRecord, canUpdateRecord, displayValue } from "../metadata/views";
 import { resolveLayout } from "../metadata/layout";
 import { t } from "../i18n";
+import { resolveEntity } from "../metadata/navigation";
+import { emitUiEvent } from "../core/events";
 import { useBreadcrumbRecord } from "../components/shell/breadcrumbContext";
 import { useRealtime } from "../realtime";
 
-export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
-  const { slug, id } = useParams();
+export default function EntityDetail({ entities, entity }: { entities: UiEntity[]; entity?: string }) {
+  const { slug: routeSlug, id } = useParams();
+  const meta = resolveEntity(entities, entity ?? routeSlug);
+  const slug = meta?.slug ?? routeSlug;
   const [params, setParams] = useSearchParams();
-  const meta = entities.find((e) => e.slug === slug);
   const navigate = useNavigate();
   const [row, setRow] = useState<Record<string, unknown> | null>(null);
   const [error, setError] = useState("");
@@ -197,6 +200,7 @@ export default function EntityDetail({ entities }: { entities: UiEntity[] }) {
       if (action === "delete") {
         await api.remove(slug, id);
         showSnackbar(t("bulk.done.delete", { count: meta.label.toLowerCase() }));
+        emitUiEvent("entity:deleted", { entity: meta.entity, slug, id });
         navigate(`/${slug}`);
         return;
       }

@@ -6,6 +6,7 @@ import { EntityCard } from "./EntityCard";
 import { canCreate } from "../../metadata/views";
 import { friendlyError } from "../../friendlyError";
 import type { CollectionViewProps } from "../../views/registry";
+import { defaultExtensions } from "../../core/extensions";
 
 export default function CardView({
   meta,
@@ -56,9 +57,10 @@ export default function CardView({
         const actions = ((row._actions as EntityAction[] | undefined) ?? []).slice(0, 2);
         const transitions =
           ((row._workflow as { transitions?: WorkflowAction[] } | undefined)?.transitions ?? []).slice(0, 2);
+        const CardImpl = defaultExtensions.entityOverrides(meta).card ?? EntityCard;
         return (
           <div key={String(row.id)} role="listitem">
-            <EntityCard
+            <CardImpl
               meta={meta}
               slug={slug}
               row={row}

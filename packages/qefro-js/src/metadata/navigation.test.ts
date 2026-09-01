@@ -1,4 +1,4 @@
-import { primaryNavEntities, settingsEntities } from "./navigation";
+import { primaryNavEntities, resolveEntity, settingsEntities } from "./navigation";
 import type { UiEntity } from "./types";
 
 function entity(over: Partial<UiEntity> & { entity: string; slug: string }): UiEntity {
@@ -80,5 +80,16 @@ describe("settingsEntities", () => {
       ["people", "users"],
     );
     expect(setup.map((e) => e.slug)).toEqual(["people", "users"]);
+  });
+});
+
+describe("resolveEntity", () => {
+  it("matches name, slug, or label case-insensitively", () => {
+    const entities = [leads, reservations];
+    expect(resolveEntity(entities, "Lead")?.slug).toBe("leads");
+    expect(resolveEntity(entities, "leads")?.entity).toBe("Lead");
+    expect(resolveEntity(entities, "RESERVATIONS")?.entity).toBe("Reservation");
+    expect(resolveEntity(entities, "Reservations")?.slug).toBe("reservations");
+    expect(resolveEntity(entities, "missing")).toBeUndefined();
   });
 });

@@ -1,24 +1,32 @@
-import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import StudioApp from "./studio/StudioApp";
-import { api, ApiError, clearToken, hasToken, METADATA_EVENT, onAuthChange, type TenantConfig, type UiEntity } from "./api";
-import { TenantThemeContext } from "./metadata/context";
-import { primaryNavEntities } from "./metadata/navigation";
-import type { WorkspaceNavItem } from "./metadata/types";
-import { PrefsProvider } from "./prefsContext";
-import { AppShell } from "./components/shell/AppShell";
-import "./widgets";
-import Login from "./pages/Login";
-import EntityList from "./pages/EntityList";
-import EntityForm from "./pages/EntityForm";
-import EntityDetail from "./pages/EntityDetail";
-import Dashboard from "./pages/Dashboard";
-import ComposedPage from "./pages/ComposedPage";
-import Settings from "./pages/Settings";
-import AuditLog from "./pages/AuditLog";
-import Reports from "./pages/Reports";
-import PublicForm from "./pages/PublicForm";
-import { SnackbarHost } from "./components/ui/Snackbar";
+import {
+  api,
+  ApiError,
+  AppShell,
+  applyBranding,
+  clearToken,
+  defaultExtensions,
+  emitUiEvent,
+  hasToken,
+  METADATA_EVENT,
+  onAuthChange,
+  PrefsProvider,
+  primaryNavEntities,
+  Qefro,
+  QefroProvider,
+  QefroPublicRoutes,
+  QefroRoutes,
+  SnackbarHost,
+  TenantThemeContext,
+  type TenantConfig,
+  type UiEntity,
+  type WorkspaceNavItem,
+} from "@qefro/js";
+
+export const qefro = new Qefro({ apiUrl: "/api/v1" });
+void qefro.init();
 
 export default function App() {
   const [authed, setAuthed] = useState(hasToken());
@@ -29,11 +37,7 @@ export default function App() {
     return (
       <>
         <SnackbarHost />
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/p/:tenant/:form" element={<PublicForm />} />
-          <Route path="*" element={<Navigate to="/login" replace />} />
-        </Routes>
+        <QefroPublicRoutes />
       </>
     );
   }
@@ -99,6 +103,7 @@ function Shell() {
                   },
             );
           }
+          emitUiEvent("workspace:ready", { entities: d.entities.length });
         })
         .catch((err) => {
           if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
@@ -125,26 +130,7 @@ function Shell() {
   }, [navigate]);
 
   useEffect(() => {
-    const root = document.documentElement;
-    const primary = config?.branding.primary_color;
-    const accent = config?.branding.accent_color || primary;
-    if (accent) root.style.setProperty("--accent", accent);
-    if (primary) root.style.setProperty("--primary", primary);
-    else if (accent) root.style.setProperty("--primary", accent);
-    const secondary = config?.branding.secondary_color;
-    if (secondary) root.style.setProperty("--secondary", secondary);
-    const name = config?.branding.company_name || config?.branding.app_name || "Workspace";
-    document.title = name;
-    const favicon = config?.branding.favicon;
-    if (favicon) {
-      let link = document.querySelector("link[rel='icon']") as HTMLLinkElement | null;
-      if (!link) {
-        link = document.createElement("link");
-        link.rel = "icon";
-        document.head.appendChild(link);
-      }
-      link.href = favicon;
-    }
+    applyBranding(config, qefro.getTheme());
   }, [config]);
 
   const navEntities = useMemo(
@@ -183,49 +169,18 @@ function Shell() {
     currency: config?.business?.currency || "USD",
   };
 
-  const routes = (
-    <Routes>
-      <Route path="/" element={<Dashboard entities={entities} config={resolvedConfig} shortcuts={uiMeta.workspaceShortcuts} />} />
-      <Route path="/login" element={<Navigate to="/" replace />} />
-      <Route
-        path="/settings"
-        element={
-          <Settings
-            config={config}
-            entities={entities}
-            navSlugs={uiMeta.navigation}
-            hiddenEntities={uiMeta.hidden_entities}
-            roles={roles}
-            onSaved={(next) => {
-              setConfig(next);
-              api
-                .ui()
-                .then((d) => {
-                  setEntities(d.entities);
-                  setUiMeta({
-                    navigation: d.navigation ?? [],
-                    hidden_entities: d.hidden_entities ?? [],
-                    default_dashboard: d.default_dashboard,
-                    workspaceNav: d.workspace?.navigation ?? [],
-                    workspaceShortcuts: d.workspace?.shortcuts ?? [],
-                  });
-                })
-                .catch(() => undefined);
-            }}
-          />
-        }
-      />
-      <Route path="/settings/audit" element={<AuditLog />} />
-      <Route path="/reports" element={<Reports />} />
-      <Route path="/pages/:name" element={<ComposedPage entities={entities} />} />
-      <Route path="/p/:tenant/:form" element={<PublicForm />} />
-      <Route path="/:slug" element={<EntityList entities={entities} />} />
-      <Route path="/:slug/new" element={<EntityForm entities={entities} />} />
-      <Route path="/:slug/:id" element={<EntityDetail entities={entities} />} />
-      <Route path="/:slug/:id/edit" element={<EntityForm entities={entities} />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
-  );
+  const snapshot = {
+    entities,
+    config: resolvedConfig,
+    navigation: uiMeta.navigation,
+    hiddenEntities: uiMeta.hidden_entities,
+    workspaceNav: uiMeta.workspaceNav,
+    workspaceShortcuts: uiMeta.workspaceShortcuts,
+    userName,
+    userEmail,
+    roles,
+    studio,
+  };
 
   if (location.pathname.startsWith("/studio")) {
     return (
@@ -239,21 +194,47 @@ function Shell() {
 
   return (
     <TenantThemeContext.Provider value={theme}>
-      <PrefsProvider tenantId={tenantKey} userId={userKey}>
-        <AppShell
-          appName={appName}
-          logo={config?.branding.logo}
-          navEntities={navEntities}
-          workspaceNav={uiMeta.workspaceNav}
-          allEntities={entities}
-          studio={studio}
-          userName={userName}
-          userEmail={userEmail}
-          roles={roles}
-        >
-          {routes}
-        </AppShell>
-      </PrefsProvider>
+      <QefroProvider runtime={qefro} snapshot={snapshot}>
+        <PrefsProvider tenantId={tenantKey} userId={userKey}>
+          <AppShell
+            appName={appName}
+            logo={config?.branding.logo}
+            navEntities={navEntities}
+            workspaceNav={uiMeta.workspaceNav}
+            allEntities={entities}
+            studio={studio}
+            userName={userName}
+            userEmail={userEmail}
+            roles={roles}
+            extraNav={defaultExtensions.navigation}
+          >
+            <QefroRoutes
+              entities={entities}
+              config={resolvedConfig}
+              shortcuts={uiMeta.workspaceShortcuts}
+              navSlugs={uiMeta.navigation}
+              hiddenEntities={uiMeta.hidden_entities}
+              roles={roles}
+              onConfigSaved={(next) => {
+                setConfig(next);
+                api
+                  .ui()
+                  .then((d) => {
+                    setEntities(d.entities);
+                    setUiMeta({
+                      navigation: d.navigation ?? [],
+                      hidden_entities: d.hidden_entities ?? [],
+                      default_dashboard: d.default_dashboard,
+                      workspaceNav: d.workspace?.navigation ?? [],
+                      workspaceShortcuts: d.workspace?.shortcuts ?? [],
+                    });
+                  })
+                  .catch(() => undefined);
+              }}
+            />
+          </AppShell>
+        </PrefsProvider>
+      </QefroProvider>
     </TenantThemeContext.Provider>
   );
 }

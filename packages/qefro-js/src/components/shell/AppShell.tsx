@@ -20,6 +20,7 @@ export function AppShell({
   userName,
   userEmail,
   roles,
+  extraNav,
   children,
 }: {
   appName: string;
@@ -31,6 +32,7 @@ export function AppShell({
   userName: string;
   userEmail: string;
   roles: string[];
+  extraNav?: Array<{ label: string; to: string; section?: string }>;
   children: ReactNode;
 }) {
   const { prefs, setTheme, setDensity, setSidebarCollapsed, theme } = usePrefs();
@@ -212,6 +214,17 @@ export function AppShell({
           <NavLink to="/reports" className={({ isActive }) => (isActive ? "active" : "")}>
             <span className="nav-label">Reports</span>
           </NavLink>
+          {extraNav?.length
+            ? extraNav.map((item) => (
+                <NavLink
+                  key={`${item.label}-${item.to}`}
+                  to={item.to}
+                  className={({ isActive }) => (isActive ? "active" : "")}
+                >
+                  <span className="nav-label">{item.label}</span>
+                </NavLink>
+              ))
+            : null}
           <div className="nav-group">
             <div className="nav-group-label">Administration</div>
             <NavLink to="/settings" className={({ isActive }) => (isActive ? "active" : "")}>
