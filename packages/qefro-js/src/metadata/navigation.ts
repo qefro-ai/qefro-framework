@@ -1,5 +1,18 @@
 import type { UiEntity, WorkspaceNavItem } from "./types";
 
+/** Resolve an entity by name, slug, or label (case-insensitive). */
+export function resolveEntity(entities: UiEntity[], nameOrSlug?: string | null): UiEntity | undefined {
+  if (!nameOrSlug) return undefined;
+  const key = nameOrSlug.trim().toLowerCase();
+  return entities.find(
+    (entity) =>
+      entity.entity.toLowerCase() === key ||
+      entity.slug.toLowerCase() === key ||
+      entity.label.toLowerCase() === key ||
+      entity.label_plural.toLowerCase() === key,
+  );
+}
+
 export function workspaceItemHref(item: WorkspaceNavItem) {
   if (item.page) return `/pages/${item.page}`;
   const search = [item.query, item.view ? `view=${item.view}` : ""].filter(Boolean).join("&");

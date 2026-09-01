@@ -1326,7 +1326,7 @@ POST        /{slug}/import
 
 Metadata: `/meta/ui`, `/meta/entities`, `/meta/workflows`, `/meta/permissions`, `/meta/dashboards`, `/meta/reports`, `/meta/workspace`.
 
-**Browser SDK:** `QefroClient` at `frontend/src/sdk/client.ts` (not a published npm package). Methods: `ui()`, `list` / `get` / `create` / `update` / `remove`, `action` / `transition`, `search`, `getDashboard`, `runReport`, `activity`, `attachments`, `notifications`, saved views. There is no `IdentityClient` or `WorkflowClient`.
+**Browser SDK:** `QefroClient` in `@qefro/js` (see [QefroClient](sdk.md) and [qefro.js](qefro-js.md)). Methods: `ui()`, `list` / `get` / `create` / `update` / `remove`, `action` / `transition`, `search`, `getDashboard`, `runReport`, `activity`, `attachments`, `notifications`, saved views. There is no `IdentityClient` or `WorkflowClient`.
 
 **Agents:** `EntityOps` in-process through `EntityService`.
 

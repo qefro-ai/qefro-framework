@@ -11,6 +11,7 @@ import { dateFieldsFromFilters, drilldownPath } from "../metadata/dashboard";
 import { formatMoney } from "../metadata/timezone";
 import { useTenantTheme } from "../metadata/context";
 import { useRealtime } from "../realtime";
+import { defaultExtensions } from "../core/extensions";
 
 export type DashboardWidgetCard = {
   title: string;
@@ -150,14 +151,28 @@ export function DashboardWidget({
   );
 }
 
+function ResolvedWidget(props: {
+  card: Card;
+  slug?: string;
+  currency: string;
+  locale: string;
+  onSegment?: (card: Card, slug: string | undefined, label: string) => void;
+}) {
+  const Custom = defaultExtensions.getDashboardWidget(cardKind(props.card));
+  if (Custom) return <Custom {...props} />;
+  return <DashboardWidget {...props} />;
+}
+
 export default function Dashboard({
   entities,
   config,
   shortcuts,
+  dashboardName,
 }: {
   entities: UiEntity[];
   config: TenantConfig | null;
   shortcuts?: Array<{ label: string; to: string; entity?: string; kind?: string }>;
+  dashboardName?: string;
 }) {
   const [label, setLabel] = useState("Dashboard");
   const [name, setName] = useState("");
@@ -199,8 +214,15 @@ export default function Dashboard({
     api
       .dashboards()
       .then(async (meta) => {
-        const preferred = config?.ui_config.default_dashboard;
-        const dash = meta.dashboards.find((d) => d.name === preferred) ?? meta.dashboards[0];
+        const preferred = dashboardName || config?.ui_config.default_dashboard;
+        const dash =
+          meta.dashboards.find(
+            (d) =>
+              d.name === preferred ||
+              d.label === preferred ||
+              d.name.toLowerCase() === String(preferred || "").toLowerCase() ||
+              d.label.toLowerCase() === String(preferred || "").toLowerCase(),
+          ) ?? meta.dashboards[0];
         if (!dash) {
           setCards([]);
           return;
@@ -230,7 +252,7 @@ export default function Dashboard({
       })
       .catch((e) => setError(friendlyError(e)))
       .finally(() => setLoading(false));
-  }, [config, tick, extraKey, status, branch, datePreset]);
+  }, [config, tick, extraKey, status, branch, datePreset, dashboardName]);
 
   useRealtime({}, () => setTick((n) => n + 1));
 
@@ -347,7 +369,7 @@ export default function Dashboard({
           <SectionHeader title="Key metrics" />
           <div className="dash-grid">
             {kpis.map((card) => (
-              <DashboardWidget
+              <ResolvedWidget
                 key={card.title}
                 card={card}
                 slug={slugFor(card.entity)}
@@ -364,7 +386,7 @@ export default function Dashboard({
           <SectionHeader title="Operational" />
           <div className="dash-grid">
             {operational.map((card) => (
-              <DashboardWidget
+              <ResolvedWidget
                 key={card.title}
                 card={card}
                 slug={slugFor(card.entity)}
@@ -381,7 +403,7 @@ export default function Dashboard({
           <SectionHeader title="Activity" />
           <div className="dash-grid">
             {activity.map((card) => (
-              <DashboardWidget
+              <ResolvedWidget
                 key={card.title}
                 card={card}
                 slug={slugFor(card.entity)}

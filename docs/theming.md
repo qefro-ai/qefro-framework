@@ -1,6 +1,6 @@
 # Theming
 
-Tenant branding (logo, favicon, accent / primary / secondary) comes from tenant settings. Empty fields are filled from the enabled app’s default branding (`AppModule` / `[branding]` in `app.toml`), then the tenant name. The renderer sets CSS variables (`--accent`, `--primary`, `--secondary`). **Arbitrary tenant CSS or JavaScript is rejected** — there is no injection surface.
+Tenant branding (logo, favicon, accent / primary / secondary) comes from tenant settings. Empty fields are filled from the enabled app’s default branding (`AppModule` / `[branding]` in `app.toml`), then the tenant name. The renderer sets CSS variables (`--accent`, `--primary`, `--secondary`). Applications can set defaults with `qefro.theme({ primary, radius, density })`; tenant branding still wins. **Arbitrary tenant CSS or JavaScript is rejected** — there is no injection surface. See [qefro.js](qefro-js.md).
 
 User appearance (this device, scoped to tenant + user):
 

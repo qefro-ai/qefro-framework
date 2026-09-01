@@ -1,13 +1,13 @@
 # QefroClient (browser SDK)
 
-`QefroClient` is the browser SDK. It lives at `frontend/src/sdk/client.ts`. There is no published npm package.
+`QefroClient` is the browser SDK. It lives in `@qefro/js` (`packages/qefro-js/src/sdk/client.ts`). The generic UI in `frontend/` imports it from `@qefro/js`. Studio still uses `frontend/src/api.ts`, which re-exports the same `api` instance.
 
 ```
 UI / widgets / Studio  →  QefroClient  →  /api/v1  →  EntityService
 Agents                 →  EntityOps    →  EntityService
 ```
 
-`frontend/src/api.ts` re-exports the same `api` instance so existing imports keep working.
+`@qefro/js` also exports the `Qefro` UI runtime (`qefro.ui.list`, extensions, theme). See [qefro.js](qefro-js.md). Do not add a second UI HTTP client.
 
 ## Methods
 
@@ -32,7 +32,7 @@ There is no `IdentityClient`, `WorkflowClient`, `ReportClient`, `DashboardClient
 
 | Surface | SDK | Path |
 | --- | --- | --- |
-| Browser | `QefroClient` | REST `/api/v1` |
+| Browser | `QefroClient` / `@qefro/js` | REST `/api/v1` |
 | Agents | `EntityOps` | in-process `EntityService` |
 
 Same tenant, RBAC, validation, and workflow on every path. 422 responses throw `ValidationError` (subclass of `ApiError`) with `fields: [{ field, code, message }]`.

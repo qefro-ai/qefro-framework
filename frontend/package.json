@@ -12,7 +12,8 @@
   "dependencies": {
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-router-dom": "^7.6.0"
+    "react-router-dom": "^7.6.0",
+    "@qefro/js": "file:../packages/qefro-js"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",

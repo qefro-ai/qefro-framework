@@ -90,6 +90,7 @@ nav:
       - Tasks: tasks.md
   - UI:
       - Generic UI: ui.md
+      - qefro.js: qefro-js.md
       - UI 2.1: ui-2.md
       - Views: views.md
       - View metadata: view-metadata.md
@@ -127,6 +128,7 @@ nav:
       - Webhooks: webhooks.md
       - Agents: agents.md
       - SDK: sdk.md
+      - qefro.js: qefro-js.md
       - Connectors: connectors.md
   - Studio:
       - Studio: studio.md

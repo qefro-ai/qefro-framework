@@ -30,7 +30,7 @@ The V1 generic UI already had lists, forms, dashboards, widgets, filters, search
 - Dashboard metric drill-down and dashboard-level filters
 - List grouping, numeric footers, detail workflow strip, section `visible_when`
 - Permission chrome hints (`permissions` on `/meta/ui`, `_permissions` on GET)
-- Browser SDK: `QefroClient` in `frontend/src/sdk/client.ts` (see [sdk.md](sdk.md))
+- Browser SDK: `QefroClient` in `@qefro/js` (see [sdk.md](sdk.md) and [qefro.js](qefro-js.md))
 
 ## Non-negotiable
 

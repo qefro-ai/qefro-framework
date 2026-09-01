@@ -60,7 +60,7 @@ Open the generic UI:
 cd frontend && npm install && npm run dev
 ```
 
-The UI reads `/api/v1/meta/ui`. Branding, navigation, terminology, widgets, form layouts, filters, dashboards, and composed pages come from the authenticated tenant. There is no per-entity React page and no per-tenant frontend build. Define the entity once; Qefro generates schema, REST, validation, and the business UI. Compose operational workspaces from those screens with `PageDef` — see [Pages](docs/pages.md).
+The UI reads `/api/v1/meta/ui` through `@qefro/js`. Branding, navigation, terminology, widgets, form layouts, filters, dashboards, and composed pages come from the authenticated tenant. There is no per-entity React page and no per-tenant frontend build. Define the entity once; Qefro generates schema, REST, validation, and the business UI. Compose operational workspaces from those screens with `PageDef` — see [Pages](docs/pages.md). The reference frontend consumes [`@qefro/js`](packages/qefro-js/README.md).
 
 Authorized developers open **Qefro Studio** (`/studio`) to inspect and publish metadata through the same registries. See [Qefro Studio](docs/studio.md).
 

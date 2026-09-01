@@ -8,7 +8,12 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "strict": true,
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@qefro/js": ["../packages/qefro-js/src/index.ts"],
+      "@qefro/js/styles.css": ["../packages/qefro-js/src/styles.css"]
+    }
   },
   "include": ["src"]
 }
